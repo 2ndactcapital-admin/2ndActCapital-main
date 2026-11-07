@@ -640,7 +640,8 @@ def extract_rows(wb: Workbook, sheet: str, header_row: int, cols: dict[int, str]
 
 
 def interpret_weights(rows: list[Row], *, header_row: int, tolerance_pct: Decimal,
-                      fill_with_cash: bool, basis: str | None = None) -> tuple[str | None, Decimal | None, list[Message]]:
+                      fill_with_cash: bool, basis: str | None = None,
+                      long_short: bool = False) -> tuple[str | None, Decimal | None, list[Message]]:
     """Detect percent vs fraction, convert to fractions, check the sum.
     Returns (basis, cash_target, messages). Mutates the rows' weights/bands."""
     msgs: list[Message] = []
@@ -674,10 +675,13 @@ def interpret_weights(rows: list[Row], *, header_row: int, tolerance_pct: Decima
         w = raw_w.get(r.row_num)
         r.weight = (w / scale) if w is not None else None
         if r.weight is not None:
-            if r.weight < 0:
+            if r.weight < 0 and not long_short:
                 msgs.append(Message("weight_negative", "error", f"row {r.row_num}: negative weight "
-                                                                f"{pct_text(r.weight)} — long/short models are not "
-                                                                "supported yet", r.row_num, "weight"))
+                                                                f"{pct_text(r.weight)} — only a long/short model "
+                                                                "carries negative (short) weights", r.row_num, "weight"))
+            elif r.weight < -1:
+                msgs.append(Message("weight_range", "error", f"row {r.row_num}: weight {pct_text(r.weight)} is below "
+                                                             "−100%", r.row_num, "weight"))
             elif r.weight > 1:
                 msgs.append(Message("weight_range", "error", f"row {r.row_num}: weight {pct_text(r.weight)} is above "
                                                              "100%", r.row_num, "weight"))
@@ -728,6 +732,11 @@ def interpret_weights(rows: list[Row], *, header_row: int, tolerance_pct: Decima
         if r.weight is None:
             continue
         lo, hi = r.drift_min, r.drift_max
+        if r.weight < 0:       # rep13 — a short row carries no drift band
+            if lo is not None or hi is not None:
+                msgs.append(Message("band_short", "error", f"row {r.row_num}: a short row carries no drift band",
+                                    r.row_num, "drift_min"))
+            continue
         for f, b in (("drift_min", lo), ("drift_max", hi)):
             if b is not None and (b < 0 or b > 1):
                 msgs.append(Message("band_range", "error", f"row {r.row_num}: {FIELDS[f][0]} {pct_text(b)} is outside "
@@ -864,7 +873,8 @@ def _check_duplicates(rows: list[Row], msgs: list[Message]) -> None:
 
 async def parse_and_validate(conn, wb: Workbook, *, sheet: str | None, header_row: int | None,
                              mapping: dict | None, saved_mapping: dict | None, fill_with_cash: bool,
-                             tolerance_pct: Decimal = DEFAULT_TOLERANCE_PCT) -> ParseResult:
+                             tolerance_pct: Decimal = DEFAULT_TOLERANCE_PCT,
+                             long_short: dict | None = None) -> ParseResult:
     sheet = sheet or wb.sheets[0]
     if sheet not in wb.grids:
         raise UploadRefused("unreadable", f"the workbook has no sheet named {sheet!r}")
@@ -887,9 +897,13 @@ async def parse_and_validate(conn, wb: Workbook, *, sheet: str | None, header_ro
     if not rows:
         msgs.append(Message("no_rows", "error", "the sheet has no position rows under the header", hdr))
     basis, cash_target, m2 = interpret_weights(rows, header_row=hdr, tolerance_pct=tolerance_pct,
-                                               fill_with_cash=fill_with_cash)
+                                               fill_with_cash=fill_with_cash, long_short=long_short is not None)
     msgs += m2
     msgs += await resolve_rows(conn, rows)
+    if long_short is not None:       # rep13 — gross long / short, sides, shortability, the never-short list
+        from services import long_short as LS
+
+        msgs += await LS.validate_model_rows(conn, rows, long_short, tolerance_pct)
     order = {"error": 0, "warning": 1, "info": 2}
     msgs.sort(key=lambda m: (m.row if m.row is not None else 0, order[m.severity]))
     return ParseResult(sheet, hdr, headers, mapping_by_header(headers, cols), basis, rows, msgs, cash_target,
@@ -897,7 +911,7 @@ async def parse_and_validate(conn, wb: Workbook, *, sheet: str | None, header_ro
 
 
 async def validate_positions(conn, positions: list[dict], *, tolerance_pct: Decimal,
-                             require_sum: bool = True) -> tuple[list[Row], list[Message]]:
+                             require_sum: bool = True, long_short: dict | None = None) -> tuple[list[Row], list[Message]]:
     """The upload validation, applied to positions edited in the UI (weights
     given as fractions). Same resolution, duplicate, band and sum rules."""
     rows = []
@@ -917,8 +931,11 @@ async def validate_positions(conn, positions: list[dict], *, tolerance_pct: Deci
     for r in rows:
         if r.weight is None:
             msgs.append(Message("weight_missing", "error", f"row {r.row_num}: no weight", r.row_num, "weight"))
-        elif r.weight < 0:
-            msgs.append(Message("weight_negative", "error", f"row {r.row_num}: negative weight", r.row_num, "weight"))
+        elif r.weight < 0 and long_short is None:
+            msgs.append(Message("weight_negative", "error", f"row {r.row_num}: negative weight — only a long/short "
+                                                            "model carries short weights", r.row_num, "weight"))
+        elif r.weight < -1:
+            msgs.append(Message("weight_range", "error", f"row {r.row_num}: weight below −100%", r.row_num, "weight"))
         elif r.weight > 1:
             msgs.append(Message("weight_range", "error", f"row {r.row_num}: weight above 100%", r.row_num, "weight"))
         for f in ("drift_min", "drift_max"):
@@ -936,6 +953,10 @@ async def validate_positions(conn, positions: list[dict], *, tolerance_pct: Deci
         msgs.append(Message("weight_sum", "error", f"weights sum to {pct_text(total)}, not 100% (±{tolerance_pct}%)",
                             None, "weight"))
     msgs += await resolve_rows(conn, rows)
+    if long_short is not None and require_sum:      # rep13 — the long/short rules on a complete draft
+        from services import long_short as LS
+
+        msgs += await LS.validate_model_rows(conn, rows, long_short, tolerance_pct)
     return rows, msgs
 
 

@@ -562,6 +562,20 @@ async def propose_change(pool, *, org_id, actor_id, account_id, change_kind: str
         if change_kind in ("join", "change_model") and (model["status"] != "active" or not model["live_version_id"]):
             raise AccountModelConflict(f"{model['name']} has no approved version — only an approved model from the "
                                        "registry can be joined")
+        if change_kind in ("join", "change_model"):     # rep13 — a long/short model needs an eligible account
+            from services import long_short as LS
+
+            ls = await LS.model_kind(conn, model["id"])
+            if ls is not None:
+                el = await LS.eligibility(conn, org_id, account)
+                if not el["eligible"]:
+                    raise AccountModelConflict(f"{model['name']} is a long/short model — {el['refusal']}")
+                st = await LS.settings_of(conn, account["id"], "saved")
+                if st is None or (Decimal(st["gross_long"]), Decimal(st["gross_short"])) != (
+                        Decimal(ls["gross_long"]), Decimal(ls["gross_short"])):
+                    raise AccountModelConflict(f"{model['name']} is a long/short model "
+                                               f"({LS.R.extension_of(ls['gross_long'], ls['gross_short'])}) — save the "
+                                               "account's long/short settings with the same extension first")
         base = settings_of(current) if current else dict(DEFAULT_SETTINGS)
         clean = await clean_settings(conn, org_id, account, settings or {}, base) if change_kind != "end" else base
         if change_kind == "settings" and _settings_brief(clean) == _settings_brief(base):

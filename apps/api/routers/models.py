@@ -125,6 +125,28 @@ class Reason(_Body):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class LongShortSpecIn(_Body):
+    """rep13 — a NEW long/short model's declaration (a sub-adviser's target weights): the extension (130/30,
+    150/50 or a custom pair, net 100 %), the signal source and the as-of of its weights, names never shorted."""
+    extension: str = Field(pattern="^(130_30|150_50|custom)$")
+    gross_long: str | None = Field(default=None, max_length=20)
+    gross_short: str | None = Field(default=None, max_length=20)
+    signal_source: str = Field(min_length=1, max_length=300)
+    signal_as_of: date
+    short_exclusions: list[str] = Field(default_factory=list, max_length=500)
+
+    def spec(self) -> dict:
+        from decimal import Decimal, InvalidOperation
+
+        try:
+            gl = Decimal(self.gross_long) if self.gross_long is not None else None
+            gs = Decimal(self.gross_short) if self.gross_short is not None else None
+        except InvalidOperation:
+            raise HTTPException(status_code=422, detail="gross long / short are decimal strings (1.30 / 0.30)") from None
+        return {"extension": self.extension, "gross_long": gl, "gross_short": gs, "signal_source": self.signal_source,
+                "signal_as_of": self.signal_as_of, "short_exclusions": list(self.short_exclusions)}
+
+
 class UploadStep(_Body):
     sheet: str | None = Field(default=None, max_length=200)
     header_row: int | None = Field(default=None, ge=1, le=U.HEADER_SCAN_ROWS * 10)
@@ -132,6 +154,7 @@ class UploadStep(_Body):
     provider_name: str | None = Field(default=None, max_length=200)
     fill_with_cash: bool = False
     model_id: str | None = Field(default=None, max_length=64)
+    long_short: LongShortSpecIn | None = None     # rep13 — a new long/short model (an existing one keeps its own)
 
 
 class UploadConfirm(UploadStep):
@@ -348,7 +371,8 @@ async def preview_upload(request: Request, upload_id: str, body: UploadStep):
         return await M.preview_upload(pool, org_id=org_id, upload_id=upload_id, sheet=body.sheet,
                                       header_row=body.header_row, mapping=body.mapping,
                                       provider_name=body.provider_name, fill_with_cash=body.fill_with_cash,
-                                      model_id=body.model_id)
+                                      model_id=body.model_id,
+                                      long_short=body.long_short.spec() if body.long_short else None)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
 
@@ -362,7 +386,8 @@ async def confirm_upload(request: Request, upload_id: str, body: UploadConfirm):
         out = await M.confirm_upload(pool, org_id=org_id, actor_id=principal.user_id, upload_id=upload_id,
                                      sheet=body.sheet, header_row=body.header_row, mapping=body.mapping,
                                      provider_name=body.provider_name, fill_with_cash=body.fill_with_cash,
-                                     model_id=body.model_id, model_name=body.model_name, description=body.description)
+                                     model_id=body.model_id, model_name=body.model_name, description=body.description,
+                                     long_short=body.long_short.spec() if body.long_short else None)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
     return {"upload": out["upload"], "model": M.model_out(out["model"]), "version": M.version_out(out["version"]),

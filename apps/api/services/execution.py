@@ -71,7 +71,8 @@ EXECUTOR_LABELS = {
 }
 LETTER_EXECUTORS = ("member", "other_adviser")
 SHEET_EXECUTORS = ("broker", "custodian_desk", "trader")      # rep9 — an order execution sheet
-SIDE_LABELS = {"buy": "Buy", "sell": "Sell"}
+SIDE_LABELS = {"buy": "Buy", "sell": "Sell", "sell_short": "SELL SHORT", "buy_to_cover": "BUY TO COVER"}   # rep13
+SHORT_SIDES = ("sell_short", "buy_to_cover")
 PRICE_KIND_LABELS = {"market": "At market", "limit": "Limit", "range": "Acceptable range around a reference price"}
 IF_NOT_FILLED_LABELS = {"cancel": "Cancel it", "carry": "Carry to the next day", "ask": "Ask me"}
 SOURCE_LABELS = {"manual": "Entered manually", "proposal": "From a proposal"}
@@ -453,16 +454,25 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
                 await _security(conn, t.global_security_id)
                 lots = [(str(li.tax_lot_id), li.quantity) for li in t.lot_instructions]
                 await _validate_lots(conn, org_id, acct["id"], t.global_security_id, t.side, lots, t.quantity)
+                if t.side in SHORT_SIDES:      # rep13 — eligibility + the §1259 household check, every short
+                    from services import long_short as LS
+
+                    try:
+                        await LS.instruction_guard(conn, org_id, acct, t)
+                    except LS.LongShortConflict as exc:
+                        raise ExecutionConflict(str(exc)) from exc
+                    except LS.LongShortError as exc:
+                        raise ExecutionError(str(exc)) from exc
                 pg = t.price_guidance
                 row = await conn.fetchrow(
                     f"""INSERT INTO {T_INS} (org_id, account_id, global_security_id, side, quantity, notional,
                             price_kind, limit_price, range_low, range_high, reference_price, reference_at,
                             wash_sale_notes, executor_type, executor_name, executor_contact, execute_by,
                             if_not_filled, source, source_ref, routed_via, routing_reason, notes, status,
-                            maker_id, maker_ids, approved_by, approved_at, option_terms)
+                            maker_id, maker_ids, approved_by, approved_at, option_terms, short_terms)
                         VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                                 $16, $17, $18, $19, $20::uuid, $21, $22, $23, $24, $25::uuid, ARRAY[$25::uuid],
-                                $26::uuid, $27, $28::jsonb)
+                                $26::uuid, $27, $28::jsonb, $29::jsonb)
                         RETURNING *""",
                     str(org_id), str(acct["id"]), str(t.global_security_id), t.side, t.quantity, t.notional,
                     pg.kind, pg.limit_price, pg.range_low, pg.range_high, pg.reference_price, pg.reference_at,
@@ -471,7 +481,8 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
                     trade_list.source, str(trade_list.source_ref) if trade_list.source_ref else None,
                     routed_via, routing_reason, trade_list.notes, status, str(maker),
                     str(up["checker_id"]) if up else None, up["approved_at"] if up else None,
-                    _dumps(t.option_leg) if t.option_leg else None)       # rep8 — an option leg's terms
+                    _dumps(t.option_leg) if t.option_leg else None,       # rep8 — an option leg's terms
+                    _dumps(t.short_terms) if t.short_terms else None)     # rep13 — a short's terms
                 for lid, q in lots:
                     await conn.execute(
                         f"INSERT INTO {T_LOT} (org_id, instruction_id, tax_lot_id, quantity, created_by) "
@@ -977,7 +988,7 @@ async def pending_differences(conn, org_id, account_id=None) -> list[dict]:
     rows = await conn.fetch(sql + " ORDER BY i.account_id, i.global_security_id, i.created_at", *args)
     agg: dict[tuple[str, str], dict] = {}
     for r in rows:
-        sign = Decimal(1) if r["side"] == "buy" else Decimal(-1)
+        sign = Decimal(1) if r["side"] in ("buy", "buy_to_cover") else Decimal(-1)      # rep13
         k = (str(r["account_id"]), str(r["global_security_id"]))
         a = agg.setdefault(k, {"account_id": k[0], "global_security_id": k[1], "pending_quantity": Decimal(0),
                                "pending_notional": Decimal(0), "instructions": []})
@@ -1018,6 +1029,8 @@ def instruction_out(r: dict, *, sec: dict | None = None, acct: dict | None = Non
         "expiry_reason": r["expiry_reason"], "created_at": r["created_at"].isoformat(),
         "filled_quantity": _num(filled_quantity),
         "option_terms": _loads(r.get("option_terms")),        # rep8 — an option leg: contracts, expiry, FLEX terms
+        "short_terms": _loads(r.get("short_terms")),          # rep13 — SELL SHORT / BUY TO COVER: effect, lots, rate
+        "side_label": SIDE_LABELS.get(r["side"], r["side"]),
         "security": {"name": sec["name"], "ticker": (sec.get("identifiers") or {}).get("ticker"),
                      "cusip": (sec.get("identifiers") or {}).get("cusip")} if sec else None,
         "account": {"account_number_masked": acct["account_number_masked"], "custodian_code": acct["custodian_code"],

@@ -125,6 +125,10 @@ class Letter(_Body):
 
 
 def _raise(exc: Exception):
+    from services.custody.trading import ShortSaleNotDeclared
+
+    if isinstance(exc, ShortSaleNotDeclared):      # rep13 — the adapter refuses a short its custodian does not declare
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if isinstance(exc, (X.ExecutionNotFound, HT.HumanTaskNotFound)):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, (X.MakerCheckerViolation, HT.MakerCheckerError)):

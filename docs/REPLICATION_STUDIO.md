@@ -2049,3 +2049,194 @@ an extracted note is "approved" only then. (3) Work the underlying queue. (4) Se
 and watches on New issues. (5) Enter the note's price, the underlying's start and current level and
 each option's premium (or implied vol) as quotes — the estimate appears only then.
 
+
+## rep13 — the tax-aware long/short extension (PHASE 4 BEGINS, 2026-11-07)
+
+Spec: "Replication Studio — ETF & Fund-to-SMA Spec" (Joe, 2026-10-22), "Long/short and options overlays". $100 of
+capital holds $130 long and $30 short (150/50: $150 / $50). The shorts are the names the signal likes least.
+Hollisworks has **no stock-selection model**: the signal is a sub-adviser's TARGET WEIGHTS, uploaded through
+rep3's model management. Task 1 findings: `docs/REP13_DISCOVERY.md`. Schema: `docs/rep13_part1.sql` (APPLIED,
+`scripts/_apply_rep13.py --verify`: SCHEMA OK). Services: `services/long_short_rules.py` (pure) and
+`services/long_short.py`. Routes: `routers/long_short.py` (14, under `/api/v1/long-short/`). Screens: Account →
+**Long/short** (`/portfolio/accounts/{id}/long-short`) and a long/short panel on the proposal page. Verify:
+`apps/api/scripts/verify_rep13.py` (WRITTEN, NOT RUN).
+
+### Eligibility (each refusal names the missing piece)
+
+An account may go long/short only when all of these hold:
+
+- Its custodian **declares** `margin`, `short_selling` AND `stock_borrow` in `custodian_capabilities`.
+  `unknown` is not declared. The prompt's "short_sell" is rep2's existing key `short_selling`.
+- Its effective authority is **managed at an integrated custodian** (rep7b's word is `managed`). read_only and
+  advise refuse.
+- The member's suitability profile holds an **APPROVED margin agreement**: `public.suitability_records`, with its
+  date and a document, keyed by the account's household, else its primary entity. A different holder of
+  `approve_proposals` approves it. A removal takes effect at once, with a reason, and is audited.
+- The account is open and not held away.
+
+**No custodian qualifies today.** Altruist and the manual route are `unknown` on all three keys. Schwab, Fidelity,
+Pershing and IBKR have no rows. The path is proven on fixture custodians.
+
+### Models
+
+`portfolio.models.kind` is `long_only` (the default) or `long_short`. A long/short model records:
+
+- its gross long and gross short: 130/30 or 150/50, or a custom pair with 0 < short ≤ 50 % and long = 1 + short,
+  so net is always 100 %;
+- the signal source (the sub-adviser) and the as-of of its weights;
+- `short_exclusions`, the names the model never shorts.
+
+It must be an upload, and it is named **"Holdings of …"**. rep3 had reserved that prefix for fund replicas; the
+CHECK now admits it for long/short models and requires it on them.
+
+Upload, edit and submit accept negative weights only on such a model. A trigger enforces the same in the
+database. The validation:
+
+- longs sum to the gross long and shorts to the gross short (± the org tolerance);
+- no name is both long and short;
+- every short is a listed equity in the master (not a fund or ETF, not delisted) and is resolved;
+- no short is on the model's never-short list.
+
+The upload log shows the kind. A long/short model is never published to the library and is never a sleeve of a
+composite.
+
+### Account settings
+
+`public.long_short_settings`, on an eligible account only:
+
+- the extension;
+- the tracking-error limit;
+- the maximum short per name (fraction of capital, ≤ 50 %);
+- the borrow-cost ceiling (bps a year);
+- exclusions (names never shorted).
+
+A draft can be saved, then saved as a version. Rows are written once and only ever closed, so the history is
+kept. Every write is audited. A long/short model can be joined only with saved settings of the same extension.
+
+### Proposals (`long_short_rules.build_books`)
+
+A long/short proposal is rep5's proposal row plus one `public.long_short_proposals` row. It is made by a PERSON:
+Rebalance now, or the join, which no longer auto-submits. The drift, model-change and harvest sweeps skip
+long/short accounts.
+
+**Capital** = long value − short value + cash. Each name's signed weight becomes a long target and a short target,
+sized in whole shares unless fractional shares are declared.
+
+**The long book** buys up to its target and sells down to it with rep5's lot relief. A long book never sells
+shares it does not hold.
+
+**The short book** uses **SELL SHORT** to open and **BUY TO COVER** to close (oldest lot first, or the lots a
+harvest names).
+
+**Settings act on every short, in this order:**
+
+1. An excluded name is skipped, with the reason.
+2. A §1259 block makes the line BLOCKED. It is recorded and never routed.
+3. A name with no borrow rate stays a line flagged **"borrow rate needed"**, and approval is refused.
+4. A name whose rate is above the ceiling is skipped, with the rate stated.
+5. A name caught by the short-sale wash rule is deferred.
+6. A short above the maximum per name is capped.
+
+A short that is not placed is not re-allocated. Buys are scaled to the cash the sales and the placed shorts
+raise, and the resulting net exposure is stated.
+
+**Borrow.** Rates are **entered**; no live borrow feed exists. They live in `public.borrow_rates`:
+
+- Super Admin enters platform rates; an org enters its own rates, and those are read first;
+- every rate is per security, with an as-of and a source;
+- a short rebate is optional.
+
+Each short line carries its estimated annual fee and rebate. The proposal's cost comparison has these lines:
+
+- the trading cost (org bps);
+- **"Borrow cost (long/short only) — estimated"**, over the short book after the proposal;
+- **"Short rebate"**;
+- the overlay fee (not set — an open decision);
+- the net.
+
+**Tracking error** vs the model, from signed weights: sqrt(252 · aᵀΣa) over daily closes from the security-data
+layer (prices1). Every name needs a series; otherwise it reads "needs prices — N of M names …" and is never
+invented. An estimate above the account's limit blocks approval.
+
+### Tax
+
+- **Short-term rule.** A short's gain or loss is **short-term whatever the holding period** (IRC §1233(a)–(b)).
+  `long_short_rules.short_close_term` is the one place this is decided.
+- **The §1259 constructive-sale HARD BLOCK.** No proposal or instruction may short a security that ANY household
+  account holds long at an unrealized gain. That includes the spouse, IRAs and readable held-away accounts; every
+  rep7b authority allows reading. The same applies to a substantially identical security, which here means:
+  - the same security;
+  - another share class of the same issuer (the same SEC CIK reference attribute, both equities);
+  - the same canonical security;
+  - an active substitution denial pair.
+
+  A lot whose gain cannot be shown is treated as a gain (no cost basis or no price). A lot at a loss never blocks.
+  The block names the account and the lot.
+
+  It is enforced at four points: at generation, in the approval precheck (re-run on today's household), before
+  routing, and in `execution.create_instructions` — the one chokepoint, so a manual instruction is caught too.
+  There is **no override** in this sprint.
+- **Two-sided harvest.** It runs inside the long/short proposal, on the link's rep6 harvest settings and
+  thresholds.
+  - Short book: a short at a net loss is covered and re-established in an approved, clear substitute. The
+    substitute must not be identical, must not be excluded, must be shortable, must have a rate under the ceiling,
+    must have no §1259 block, and must have no wash window.
+  - Long book: a long at a net loss is sold, and the substitute is bought through rep6's `evaluate_buy`.
+- **The short-sale wash rule** (IRC §1091(e)). A new short of a name the household covered at a loss within 30
+  days is deferred to day 31.
+- **Estimates.** The tax estimate (`GET /long-short/accounts/{id}/tax-estimate`) and the proposal show the
+  harvest value at the profile's rates, labelled "estimate". Without a profile they read "not estimated — no tax
+  profile".
+
+### Disclosures and approval
+
+Every long/short proposal shows:
+
+- the six risks (AQR's list);
+- the borrow estimate;
+- the margin requirement as DECLARED by the custodian (`margin_initial_pct` / `margin_maintenance_pct`), else
+  "custodian to confirm";
+- a member-facing summary.
+
+The maker must acknowledge every item before submitting; the acknowledgement is recorded once. A different person
+approves. Approval is refused when:
+
+- any eligibility piece has lapsed since the build (for example, the margin agreement was removed);
+- any blocking code is present;
+- a short line still has no rate.
+
+### Execution
+
+The side vocabulary gains `sell_short` / `buy_to_cover`. This covers proposal trades (with `short_leg`),
+instructions (with `short_terms`), blocks and the typed `TradeLine`. A short or a cover is always a share
+quantity. The order sheet prints "SELL SHORT" / "BUY TO COVER" plainly, with a position-effect row.
+
+A custodian adapter whose capability row does not declare `short_selling` **refuses a short at submit**
+(`TradeAdapter.refuse_undeclared_shorts`, 409). **The manual route is always offered**:
+`POST /long-short/proposals/{id}/execute {"route": "manual"}`, or `route_trade_list(manual=True)`, produces
+instructions a person carries out with the printed sheet. Eligibility and §1259 still apply on the manual route.
+
+Fills give the **short position**, derived from SELL SHORT / BUY TO COVER fills (`long_short.short_book`): a
+negative quantity, each opening fill a lot. No custodian feeds short positions yet.
+
+### Open decisions for Joe (shown here; never decided in code)
+
+1. **Signal source.** Sub-adviser target weights are assumed. Our own factor signal is NOT built. Which
+   sub-adviser?
+2. **Which custodian first.** It has to declare margin, short selling and stock borrow with evidence. Altruist has
+   not said it supports short selling.
+3. **Default limits for 2nd Act's members.** Today there are no defaults; every account's settings are entered
+   explicitly. This covers the tracking-error limit, the maximum short per name and the borrow ceiling.
+4. **The overlay's own bps.** The org setting `replication.long_short.overlay_bps` is shown "not set" and charged
+   nowhere.
+5. **Counsel / CPA.** The §1259 "substantially identical" rule (CIK share classes) and the conservative treatment
+   of unknown-cost lots. Whether loss-bank ingestion should take short closes: it does not yet, and they are
+   reported by the tax estimate instead.
+
+### rep13 operator steps
+
+1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep13.py`. It runs `node --test`,
+   `npm run build` and the `verify_rep6.py` regression itself.
+2. Add rep13's merge sha to `_verify_self.SPRINT_MERGES` when merged.
+3. Refresh `docs/schema_snapshot.sql` (refresh-schema).
+4. Redeploy the API and the scheduler cron service. The sweeps now skip long/short accounts.

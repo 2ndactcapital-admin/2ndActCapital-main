@@ -118,6 +118,8 @@ TRIGGER_LABELS = {"join": "Joined the model", "model_change": "The model changed
                   "cash_flow": "Cash flow", "manual": "Rebalance now", "harvest": "Tax-loss harvest"}
 # the triggers that never supersede an open proposal (they wait for the account to be free)
 NO_SUPERSEDE_TRIGGERS = ("harvest",)
+#: rep13 — the triggers a long/short account's proposals take (a person's: Rebalance now, the join)
+LS_TRIGGERS = ("manual", "join")
 STATUS_LABELS = {"draft": "Draft", "pending_approval": "Awaiting approval", "approved": "Approved — executing",
                  "rejected": "Rejected", "expired": "Expired", "superseded": "Superseded", "executed": "Executed"}
 OPEN_STATUSES = ("draft", "pending_approval", "approved")
@@ -814,6 +816,13 @@ async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, 
         model = await AM.model_brief(conn, org_id, link["model_id"])
         if not model["live_version_id"]:
             raise ProposalConflict(f"{model['name']} has no approved version")
+        from services import long_short as LS     # rep13 — a long/short model's proposals are a person's
+
+        ls = await LS.model_kind(conn, model["id"])
+        if ls is not None and (maker_kind != "user" or trigger not in LS_TRIGGERS):
+            raise ProposalConflict(f"{model['name']} is a long/short model — its proposals are made by a person "
+                                   f"(Rebalance now or the join), never by the {TRIGGER_LABELS[trigger].lower()} sweep; "
+                                   "both books are harvested inside them")
         if trigger == "model_change":
             done = await model_change_for(conn, account["id"], model["live_version_id"])
             if done:
@@ -831,6 +840,11 @@ async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, 
                 raise ProposalError("a harvest proposal is the system's, from the daily scan's plan")
             c = await HV.compute_for_proposal(conn, org_id, account, link, model["live_version_id"], harvest_plan,
                                               today=today)
+        elif ls is not None:
+            if withdrawal is not None or lot_override or target_override:
+                raise ProposalError("a long/short proposal takes no withdrawal, lot override or target override")
+            c = await LS.compute(conn, org_id, account, link, model["live_version_id"], model, ls, today=today)
+            auto_submit = False      # submitted only after its maker acknowledges the disclosures
         else:
             c = await compute(conn, org_id, account, link, model["live_version_id"], withdrawal=withdrawal,
                               today=today, lot_override=lot_override, target_override=target_override)
@@ -920,9 +934,9 @@ async def _write_generated(pool, *, org_id, account, link, model, c, r, pid, now
                 await conn.execute(
                     f"""INSERT INTO {T_T} (org_id, proposal_id, line_no, global_security_id, side, quantity, notional,
                             price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale,
-                            lot_method)
+                            lot_method, short_leg)
                         VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14,
-                                $15::jsonb, $16)""",
+                                $15::jsonb, $16, $17::jsonb)""",
                     str(org_id), pid, i, t.key, t.side, None if t.quantity is None else t.quantity.quantize(E.QTY),
                     t.notional, t.price, t.price_source, t.price_as_of,
                     _dumps([{**lot, "quantity": str(lot["quantity"]),
@@ -930,7 +944,12 @@ async def _write_generated(pool, *, org_id, account, link, model, c, r, pid, now
                              "est_gain": _num(None if lot["est_gain"] is None else lot["est_gain"].quantize(E.QTY))}
                             for lot in t.lots]),
                     t.est_st_gain.quantize(E.QTY), t.est_lt_gain.quantize(E.QTY), t.reason, _dumps(wash),
-                    t.lot_method if t.side == "sell" else None)
+                    t.lot_method if t.side == "sell" else None,
+                    _dumps((c.get("short_legs") or {})[i - 1]) if t.side in ("sell_short", "buy_to_cover") else None)
+            if c.get("long_short"):          # rep13 — the long/short details, same transaction
+                from services import long_short as LS
+
+                await LS.write_details(conn, org_id, pid, c)
             if trigger == "join" and link:
                 await conn.execute(f"UPDATE {T_PLAN} SET valid_to = now() WHERE account_id = $1::uuid "
                                    "AND valid_to IS NULL AND system_to IS NULL", str(account["id"]))
@@ -1066,6 +1085,12 @@ async def _submit(pool, *, org_id, proposal_id, actor_id, system: bool) -> dict:
             actor = await HT.assert_human(conn, actor_id, org_id)
             if p["maker_kind"] != "user" or str(p["maker_id"]) != str(actor["id"]):
                 raise MakerCheckerViolation("a proposal is submitted by the person who made it")
+        from services import long_short as LS      # rep13 — the maker acknowledged the long/short disclosures
+
+        try:
+            await LS.presubmit(conn, org_id, p)
+        except LS.LongShortConflict as exc:
+            raise ProposalConflict(str(exc)) from exc
     if await _expire_if_due(pool, org_id, p):
         raise ProposalConflict("the proposal has expired — generate a new one")
     trades = len(await pool.fetch(f"SELECT 1 FROM {T_T} WHERE proposal_id = $1::uuid AND valid_to IS NULL "
@@ -1214,15 +1239,19 @@ def _trade_line(t: dict):
     flag = _loads(t["wash_sale_flag"])
     wash = _loads(t.get("wash_sale"))
     note = WS.note_of(wash) if wash else (f"[{flag['kind']}] {flag['note']}" if flag else None)
+    from services.long_short import short_terms_of     # rep13 — SELL SHORT / BUY TO COVER carry their terms
+
     return TradeLine(global_security_id=t["global_security_id"], side=t["side"],
                      quantity=None if t["quantity"] is None else Decimal(str(t["quantity"])),
                      notional=None if t["notional"] is None else Decimal(str(t["notional"])),
-                     lot_instructions=lots, price_guidance=pg, wash_sale_notes=note)
+                     lot_instructions=lots, price_guidance=pg, wash_sale_notes=note, short_terms=short_terms_of(t))
 
 
-async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
+async def execute(pool, *, org_id, proposal_id, actor_id, manual: bool = False) -> dict:
     """An APPROVED proposal → its trade list routed through rep2. Idempotent:
-    a proposal whose instructions exist is left alone."""
+    a proposal whose instructions exist is left alone. rep13: ``manual`` takes
+    the manual route (instructions a person carries out) instead of the
+    custodian's adapter; a long/short proposal is re-checked before routing."""
     from services import execution as X
     from services.custody.trading import TradeList, route_trade_list
 
@@ -1242,6 +1271,12 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
         account = await X.load_account(conn, org_id, p["account_id"])
         acct = await AM.load_account(conn, org_id, p["account_id"])
         HA.refuse(acct, "routing a proposal to instructions", ProposalConflict, path="execute")     # rep7 / rep7b
+        from services import long_short as LS      # rep13 — eligibility and §1259 re-read before routing
+
+        if await LS.details_of(conn, p["id"]) is not None:
+            why = await LS.approval_refusal(conn, org_id, p)
+            if why:
+                raise ProposalConflict(f"not routed — long/short: {why}")
         lines = await trades_of(conn, p["id"])
         within = await _setting(conn, org_id, EXECUTE_WITHIN_SETTING, DEFAULT_EXECUTE_WITHIN, lo=0, hi=90,
                                 integer=True)
@@ -1277,7 +1312,7 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
     upstream = {"proposal_id": str(p["id"]), "maker_id": str(p["maker_id"]), "checker_id": str(p["checker_id"])} \
         if human_maker else None
     result = await route_trade_list(pool, org_id=org_id, actor_id=actor["id"], account=account, trade_list=tl,
-                                    upstream=upstream)
+                                    upstream=upstream, manual=manual)
     ids = list(result.instruction_ids)
     notes = []
     if held:
@@ -1294,10 +1329,10 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
                 await conn.execute(
                     f"""INSERT INTO {T_T} (org_id, proposal_id, line_no, global_security_id, side, quantity, notional,
                             price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                            wash_sale, instruction_id, lot_method)
+                            wash_sale, instruction_id, lot_method, short_leg)
                         SELECT org_id, proposal_id, line_no, global_security_id, side, quantity, notional, price,
                                price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                               wash_sale, $2::uuid, lot_method FROM {T_T} WHERE id = $1""", t["id"], iid)
+                               wash_sale, $2::uuid, lot_method, short_leg FROM {T_T} WHERE id = $1""", t["id"], iid)
             new = await _update(conn, p["id"], {"execution": {
                 "instruction_ids": ids, "routing": result.as_dict(), "executor_type": executor,
                 "held_by_wash_sale": held,
@@ -1602,6 +1637,10 @@ async def _scan_account(pool, *, org_id, account_id, today: date | None) -> dict
         model = await AM.model_brief(conn, org_id, link["model_id"])
         if not model["live_version_id"]:
             return {"action": "none", "reason": "the model has no approved version"}
+        from services import long_short as LS
+
+        if await LS.model_kind(conn, model["id"]) is not None:       # rep13
+            return {"action": "none", "reason": "a long/short account — its proposals are made by a person"}
         cur = await open_proposal(conn, account["id"])
         hold = await AM.load_holdings(conn, org_id, account["id"])
         if cur and (cur["status"] == "approved" or cur["valuation_as_of"] == hold["valuation_as_of"]):
@@ -1806,7 +1845,9 @@ def trade_out(t: dict) -> dict:
             "instruction_id": str(t["instruction_id"]) if t["instruction_id"] else None,
             "lot_method": t.get("lot_method"),
             "lot_method_label": E.METHOD_LABELS.get(t["lot_method"]) if t.get("lot_method") else None,
-            "option_leg": _loads(t.get("option_leg"))}
+            "option_leg": _loads(t.get("option_leg")),
+            "short_leg": _loads(t.get("short_leg")),       # rep13 — SELL SHORT / BUY TO COVER
+            "side_label": {"sell_short": "SELL SHORT", "buy_to_cover": "BUY TO COVER"}.get(t["side"], t["side"].title())}
 
 
 def proposal_out(p: dict, account: dict | None = None) -> dict:
@@ -2019,3 +2060,7 @@ def vocabularies() -> dict:
 # (after everything above is defined: both modules import this one)
 from services import options_sleeve as _options_sleeve  # noqa: E402,F401
 from services import options_tax_gate as _options_tax_gate  # noqa: E402,F401
+from services import long_short as _long_short  # noqa: E402 — rep13: the approval precheck
+
+HT.register_precheck(TASK_APPROVAL, _long_short._approval_precheck)
+HT.register_precheck(TASK_REVIEW, _long_short._approval_precheck)

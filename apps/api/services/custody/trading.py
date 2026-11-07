@@ -115,7 +115,8 @@ class PriceGuidance(_Strict):
 
 class TradeLine(_Strict):
     global_security_id: UUID
-    side: Literal["buy", "sell"]
+    #: rep13 (additive): 'sell_short' opens a short, 'buy_to_cover' closes one — by quantity only, with short_terms
+    side: Literal["buy", "sell", "sell_short", "buy_to_cover"]
     quantity: Decimal | None = None
     notional: Decimal | None = None
     lot_instructions: list[LotInstruction] = Field(default_factory=list, max_length=200)
@@ -124,6 +125,9 @@ class TradeLine(_Strict):
     #: rep8 (additive): an option leg's terms — contracts, position effect (open / close), expiry, FLEX terms, the
     #: adviser quote behind its limit price. Only services.options_proposals sets it; a CHECK makes it manual-only.
     option_leg: dict | None = None
+    #: rep13 (additive): a short's terms — position effect (open / close), the short lots a cover closes, the
+    #: entered borrow rate. Required on a short side, refused on buy / sell (the database agrees).
+    short_terms: dict | None = None
 
     @field_validator("quantity", "notional", mode="before")
     @classmethod
@@ -139,6 +143,14 @@ class TradeLine(_Strict):
             raise ValueError("quantity / notional must be greater than zero")
         if self.lot_instructions and self.side != "sell":
             raise ValueError("lot instructions apply to sells only")
+        short_side = self.side in ("sell_short", "buy_to_cover")
+        if short_side and self.quantity is None:
+            raise ValueError("a short or a cover is a number of shares, never an amount")
+        if short_side != (self.short_terms is not None):
+            raise ValueError("a SELL SHORT / BUY TO COVER carries short terms; a buy or sell carries none")
+        if short_side and self.short_terms.get("position_effect") != {"sell_short": "open",
+                                                                      "buy_to_cover": "close"}[self.side]:
+            raise ValueError("SELL SHORT opens (position effect open); BUY TO COVER closes (close)")
         if self.option_leg is not None and (self.quantity is None
                                             or self.option_leg.get("position_effect") not in ("open", "close")):
             raise ValueError("an option leg is a number of contracts with a position effect (open / close)")
@@ -203,10 +215,32 @@ class SubmissionResult:
                 "sent_externally": self.sent_externally}
 
 
+class ShortSaleNotDeclared(Exception):
+    """rep13: an adapter whose custodian does not declare short_selling refuses a short at submit (409)."""
+
+
 class TradeAdapter(ABC):
     """submit / status / cancel. Registered per custodian route key."""
 
     custodian_key: str = ""
+    #: rep13 — the capabilities row an adapter reads for shorts (None: its own route key)
+    capability_custodian: str | None = None
+
+    async def refuse_undeclared_shorts(self, conn, trade_list) -> None:
+        """rep13 — a SELL SHORT / BUY TO COVER is submitted only to a custodian that DECLARES short_selling
+        ('unknown' is not declared). The manual route (a person carries the instruction out) is always offered."""
+        from services.custodian_capabilities import available, capability
+
+        shorts = [i for i, t in enumerate(trade_list.trades, start=1) if t.side in ("sell_short", "buy_to_cover")]
+        if not shorts:
+            return
+        code = self.capability_custodian or self.custodian_key
+        cap = await capability(conn, code, "short_selling")
+        if not available(cap):
+            raise ShortSaleNotDeclared(
+                f"the {code} adapter refuses trade(s) {shorts}: {code} does not declare short_selling (it is "
+                f"'{cap.value}' — unknown is not declared). The manual route is always offered: route the proposal "
+                "manually and carry it out with the printed order sheet (SELL SHORT / BUY TO COVER).")
 
     @abstractmethod
     async def submit(self, ctx: TradeContext, trade_list: TradeList, *, reason: str | None = None) -> SubmissionResult:
@@ -316,7 +350,7 @@ async def _downgrade_notes(conn, custodian_key: str, trade_list: TradeList) -> l
 
 
 async def route_trade_list(pool, *, org_id, actor_id, account: dict, trade_list: TradeList,
-                           upstream: dict | None = None) -> SubmissionResult:
+                           upstream: dict | None = None, manual: bool = False) -> SubmissionResult:
     """Pick the adapter from the account's custodian_code + capabilities.
 
     Held-away → REFUSED (rep7: a held-away account is never traded; before
@@ -347,9 +381,17 @@ async def route_trade_list(pool, *, org_id, actor_id, account: dict, trade_list:
                "never a custodian API" if e["authority"] == "advise" else
                "managed at another custodian: manual DVP settlement instructions — never a custodian API")
         return await ManualTradeAdapter().submit(ctx, trade_list, notes=notes, reason=why)
+    if manual:     # rep13 — the manual route, always offered: instructions a person carries out
+        return await ManualTradeAdapter().submit(
+            ctx, trade_list, notes=notes,
+            reason="manual route chosen: every trade becomes an execution instruction carried out by a person "
+                   "(the order sheet prints SELL SHORT / BUY TO COVER plainly)")
     adapter_cls = trade_adapter_for(account.get("custodian_code"))
     if adapter_cls is None:
         return await ManualTradeAdapter().submit(
             ctx, trade_list, notes=notes,
             reason=f"no trade adapter is registered for custodian {account.get('custodian_code')!r} — manual")
-    return await adapter_cls().submit(ctx, trade_list, notes=notes)
+    adapter = adapter_cls()
+    async with pool.acquire() as conn:     # rep13 — the adapter refuses a short its custodian does not declare
+        await adapter.refuse_undeclared_shorts(conn, trade_list)
+    return await adapter.submit(ctx, trade_list, notes=notes)
