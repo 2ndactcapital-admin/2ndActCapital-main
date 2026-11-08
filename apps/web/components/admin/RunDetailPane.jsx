@@ -44,6 +44,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { RunAutonomyNote, StepAutonomyNote } from "@/components/admin/WorkflowAutonomyNotes";
 
 import {
   formatDateTime,
@@ -188,6 +189,7 @@ export default function RunDetailPane({ runId, row }) {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Status">
               <span className={statusPillClass(run.status)}>{run.status}</span>
+              <RunAutonomyNote run={run} />
             </Field>
             <Field label="Duration">
               {run.duration_measured ? (
@@ -311,11 +313,15 @@ export default function RunDetailPane({ runId, row }) {
                   className="mt-1 rounded border border-[var(--2a-gold)] px-2 py-1.5"
                 >
                   <p className="text-xs text-[var(--2a-gold)]">
-                    {(s.display_name || s.step_key)} has NOT run. Effective
+                    {s.autonomy_mode === "held_for_person" ? (
+                      <>{(s.display_name || s.step_key)} has NOT run — a person decides it: {s.autonomy_reason}</>
+                    ) : (
+                      <>{(s.display_name || s.step_key)} has NOT run. Effective
                     tier {s.effective_tier} — it moves money, creates an
                     obligation, produces an artifact a third party relies on,
                     or mutates ownership/economic terms, so it will not
-                    execute unattended.
+                    execute unattended.</>
+                    )}
                   </p>
                   {s.approval_alerts?.length > 0 && (
                     <p className="mt-1 text-[10px] text-[var(--2a-text-muted)]">
@@ -413,6 +419,7 @@ export default function RunDetailPane({ runId, row }) {
                         </span>
                       )}
                     </p>
+                    <StepAutonomyNote step={s} />
                     {s.error_detail && (
                       <p className="mt-1 text-[11px] text-[var(--2a-gold)]">
                         {s.error_detail}

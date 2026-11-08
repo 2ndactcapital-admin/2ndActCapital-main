@@ -77,7 +77,7 @@ workflow simply goes quiet. Two additions close that, both through the SAME
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from services import workflow_engine, workflow_todos
 from services.action_registry import REGISTRY
@@ -365,6 +365,7 @@ async def run_scheduler_tick(
     lookback_minutes: int = DEFAULT_LOOKBACK_MINUTES,
     log=print,
     only_trigger_ids=None,
+    digest_org_ids=None,
 ) -> TickResult:
     """Run one scan-evaluate-claim-fire pass.
 
@@ -533,5 +534,39 @@ async def run_scheduler_tick(
             "occurrence_count": new_count,
         })
 
+    # S29B (Task 7): the org admins' daily digest of YESTERDAY's unattended writes (one to-do each, refreshed — never
+    # duplicated). A narrowed verify tick digests only the orgs it names.
+    try:
+        await _digest_unattended(conn, pool, day=now_utc - timedelta(days=1), log=log,
+                                 org_ids=digest_org_ids if only_trigger_ids is not None else None,
+                                 narrowed=only_trigger_ids is not None)
+    except Exception as exc:  # noqa: BLE001 — a digest never blocks a tick
+        log(f"[scheduler] DIGEST failed: {type(exc).__name__}: {exc}")
+
     log(f"[scheduler] tick complete — {result.summary()}")
     return result
+
+
+async def _digest_unattended(conn, pool, *, day, log, org_ids=None, narrowed=False) -> int:
+    from services import workflow_autonomy
+
+    if narrowed and not org_ids:
+        return 0
+    t0 = workflow_autonomy.day_start(day)
+    async with platform_scope(conn):
+        rows = await conn.fetch(
+            "SELECT DISTINCT org_id FROM workflow_run_steps WHERE autonomy_mode = 'unattended' "
+            "AND autonomy_claimed_at >= $1 AND autonomy_claimed_at < $2"
+            + (" AND org_id = ANY($3::uuid[])" if org_ids else ""),
+            *([t0, t0 + timedelta(days=1)] + ([[str(o) for o in org_ids]] if org_ids else [])))
+    n = 0
+    for r in rows:
+        tokens = set_rls_context(r["org_id"], False)
+        try:
+            async with pool.acquire() as c:
+                n += len(await workflow_autonomy.daily_digest(c, org_id=r["org_id"], day=t0))
+        finally:
+            reset_rls_context(tokens)
+    if n:
+        log(f"[scheduler] DIGEST {n} unattended-write digest to-do(s) for {t0.date().isoformat()}")
+    return n

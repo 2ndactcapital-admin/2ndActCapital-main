@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 965 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
+Routes: 971 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -194,6 +194,12 @@ Routes: 965 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
 | POST | `/api/v1/admin/users/{user_id}/reject` | admin | scrub |
 | POST | `/api/v1/admin/users/{user_id}/resend-invite` | admin | scrub |
 | PUT | `/api/v1/admin/users/{user_id}/role` | admin | scrub |
+| GET | `/api/v1/admin/workflow-autonomy` | workflow_autonomy | scrub |
+| POST | `/api/v1/admin/workflow-autonomy/platform-kill-switch` | workflow_autonomy | scrub |
+| POST | `/api/v1/admin/workflow-autonomy/runs/{run_id}/shadow-review` | workflow_autonomy | scrub |
+| POST | `/api/v1/admin/workflow-autonomy/settings` | workflow_autonomy | scrub |
+| POST | `/api/v1/admin/workflow-autonomy/settings/{setting_id}/decide` | workflow_autonomy | scrub |
+| POST | `/api/v1/admin/workflow-autonomy/versions/{version_id}` | workflow_autonomy | scrub |
 | GET | `/api/v1/admin/workflow-runs` | workflows | scrub |
 | GET | `/api/v1/admin/workflow-runs/{run_id}` | workflows | scrub |
 | POST | `/api/v1/admin/workflow-runs/{run_id}/steps/{step_id}/decision` | workflows | scrub |

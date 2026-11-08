@@ -55,7 +55,7 @@ from services.users import ensure_user
 # The held-run alert pane reads member_todos on the SAME key the writer upserts
 # on. Importing the writer's own constant is what keeps the two from drifting:
 # if the source marker is ever renamed, this read moves with it.
-from services import agent_proposals, workflow_todos
+from services import agent_proposals, workflow_autonomy, workflow_todos
 from services.workflow_editor import (
     WorkflowEditError,
     WorkflowValidationError,
@@ -1174,6 +1174,7 @@ def _elapsed_seconds(started_at, completed_at) -> float | None:
 _RUN_COLUMNS = """
     r.id, r.org_id, r.status, r.started_by, r.started_at, r.completed_at,
     r.error_detail, r.context,
+    r.autonomy_mode, r.shadow_review_outcome, r.shadow_reviewed_by, r.shadow_reviewed_at, r.shadow_review_note,
     d.id AS definition_id, d.name AS workflow_name,
     v.version_number,
     u.full_name AS started_by_name, u.email AS started_by_email
@@ -1322,9 +1323,12 @@ async def get_workflow_run(request: Request, run_id: UUID):
             SELECT rs.id, rs.status, rs.result, rs.error_detail,
                    rs.started_at, rs.completed_at, rs.proposed_by, rs.approved_by,
                    rs.agent_proposal_id,
+                   rs.autonomy_mode, rs.delegate_for, rs.idempotency_key, rs.autonomy_claimed_at,
+                   du.full_name AS delegate_for_name,
                    ws.step_key, ws.step_type, ws.display_name, ws.autonomy_tier,
                    ws.action_registry_key
             FROM workflow_run_steps rs
+            LEFT JOIN users du ON du.id = rs.delegate_for
             JOIN workflow_steps ws ON ws.id = rs.workflow_step_id
             WHERE rs.workflow_run_id = $1
             ORDER BY rs.created_at, ws.step_key
@@ -1398,6 +1402,15 @@ async def get_workflow_run(request: Request, run_id: UUID):
         action = REGISTRY.get(d.get("action_registry_key")) if d.get("action_registry_key") else None
         d["effective_tier"] = compute_effective_tier(d, action)
         d["approval_alerts"] = approval_alerts_by_step.get(str(d["id"]), [])
+        # S29B: unattended / shadow / held-for-person markers, the delegate line and why it was held — all from the
+        # step's own row and the result the engine recorded (services.workflow_autonomy)
+        auto = (d["result"] or {}).get("autonomy") if isinstance(d["result"], dict) else None
+        d["unattended"] = d.get("autonomy_mode") == "unattended"
+        d["shadow"] = (d["result"] or {}).get("shadow") if isinstance(d["result"], dict) else None
+        d["delegate_line"] = (auto or {}).get("delegate")
+        d["autonomy_reason"] = (auto or {}).get("reason") or (
+            d.get("error_detail") if d.get("autonomy_mode") == "held_for_person" else None)
+        d["autonomy_class"] = workflow_autonomy.autonomy_class(action) if action is not None else None
         steps.append(d)
 
     return {
@@ -1618,6 +1631,19 @@ async def _load_trigger_for_write(request: Request, trigger_id: UUID):
 EVENT_DOCUMENT_CONFIRMED = "document_confirmed"
 
 
+async def _refuse_never_steps(conn, *, definition_id, org_id) -> None:
+    """S29B (Task 2): a trigger-started workflow may not carry a write step whose verb is ``never`` unattended unless
+    that step is Tier 1 (it then suspends for a person). Refused at configuration time, with the steps named."""
+    bad = await workflow_autonomy.never_steps(conn, definition_id=definition_id, org_id=org_id)
+    if bad:
+        raise HTTPException(status_code=422, detail={
+            "error": "never_unattended",
+            "message": "A trigger cannot start this workflow: these write steps may never run unattended and are not "
+                       "Tier 1 (mark them Tier 1 so a person decides each one)",
+            "steps": bad,
+        })
+
+
 @router.post("/admin/workflow-triggers", status_code=201)
 async def create_workflow_trigger(request: Request, body: TriggerCreate):
     """Create an event or a scheduled trigger for a definition in the caller's org.
@@ -1631,11 +1657,10 @@ async def create_workflow_trigger(request: Request, body: TriggerCreate):
     actor_id, org_id, principal = await _require_workflow_permission(
         request, PERM_CONFIGURE_TRIGGERS
     )
-    if body.trigger_type == "event" and body.event_type != EVENT_DOCUMENT_CONFIRMED:
+    if body.trigger_type == "event" and body.event_type not in workflow_autonomy.TRIGGER_EVENT_TYPES:
         raise HTTPException(
             status_code=422,
-            detail=f"Only the '{EVENT_DOCUMENT_CONFIRMED}' event type is "
-                   "supported for event triggers in this phase",
+            detail=f"event_type must be one of {list(workflow_autonomy.TRIGGER_EVENT_TYPES)}",
         )
     # S30 (Task 8): a trigger NAMES its maker — its owner (created_by) is the maker of every run it fires, and a
     # Tier-1 step of that run is checked against it (services.sod). No owner, no trigger.
@@ -1656,6 +1681,8 @@ async def create_workflow_trigger(request: Request, body: TriggerCreate):
             and str(definition["org_id"]) != str(org_id)
         ):
             raise HTTPException(status_code=404, detail="Workflow not found")
+        if body.is_active:
+            await _refuse_never_steps(conn, definition_id=definition["id"], org_id=definition["org_id"])
         row = await conn.fetchrow(
             """
             INSERT INTO workflow_triggers
@@ -1825,6 +1852,8 @@ async def update_workflow_trigger(
             )
 
     async with pool.acquire() as conn:
+        if is_active:
+            await _refuse_never_steps(conn, definition_id=row["workflow_definition_id"], org_id=row["org_id"])
         updated = await conn.fetchrow(
             f"""
             UPDATE workflow_triggers t

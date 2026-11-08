@@ -79,7 +79,7 @@ import logging
 from decimal import Decimal
 from typing import Any
 
-from services import workflow_engine
+from services import workflow_autonomy, workflow_engine
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +160,51 @@ async def _record_delivery(
         )
 
 
+STATUS_STARTING = "STARTING"          # S29B: the claim a run start holds (one per event per workflow version)
+STATUS_RATE_LIMITED = "RATE_LIMITED"  # S29B: the trigger already started its hourly limit of runs
+TODO_SOURCE_RATE_LIMITED = "workflow_event_rate_limited"
+
+
+async def _claim_delivery(conn, *, org_id, event_id, trigger_id, version_id):
+    """S29B — claim (event, workflow version) BEFORE starting a run: the partial unique index
+    domain_event_deliveries_event_version_uq makes a second claim (another trigger on the same version, or a
+    concurrent publish of the same event) match nothing. Returns the claim id, or None when already claimed."""
+    async with conn.transaction():
+        return await conn.fetchval(
+            """
+            INSERT INTO domain_event_deliveries
+                (org_id, domain_event_id, workflow_trigger_id, workflow_version_id, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (domain_event_id, workflow_version_id)
+               WHERE workflow_version_id IS NOT NULL AND status IN ('STARTING', 'DELIVERED')
+            DO NOTHING
+            RETURNING id
+            """,
+            org_id, event_id, trigger_id, version_id, STATUS_STARTING, workflow_autonomy.now(),
+        )
+
+
+async def _finish_delivery(conn, *, delivery_id, run_id, status, error_detail):
+    async with conn.transaction():
+        await conn.execute(
+            "UPDATE domain_event_deliveries SET status = $2, workflow_run_id = $3, error_detail = $4 WHERE id = $1",
+            delivery_id, status, run_id, error_detail)
+
+
+async def _rate_limit_alert(conn, *, org_id, trigger_id, owner, detail: str) -> None:
+    from services import workflow_todos
+
+    recipients = set(await workflow_todos._org_admin_recipients(org_id))
+    if owner:
+        recipients.add(str(owner))
+    async with conn.transaction():
+        for uid in sorted(recipients):
+            await workflow_todos._upsert_todo(
+                conn, org_id=org_id, user_id=uid, source=TODO_SOURCE_RATE_LIMITED, related_type="workflow_trigger",
+                related_id=trigger_id, title="Event trigger rate-limited", detail=detail[:2000], priority=10,
+                action_key="/admin/workflows/triggers")
+
+
 async def publish_event(
     pool,
     org_id,
@@ -182,6 +227,8 @@ async def publish_event(
           "delivered": [ {trigger_id, workflow_run_id, delivery_id}, ... ],
           "failed":    [ {trigger_id, error_detail, delivery_id}, ... ],
           "already_delivered": [trigger_id, ...],   # skipped: fired previously
+          "deduped_by_version": [trigger_id, ...],  # S29B: this event already started a run of that version
+          "rate_limited": [trigger_id, ...],        # S29B: that version is over the org's event_runs_per_hour
         }
 
     Never raises. A publish is an observation about something that ALREADY
@@ -192,6 +239,8 @@ async def publish_event(
     delivered: list[dict] = []
     failed: list[dict] = []
     already: list[str] = []
+    by_version: list[str] = []
+    limited: list[str] = []
 
     try:
         async with pool.acquire() as conn:
@@ -265,7 +314,7 @@ async def publish_event(
             # ── 4. Resolve each pending trigger to a runnable version.
             #      Resolution failures are recorded here and now; they are a
             #      real, reportable state, not a skip.
-            runnable: list[tuple[Any, Any, Any]] = []  # (trigger_id, version_id, started_by)
+            runnable: list[tuple[Any, Any, Any]] = []  # (trigger_id, version_id, trigger owner)
             for trig in triggers:
                 if trig["id"] in fired:
                     already.append(str(trig["id"]))
@@ -310,9 +359,28 @@ async def publish_event(
         #      workflow_engine._independent_acquire); holding this one open
         #      across it would nest its work in this transaction.
         for trigger_id, version_id, trigger_created_by in runnable:
-            context = dict(context_base, trigger_id=str(trigger_id))
+            context = dict(context_base, trigger_id=str(trigger_id), trigger_type=EVENT_TRIGGER_TYPE)
             run_id = None
             error_detail = None
+            # S29B — rate limit (per trigger, per hour) and de-duplication (one run per event per workflow version)
+            async with pool.acquire() as conn:
+                over, n_hour, limit = await workflow_autonomy.event_rate_limited(conn, org_id=org_id,
+                                                                                 workflow_version_id=version_id)
+                if over:
+                    detail = (f"workflow version {version_id} already started {n_hour} run(s) from events in the last "
+                              f"hour (limit {limit}); event {event_id} ({event_type}) was not run (trigger "
+                              f"{trigger_id})")
+                    await _record_delivery(conn, org_id=org_id, event_id=event_id, trigger_id=trigger_id,
+                                           run_id=None, status=STATUS_RATE_LIMITED, error_detail=detail)
+                    await _rate_limit_alert(conn, org_id=org_id, trigger_id=trigger_id, owner=trigger_created_by,
+                                            detail=detail)
+                    limited.append(str(trigger_id))
+                    continue
+                claim_id = await _claim_delivery(conn, org_id=org_id, event_id=event_id, trigger_id=trigger_id,
+                                                 version_id=version_id)
+            if claim_id is None:
+                by_version.append(str(trigger_id))
+                continue
             try:
                 result = await workflow_engine.start_workflow_run(
                     pool, version_id, org_id, context,
@@ -325,6 +393,7 @@ async def publish_event(
                     trigger_id, event_id,
                 )
                 error_detail = f"{type(exc).__name__}: {exc}"
+                run_id = getattr(exc, "held_run_id", None)  # a HELD run exists — the delivery names it
 
             async with pool.acquire() as conn:
                 if run_id is None and error_detail is None:
@@ -334,12 +403,13 @@ async def publish_event(
                         "start_workflow_run returned no run_id for "
                         f"workflow_version {version_id}"
                     )
-                delivery_id = await _record_delivery(
-                    conn, org_id=org_id, event_id=event_id,
-                    trigger_id=trigger_id, run_id=run_id,
+                # a held run still has an id (exc.held_run_id) — the delivery names it
+                await _finish_delivery(
+                    conn, delivery_id=claim_id, run_id=run_id,
                     status=STATUS_FAILED if error_detail else STATUS_DELIVERED,
                     error_detail=error_detail,
                 )
+                delivery_id = claim_id
             if error_detail:
                 failed.append({
                     "trigger_id": str(trigger_id),
@@ -367,6 +437,8 @@ async def publish_event(
             "delivered": delivered,
             "failed": failed,
             "already_delivered": already,
+            "deduped_by_version": by_version,
+            "rate_limited": limited,
         }
 
     except Exception as exc:  # noqa: BLE001 — publishing must not break the emitter

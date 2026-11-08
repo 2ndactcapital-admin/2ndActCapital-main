@@ -138,6 +138,7 @@ SITES = {
     "trading_authority.approve_money_movement": "services/trading_authority.py",
     "sod_admin.decide_rule": "services/sod_admin.py",
     "role_grant:": "services/sod_admin.py",
+    "workflow_autonomy.decide_setting": "services/workflow_autonomy.py",  # S29B: autonomy switch / version opt-in
 }
 #: Task 1a — the screens' Approve offers, each now through sod.may_check_display (count of calls per file at least).
 DISPLAY_FILES = {
@@ -768,7 +769,7 @@ async def y_model(conn):
         want = {"floor" if row["floor_class"] else "default", "policy"}
         pol = next((r for r in by.get(t, []) if r["rule_kind"] == "policy"), None)
         want_sa = "when_no_other_checker" if t in (sod.AGENT_PROPOSAL, sod.WORKFLOW_STEP) else "never"
-        want_ef = row["pre_s30_rule"] == "maker_ne_checker"
+        want_ef = row["pre_s30_rule"] == "maker_ne_checker" or t == sod.ROLE_GRANT  # S29B Task 0: role-grant floor ON
         if kinds_here != want or pol is None or pol["self_approval"] != want_sa or pol["enforce_floor"] is not want_ef:
             bad.append((t, sorted(kinds_here), pol and (pol["self_approval"], pol["enforce_floor"])))
     check(not bad, "each item type: exactly one floor (floor class) or default rule + one platform policy; self-approval "
@@ -889,6 +890,10 @@ def pre_s30(item: dict, checker, makers, other_exists) -> str:
     """What the site decided before S30: login ids; maker refused everywhere (role grants: no rule); self-approval only
     on agent_proposal / workflow_step when no other eligible checker."""
     same = str(checker) in [str(m) for m in makers if m is not None]
+    # S29B Task 0 (Joe, 2026-11-08): the role-grant floor is ON for every org (platform policy v2) — a self-grant is
+    # refused everywhere now, so the replay expects the floor, not the pre-S30 "no rule".
+    if item["item_type"] == sod.ROLE_GRANT:
+        return sod.REFUSED if same else sod.ALLOWED
     if item["pre_s30_rule"] == "none":
         return sod.ALLOWED
     if not same:
@@ -1189,11 +1194,11 @@ async def y_roles(conn):
     st = await _pend()
     check(code == 200 and st["status"] == "active" and st["n"] == 1, "… another admin admits it (active, one role)",
           f"{code} {dumps(b)} {dict(st)}")
-    # org B: the floor is not on (platform default) — today's behaviour: allowed, and SAID so
+    # org B: no org policy of its own — S29B Task 0 turned the role-grant floor ON at platform level, so the
+    # self-grant is refused there too (it was allowed with a 'floor not enforced' warning before S29B)
     code, b, _ = await api(U_B2, "PUT", f"/api/v1/admin/users/{U_B2}/role", {"role_id": rolesb["s30_settings"]})
-    check(code == 200 and any(x.get("code") == "floor_not_enforced" for x in b.get("sod_warnings") or []),
-          "where the org has not turned the floor on, a self-grant is still allowed as before S30 — with a "
-          "'floor not enforced' warning (reported, never silently tightened)", f"{code} {dumps(b.get('sod_warnings'))}")
+    check(code == 403, "S29B: with no org policy at all, a self-grant is refused by the platform floor (403)",
+          f"{code} {dumps(b)}")
     refused = await scoped(conn, ORG_A, "SELECT count(*) FROM sod_decisions WHERE org_id = $1 AND item_type = "
                                         "'role_grant' AND outcome = 'refused'", ORG_A, fetch="fetchval")
     check(refused >= 9, "every refused self-grant is recorded in sod_decisions (fixture org: 3 role, 1 permission "

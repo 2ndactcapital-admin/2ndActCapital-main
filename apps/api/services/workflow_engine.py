@@ -45,7 +45,7 @@ from SpiffWorkflow.bpmn.specs.defaults import NoneTask, ServiceTask, UserTask
 from SpiffWorkflow.util.task import TaskState
 
 from services.action_registry import REGISTRY
-from services import agent_proposals, workflow_todos
+from services import agent_proposals, workflow_autonomy, workflow_todos
 
 # SpiffWorkflow task-spec class names that map to our governed workflow_steps.
 _SERVICE_CLS = "ServiceTask"
@@ -306,10 +306,102 @@ async def _drive(workflow: BpmnWorkflow) -> tuple[list[str], str | None]:
                 and compute_effective_tier(step, resolved) == SUSPEND_TIER
             ):
                 return executed, step_key
-            result = await _execute_service_task(step_key)
+            # S29B: a trigger-started run's non-Tier-1 write step goes through the ONE autonomy decision
+            # (services.workflow_autonomy.decide_step) — execute as the owner's delegate, record in shadow, suspend for
+            # a person, or hold. A person-started run is unchanged.
+            result = await _run_service_step(step_key, resolved)
+            if result is _SUSPENDED:
+                return executed, step_key
             task.set_data(service_result=result)
             task.complete()
             executed.append(step_key)
+
+
+_SUSPENDED = object()
+# (run_id, step_key) → why the autonomy decision suspended the step for a person (read by _suspend_step's callers)
+_AUTONOMY_SUSPENSIONS: dict[tuple[str, str], str] = {}
+
+
+async def _run_service_step(step_key: str, resolved):
+    """S29B — one Service Task of a run, through the autonomy decision when the run was started by a trigger."""
+    ctx = _SERVICE_CONTEXT
+    pool = ctx.get("pool")
+    invocable = bool(getattr(resolved, "workflow_invocable", False))
+    if (pool is None or resolved is None or not invocable
+            or not workflow_autonomy.is_trigger_started(ctx.get("run_context"))):
+        return await _execute_service_task(step_key)
+    org_id, run_id = ctx.get("org_id"), ctx.get("run_id")
+    dec = await workflow_autonomy.decide_step(
+        pool, org_id=org_id, run_id=run_id, run_context=ctx.get("run_context"), started_by=ctx.get("actor_id"),
+        action=resolved, invocable=invocable)
+    if dec.mode == workflow_autonomy.MODE_ATTENDED:
+        return await _execute_service_task(step_key)
+    if dec.mode == workflow_autonomy.MODE_SUSPEND:
+        _AUTONOMY_SUSPENSIONS[(str(run_id), step_key)] = dec.reason
+        return _SUSPENDED
+    if dec.mode == workflow_autonomy.MODE_HOLD:
+        await workflow_autonomy.hold_alerts(pool, org_id=org_id, run_id=run_id, owner=dec.owner, reason=dec.reason)
+        raise workflow_autonomy.AutonomyHold(dec.reason)
+    if dec.mode == workflow_autonomy.MODE_SHADOW:
+        return workflow_autonomy.shadow_result(resolved, dec, org_id=org_id, run_id=run_id,
+                                               run_context=ctx.get("run_context"))
+    if dec.mode == workflow_autonomy.MODE_PLATFORM_JOB:
+        result = await _execute_service_task(step_key)
+        result["autonomy"] = dec.as_dict()
+        return result
+    # EXECUTE — claimed once per run-step, committed before the verb runs, as the trigger owner's delegate
+    rsid = (ctx.get("run_step_ids") or {}).get(step_key)
+    if rsid is None:
+        _AUTONOMY_SUSPENSIONS[(str(run_id), step_key)] = "no run-step row to claim — a person decides"
+        return _SUSPENDED
+    state, prior = await workflow_autonomy.claim_step(pool, org_id=org_id, run_id=run_id, run_step_id=rsid,
+                                                      decision=dec, action_key=resolved.key)
+    if state == "done":
+        return prior
+    if state == "attempted":
+        reason = (f"{resolved.key}: an earlier unattended attempt of this step did not finish — it is never written "
+                  "twice; a person must look at it")
+        await workflow_autonomy.hold_alerts(pool, org_id=org_id, run_id=run_id, owner=dec.owner, reason=reason)
+        raise workflow_autonomy.AutonomyHold(reason)
+    saved_actor = ctx.get("actor_id")
+    ctx["actor_id"] = dec.owner
+    try:
+        result = await _execute_service_task(step_key)
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        await workflow_autonomy.finish_step(pool, run_step_id=rsid, result={"action_registry_key": resolved.key,
+                                                                             "invoked": True, "ok": False},
+                                            error=detail)
+        await workflow_autonomy.hold_alerts(pool, org_id=org_id, run_id=run_id, owner=dec.owner,
+                                            reason=f"unattended write failed: {detail}")
+        raise
+    finally:
+        ctx["actor_id"] = saved_actor
+    result["autonomy"] = dict(dec.as_dict(), mode="unattended", delegate=workflow_autonomy.delegate_line(dec),
+                              idempotency_key=workflow_autonomy.idempotency_key(rsid))
+    await workflow_autonomy.finish_step(pool, run_step_id=rsid, result=result)
+    return result
+
+
+def _autonomy_mode_of(result: dict) -> str | None:
+    mode = ((result or {}).get("autonomy") or {}).get("mode")
+    return mode if mode in ("shadow", "unattended", "platform_job") else None
+
+
+async def _record_executed(conn, run_id, step_key: str, rsid, result: dict) -> None:
+    """Mark an executed Service Task completed, with its autonomy marker (S29B)."""
+    await conn.execute(
+        """
+        UPDATE workflow_run_steps
+        SET status = 'completed', started_at = COALESCE(started_at, now()), completed_at = COALESCE(completed_at, now()),
+            result = $2::jsonb, autonomy_mode = COALESCE($3, autonomy_mode)
+        WHERE id = $1
+        """,
+        rsid, json.dumps(result, default=str), _autonomy_mode_of(result),
+    )
+    if _autonomy_mode_of(result) == "shadow":
+        await conn.execute("UPDATE workflow_runs SET autonomy_mode = COALESCE(autonomy_mode, 'shadow') WHERE id = $1",
+                           run_id)
 
 
 async def _execute_service_task(step_key: str) -> dict:
@@ -572,7 +664,7 @@ async def start_workflow_run(
                 }
                 _SERVICE_CONTEXT = {
                     "pool": pool, "org_id": org_id, "actor_id": started_by,
-                    "run_context": context, "run_id": run_id,
+                    "run_context": context, "run_id": run_id, "run_step_ids": run_step_ids,
                 }
                 try:
                     executed, suspended_step_key = await _drive(workflow)
@@ -585,16 +677,7 @@ async def start_workflow_run(
                     rsid = run_step_ids.get(step_key)
                     if rsid is None:
                         continue
-                    await conn.execute(
-                        """
-                        UPDATE workflow_run_steps
-                        SET status = 'completed', started_at = now(), completed_at = now(),
-                            result = $2::jsonb
-                        WHERE id = $1
-                        """,
-                        rsid,
-                        json.dumps(_service_result_for(workflow, step_key)),
-                    )
+                    await _record_executed(conn, run_id, step_key, rsid, _service_result_for(workflow, step_key))
 
                 # Suspension point, pause point, or completion.
                 ready = None if suspended_step_key is not None else _ready_user_task(workflow)
@@ -608,6 +691,7 @@ async def start_workflow_run(
                         step_row=step_by_key.get(suspended_step_key, {}),
                         run_step_id=run_step_ids.get(suspended_step_key),
                         workflow=workflow,
+                        autonomy_reason=_AUTONOMY_SUSPENSIONS.pop((str(run_id), suspended_step_key), None),
                     )
                     status = RUN_STATUS_AWAITING_APPROVAL
                 elif ready is not None:
@@ -736,7 +820,7 @@ async def _run_step_id_for(conn, run_id, step_key: str):
 
 async def _suspend_step(
     conn, *, run_id, org_id, maker, step_key: str, step_row: dict, run_step_id,
-    workflow: BpmnWorkflow,
+    workflow: BpmnWorkflow, autonomy_reason: str | None = None,
 ) -> None:
     """Record a Tier-1 Service Task's suspension.
 
@@ -773,6 +857,10 @@ async def _suspend_step(
         "registry_tier": getattr(action, "tier", None),
         "effective_tier": effective_tier,
     }
+    if autonomy_reason:
+        # S29B: not a Tier-1 verb — an unattended step a PERSON must decide (a switch is off, a kill switch is on, the
+        # verb is 'never', or the version is not opted in). Same proposal, same S30 checker rule.
+        payload["autonomy_reason"] = autonomy_reason
     proposal_id = await agent_proposals.create_proposal(
         conn, org_id,
         agent_key=TIER_GATE_AGENT_KEY,
@@ -784,10 +872,12 @@ async def _suspend_step(
         """
         UPDATE workflow_run_steps
         SET status = $2, proposed_by = $3, agent_proposal_id = $4::uuid,
-            started_at = now()
+            started_at = now(),
+            autonomy_mode = CASE WHEN $5::text IS NULL THEN autonomy_mode ELSE 'held_for_person' END,
+            error_detail = COALESCE($5::text, error_detail)
         WHERE id = $1
         """,
-        run_step_id, STEP_STATUS_SUSPENDED, maker, proposal_id,
+        run_step_id, STEP_STATUS_SUSPENDED, maker, proposal_id, autonomy_reason,
     )
     await conn.execute(
         """
@@ -911,9 +1001,12 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
                     _resume_context = json.loads(_resume_context)
                 except (ValueError, TypeError):
                     _resume_context = {}
+            _run_step_ids = {r["step_key"]: r["id"] for r in await conn.fetch(
+                "SELECT ws.step_key, rs.id FROM workflow_run_steps rs JOIN workflow_steps ws "
+                "ON ws.id = rs.workflow_step_id WHERE rs.workflow_run_id = $1", run_id)}
             _SERVICE_CONTEXT = {
                 "pool": pool, "org_id": org_id, "actor_id": step["started_by"],
-                "run_context": _resume_context or {}, "run_id": run_id,
+                "run_context": _resume_context or {}, "run_id": run_id, "run_step_ids": _run_step_ids,
             }
             try:
                 executed, suspended_step_key = await _drive(workflow)
@@ -973,6 +1066,7 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
                         step_row=step_by_key.get(suspended_step_key, {}),
                         run_step_id=new_rsid,
                         workflow=workflow,
+                        autonomy_reason=_AUTONOMY_SUSPENSIONS.pop((str(run_id), suspended_step_key), None),
                     )
                     run_status = RUN_STATUS_AWAITING_APPROVAL
                 elif ready is not None:
@@ -1211,18 +1305,10 @@ async def resolve_tier_approval(
                 )
 
                 for step_key in more_executed:
-                    await conn.execute(
-                        """
-                        UPDATE workflow_run_steps rs
-                        SET status = 'completed', started_at = now(), completed_at = now(),
-                            result = $3::jsonb
-                        FROM workflow_steps ws
-                        WHERE rs.workflow_step_id = ws.id
-                          AND rs.workflow_run_id = $1 AND ws.step_key = $2
-                        """,
-                        run_id, step_key,
-                        json.dumps(_service_result_for(workflow, step_key)),
-                    )
+                    more_rsid = _run_step_ids.get(step_key)
+                    if more_rsid is not None:
+                        await _record_executed(conn, run_id, step_key, more_rsid,
+                                               _service_result_for(workflow, step_key))
 
                 ready = None if suspended_step_key is not None else _ready_user_task(workflow)
                 if suspended_step_key is not None:

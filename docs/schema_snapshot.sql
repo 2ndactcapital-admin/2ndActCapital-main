@@ -1679,6 +1679,7 @@
 --   status                                   text NOT NULL DEFAULT 'DELIVERED'::text
 --   error_detail                             text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   workflow_version_id                      uuid
 --   PRIMARY KEY domain_event_deliveries_pkey: (id)
 
 -- ===== domain_events =====
@@ -4510,6 +4511,26 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY vdr_deal_proposals_pkey: (id)
 
+-- ===== workflow_autonomy_settings =====
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
+--   owner_scope                              text NOT NULL
+--   org_id                                   uuid
+--   workflow_version_id                      uuid
+--   setting_key                              text NOT NULL
+--   setting_value                            jsonb NOT NULL
+--   requires_checker                         boolean NOT NULL
+--   reason                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   version_no                               integer NOT NULL DEFAULT 1
+--   maker_id                                 uuid
+--   checker_id                               uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY workflow_autonomy_settings_pkey: (id)
+
 -- ===== workflow_definitions =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -4535,6 +4556,10 @@
 --   error_detail                             text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   agent_proposal_id                        uuid
+--   autonomy_mode                            text
+--   delegate_for                             uuid
+--   idempotency_key                          text
+--   autonomy_claimed_at                      timestamp with time zone
 --   PRIMARY KEY workflow_run_steps_pkey: (id)
 
 -- ===== workflow_runs =====
@@ -4548,6 +4573,11 @@
 --   started_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   completed_at                             timestamp with time zone
 --   error_detail                             text
+--   autonomy_mode                            text
+--   shadow_review_outcome                    text
+--   shadow_reviewed_by                       uuid
+--   shadow_reviewed_at                       timestamp with time zone
+--   shadow_review_note                       text
 --   PRIMARY KEY workflow_runs_pkey: (id)
 
 -- ===== workflow_steps =====

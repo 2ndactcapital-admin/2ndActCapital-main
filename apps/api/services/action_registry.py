@@ -59,6 +59,11 @@ class AssistantAction:
     # Declared here or in services.sod.VERB_DUTIES (filled in at register()); a WRITE verb with no duty is refused
     # at workflow validation (services.workflow_nl_generator._validate) — S29b's autonomous writes rely on it.
     duty: str | None = None
+    # S29B (Task 2): the verb's AUTONOMY CLASS — 'never' | 'eligible' | 'eligible_with_cap'
+    # (services.workflow_autonomy.CLASSES). Declared here or in services.workflow_autonomy.VERB_AUTONOMY (filled in at
+    # register()); an unlisted WRITE verb is 'never' (fail closed). A 'never' verb never runs unattended, whatever a
+    # diagram says: a trigger-started run suspends it for a person.
+    autonomy_class: str | None = None
 
 
 class ActionRegistry:
@@ -70,6 +75,10 @@ class ActionRegistry:
             from services.sod import verb_duty
 
             action.duty = verb_duty(action)
+        if action.autonomy_class is None:
+            from services.workflow_autonomy import autonomy_class
+
+            action.autonomy_class = autonomy_class(action)
         self._actions[action.key] = action
 
     def get(self, key: str) -> AssistantAction | None:

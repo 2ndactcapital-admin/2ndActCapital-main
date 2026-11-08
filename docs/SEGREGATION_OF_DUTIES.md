@@ -34,7 +34,7 @@ the person:
      **self-approval allowed**, with a disclosure.
    - otherwise → **refused** by the default rule.
    - (The pre-S30 rule was `none` and the floor is not enforced → **allowed**, with a `floor_not_enforced` warning.
-     Only role grants are in this state today.)
+     No item type is in this state since S29B: role grants were the last, and their floor is now ON.)
 3. The org's own rules (`same_item` with extra related makers, `same_household`, `same_period` reciprocal approvals;
    block or warn) → **refused**, or allowed with a warning.
 4. **Allowed.**
@@ -58,8 +58,14 @@ self-approval on for one: the service refuses with 403 before anything is writte
   `never`.
 - `enforce_floor = true` everywhere the old rule already refused the maker.
 - `enforce_floor = false` for **role grants**, because no rule existed: an admin could change their own role.
+  **Superseded by S29B Task 0 (Joe, 2026-11-08, "in order to pass security exams, that rule has to be turned on"):**
+  platform policy `policy:role_grant` **v2** sets `enforce_floor = true` for every organization (v1 retired, kept; the
+  change audited as `sod.platform_rule_versioned`). No one grants themselves a role, profile or permission set, on any
+  grant path, from any login of the same person, Super Admin included. An organization cannot turn it off: an org
+  policy can only tighten `enforce_floor` (`Context.policy()` ORs the platform value in), and `draft_rule` refuses the
+  relaxation with 403.
 
-An org admin can turn the role-grant floor ON. Only a Super Admin (platform policy) can turn a floor OFF. The person test
+Since S29B the role-grant floor is ON for everyone (an org has nothing to turn on). Only a Super Admin (platform policy) can turn a floor OFF. The person test
 changes no live decision: no maker column references a retired row (docs/S30_DISCOVERY.md 1c).
 
 ## Self-approval, governed
@@ -152,3 +158,10 @@ Who can do what:
   the platform catalog only.
 - `_verify_cleanup.cleanup` always sets `sod.teardown = 'fixture'`, so every verify's fixture approvals (now recorded in
   the append-only decision log) tear down by fixture id.
+
+## S29B — unattended workflow writes
+
+Two item types decide S29B's switches: `workflow_autonomy_setting` (an org turning unattended writes on, raising a
+limit, needing fewer shadow runs) and `workflow_autonomy_optin` (a workflow version signed off to run unattended — the
+makers are the requester AND every owner of a trigger that starts that workflow, so the trigger owner is never the
+checker). Site: `workflow_autonomy.decide_setting`. See docs/WORKFLOW_AUTONOMY.md.

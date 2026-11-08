@@ -404,7 +404,34 @@ async def _read_rls(conn, query, *args):
         return await conn.fetch(query, *args)
 
 
+#: S29B FIX 1 — since S30, agent_proposals.review_proposal records every maker-checker decision in the append-only
+#: sod_decisions (FK to organizations). This script's flow leaves EXPECTED rows there for ORG_A (item_type
+#: 'workflow_step': the maker refused as checker of their own step, service + HTTP; reviewer 1's approvals). The guard
+#: allows a delete only under the documented 'sod.teardown' = 'fixture' GUC and NOT as app_service, so they are removed
+#: on the operator DSN, keyed by this script's fixture org / user ids, before the organizations delete.
+OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
+SOD_DECISIONS_FIXTURE_SQL = "org_id = ANY($1::uuid[]) OR checker_id = ANY($2::uuid[])"
+
+
+async def clear_fixture_sod_decisions() -> int:
+    from _db_connect import connect, resolve_dsn
+
+    dsn, how = await resolve_dsn(OPERATOR_DSN_VAR)
+    if not dsn:
+        raise RuntimeError(f"no operator DSN to clear fixture sod_decisions: {how}")
+    op = await connect(dsn)
+    try:
+        async with op.transaction():
+            await op.execute("SELECT set_config('sod.teardown', 'fixture', true)")
+            res = await op.execute(f"DELETE FROM sod_decisions WHERE {SOD_DECISIONS_FIXTURE_SQL}",
+                                   ALL_FIXTURE_ORGS, ALL_FIXTURE_USERS)
+        return int(res.split()[-1])
+    finally:
+        await op.close()
+
+
 async def teardown(conn) -> None:
+    await clear_fixture_sod_decisions()
     async with conn.transaction():
         await _super(conn)
         stray_ids = [
@@ -766,6 +793,29 @@ async def main_async() -> int:
     REGISTRY.sync_catalog = _hermetic_sync_catalog
 
     conn = await asyncpg.connect(dsn, statement_cache_size=0, ssl="require")
+    if "--teardown-only" in sys.argv:
+        # S29B FIX 1 — the teardown alone, then zero fixture rows in organizations / sod_decisions / user_roles /
+        # user_permission_sets / users (no seed, no flow).
+        try:
+            try:
+                await teardown(conn)
+            except Exception as _exc:  # noqa: BLE001
+                check(False, "TEARDOWN raised", f"{type(_exc).__name__}: {_exc}")
+            async with conn.transaction():
+                await _super(conn)
+                for t, sql in (("organizations", "id = ANY($1::uuid[]) AND $2::uuid[] IS NOT NULL"),
+                               ("sod_decisions", "org_id = ANY($1::uuid[]) OR checker_id = ANY($2::uuid[])"),
+                               ("user_roles", "user_id = ANY($2::uuid[]) AND $1::uuid[] IS NOT NULL"),
+                               ("user_permission_sets", "user_id = ANY($2::uuid[]) AND $1::uuid[] IS NOT NULL"),
+                               ("users", "id = ANY($2::uuid[]) OR org_id = ANY($1::uuid[])")):
+                    n = await conn.fetchval(f"SELECT count(*) FROM {t} WHERE {sql}", ALL_FIXTURE_ORGS,
+                                            ALL_FIXTURE_USERS)
+                    check(n == 0, f"--teardown-only: zero fixture rows in {t}", f"{n}")
+        finally:
+            REGISTRY.sync_catalog = _original_sync_catalog
+            await conn.close()
+        print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+        return 0 if _n_fail == 0 else 1
     try:
         await teardown(conn)
         await task1_report()
@@ -1173,7 +1223,12 @@ async def main_async() -> int:
 
     finally:
         try:
-            await teardown(conn)
+            # S29B FIX 1 — a teardown exception used to escape this finally, replacing any in-flight body exception and
+            # skipping the leftover check; now it is a recorded FAIL and the leftover count still runs.
+            try:
+                await teardown(conn)
+            except Exception as _exc:  # noqa: BLE001
+                check(False, "TEARDOWN raised", f"{type(_exc).__name__}: {_exc}")
             async with conn.transaction():
                 await _super(conn)
                 leftovers = await conn.fetchval(
@@ -1193,6 +1248,8 @@ async def main_async() -> int:
                             + (SELECT count(*) FROM profiles WHERE org_id = ANY($2::uuid[])
                                                              AND is_seed = false)
                             + (SELECT count(*) FROM users WHERE id = ANY($3::uuid[]))
+                            + (SELECT count(*) FROM sod_decisions WHERE org_id = ANY($2::uuid[])
+                                                                  OR checker_id = ANY($3::uuid[]))
                             + (SELECT count(*) FROM organizations WHERE id = ANY($2::uuid[]))""",
                     ALL_DEF_IDS, ALL_FIXTURE_ORGS, ALL_FIXTURE_USERS, f"%{NAME_MARKER}%",
                     ROLE_REVIEWER_A, ROLE_REVIEWER_B, ROLE_INTERNAL_A,
@@ -1201,7 +1258,7 @@ async def main_async() -> int:
                 leftovers == 0,
                 "TEARDOWN: zero leftover fixture rows across workflow_definitions/"
                 "versions/steps/runs/run_steps, agent_proposals, member_todos, "
-                "audit_log, user_roles/roles, profiles, users, organizations",
+                "audit_log, user_roles/roles, profiles, users, sod_decisions, organizations",
                 f"found {leftovers}",
             )
         finally:
