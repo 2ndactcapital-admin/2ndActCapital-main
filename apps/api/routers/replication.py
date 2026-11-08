@@ -45,6 +45,7 @@ from services import replica_holdings as H
 from services import replica_parsers as P
 from services import replica_schedule as RS
 from services import replica_terms as T
+from services import disclosures as DL
 from services.authz import require_permission
 from services.database import get_pool
 from services.securities_global import SecuritiesGlobalError
@@ -212,6 +213,7 @@ async def lookup(request: Request, ticker: str | None = Query(default=None, max_
         fund = await H.resolve_fund(pool, ticker=ticker, cusip=cusip, http=http, create=False)
         sec = fund.sec or {}
         async with pool.acquire() as conn:
+            tmpl = await DL.text_for(conn, "replica.fund_affiliation", org_id=org_id)   # DISCLOSURES1
             try:
                 source = await H.choose_source(conn, ticker=fund.ticker, series_id=sec.get("series_id"))
                 source_out = {"key": source["key"], "label": source["issuer"], "parser": source["parser"]}
@@ -227,7 +229,7 @@ async def lookup(request: Request, ticker: str | None = Query(default=None, max_
     finally:
         await http.aclose()
     return {"ticker": fund.ticker, "cusip": fund.cusip, "name": fund.name, "display_name": T.display_name_for(fund.ticker),
-            "disclosure": T.disclosure_for(fund.ticker), "in_security_master": fund.global_security_id is not None,
+            "disclosure": T.disclosure_for(fund.ticker, tmpl), "in_security_master": fund.global_security_id is not None,
             "sec": sec, "holdings_source": source_out, "existing_entry_id": str(existing) if existing else None}
 
 
@@ -284,13 +286,13 @@ async def add_entry(request: Request, body: EntryCreate):
     return {"entry": _entry_out(entry), "steps": {"holdings": holdings, "terms": terms}}
 
 
-def _entry_out(e: dict) -> dict:
+def _entry_out(e: dict, template: str | None = None) -> dict:
     return {"id": str(e["id"]), "display_name": e["display_name"], "ticker": e["ticker"], "cusip": e["cusip"],
             "fund_name": e["fund_name"], "issuer": e["issuer"], "instrument_class": e["instrument_class"],
             "status": e["status"], "holdings_source_key": e["holdings_source_key"],
             "global_security_id": str(e["global_security_id"]), "sec_cik": e["sec_cik"],
             "sec_series_id": e["sec_series_id"], "sec_class_id": e["sec_class_id"],
-            "disclosure": T.disclosure_for(e["ticker"])}
+            "disclosure": T.disclosure_for(e["ticker"], template)}
 
 
 def _snap_out(s: dict | None) -> dict | None:
@@ -321,6 +323,7 @@ async def get_entry(request: Request, entry_id: str, snapshot_id: str | None = Q
             entry = await T.load_entry(conn, org_id, entry_id)
         except Exception as exc:  # noqa: BLE001
             _raise(exc)
+        tmpl = await DL.text_for(conn, "replica.fund_affiliation", org_id=org_id)   # DISCLOSURES1
         fund_id = str(entry["global_security_id"])
         snaps = [dict(r) for r in await conn.fetch(
             "SELECT * FROM portfolio.replica_holdings_snapshots WHERE fund_global_security_id = $1::uuid "
@@ -395,7 +398,7 @@ async def get_entry(request: Request, entry_id: str, snapshot_id: str | None = Q
         if can_write and (draft or approved) else [],
     }
     return {
-        "entry": _entry_out(entry),
+        "entry": _entry_out(entry, tmpl),
         "permissions": {**perms, "can_approve_draft": perms["can_approve"] and bool(draft) and not is_maker,
                         "is_maker_of_draft": is_maker},
         "vocabularies": {**vocab, **terms_vocab},

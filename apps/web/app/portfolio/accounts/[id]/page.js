@@ -8,6 +8,7 @@ import HeldAwayPanel from "@/components/heldaway/HeldAwayPanel";
 import AuthorityPanel from "@/components/authority/AuthorityPanel";
 import LotMethodPanel from "@/components/lotmethod/LotMethodPanel";
 import OneOffForm from "@/components/authority/OneOffForm";
+import { RecordDisclosures } from "@/components/disclosures/Disclosures";
 
 // REP5 — one account: its model, settings, a change awaiting approval, the
 // transition plan and its proposals. The envelope (flags, actions, registry
@@ -61,6 +62,15 @@ export default async function AccountPage({ params }) {
       lotMethod = null;
     }
   }
+  // DISCLOSURES1 — the account's disclosures: in force for it, and its overrides (no view_disclosures: no panel)
+  let disclosures = null;
+  if (!error) {
+    try {
+      disclosures = await fetchAPI(`/api/v1/disclosures/accounts/${encodeURIComponent(id)}`);
+    } catch {
+      disclosures = null;
+    }
+  }
   const holdings = Array.isArray(heldAway?.positions?.positions) ? heldAway.positions.positions : [];
   return (
     <AppShell user={session.user}>
@@ -78,6 +88,8 @@ export default async function AccountPage({ params }) {
             <OneOffForm envelope={envelope} holdings={holdings} />
             <AccountModelPanel initialEnvelope={envelope} />
             {tax ? <AccountTaxPanel envelope={tax} /> : null}
+            {disclosures ? <section><h2 className="font-serif text-xl text-navy">Disclosures</h2>
+              <RecordDisclosures kind="account" id={id} initialEnvelope={disclosures} /></section> : null}
           </div>
         )}
       </div>

@@ -1399,7 +1399,13 @@ async def y_disclosures(conn):
     disc = det.get("disclosures") or {}
     risks = [r.get("key") for r in disc.get("risks") or []]
     m = det.get("margin") or {}
-    check(risks == list(R.RISK_KEYS) and len(risks) == 6, "the six risks (AQR's list) are shown", dumps(risks))
+    # DISCLOSURES1: the risks come from the disclosure library (long_short.risks in force for the account) — the
+    # built-in six when none is in force; a published version may add risks (margin / short-sale) but keeps AQR's six
+    lib = disc.get("library") or {}
+    check(bool(set(R.RISK_KEYS) <= set(risks) and len(risks) == len(set(risks))
+               and (risks == list(R.RISK_KEYS) if lib.get("source") != "library" else True)),
+          "the six risks (AQR's list) are shown — exactly the built-in six unless a library version is in force",
+          f"{dumps(risks)} source {lib.get('source')}")
     check("525.00" in (disc.get("borrow_estimate") or {}).get("text", "") and h["margin_initial"] in
           m.get("initial", {}).get("text", "") and h["margin_maintenance"] in m.get("maintenance", {}).get("text", ""),
           "the borrow-cost estimate and the margin requirement AS DECLARED by the custodian (50% / 30% of the short "

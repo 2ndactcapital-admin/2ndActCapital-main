@@ -142,9 +142,21 @@ def display_name_for(ticker: str) -> str:
     return f"Holdings of {ticker.upper()}"
 
 
-def disclosure_for(ticker: str) -> str:
-    return (f"Replicates the published holdings of {ticker.upper()}; not affiliated with or endorsed by the "
-            f"fund's sponsor or index provider.")
+#: DISCLOSURES1 — the library key ``replica.fund_affiliation``'s built-in text (its offline fallback); ``{ticker}`` is
+#: replaced by the fund's ticker. A published library version (platform default or the org's) replaces it.
+FUND_DISCLOSURE_TEMPLATE = ("Replicates the published holdings of {ticker}; not affiliated with or endorsed by the "
+                            "fund's sponsor or index provider.")
+
+
+def disclosure_for(ticker: str, template: str | None = None) -> str:
+    return (template or FUND_DISCLOSURE_TEMPLATE).replace("{ticker}", ticker.upper())
+
+
+async def disclosure_for_org(conn, org_id, ticker: str) -> str:
+    """The fund-replica disclosure through the library (DISCLOSURES1), the built-in text when none is in force."""
+    from services import disclosures as DL
+
+    return disclosure_for(ticker, await DL.text_for(conn, "replica.fund_affiliation", org_id=org_id))
 
 
 def _dumps(obj) -> str:

@@ -625,7 +625,7 @@ async def build_model(pool, *, org_id, actor_id, entry_id, p: BuildParams, descr
                 name = await _model_name(conn, org_id, src.entry, p)
                 model, r1 = await M.create_fund_model(
                     conn, org_id=org_id, actor_id=actor["id"], name=name, replica_security_id=src.entry["id"],
-                    disclosure=T.disclosure_for(src.entry["ticker"]), description=description)
+                    disclosure=await T.disclosure_for_org(conn, org_id, src.entry["ticker"]), description=description)
                 refs.append(r1)
                 await conn.execute(
                     f"INSERT INTO {T_KEY} (org_id, replica_security_id, custodian_code, method, top_n, model_id, "

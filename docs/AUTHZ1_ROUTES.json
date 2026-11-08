@@ -1,5 +1,5 @@
 {
- "app_route_count": 881,
+ "app_route_count": 892,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -15630,6 +15630,236 @@
    "name": "execute",
    "note": "",
    "path": "/api/v1/long-short/proposals/{proposal_id}/execute",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_disclosures",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_disclosures"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.disclosures",
+   "name": "list_route",
+   "note": "",
+   "path": "/api/v1/disclosures",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_disclosures",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_disclosures"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.disclosures",
+   "name": "resolve_route",
+   "note": "",
+   "path": "/api/v1/disclosures/resolve",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_disclosures",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_disclosures"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.disclosures",
+   "name": "key_route",
+   "note": "",
+   "path": "/api/v1/disclosures/keys/{key}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_disclosures",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_disclosures"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.disclosures",
+   "name": "household_route",
+   "note": "",
+   "path": "/api/v1/disclosures/households/{household_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_disclosures",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_disclosures"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.disclosures",
+   "name": "account_route",
+   "note": "",
+   "path": "/api/v1/disclosures/accounts/{account_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_disclosures",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_disclosures"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.disclosures",
+   "name": "upload_route",
+   "note": "",
+   "path": "/api/v1/disclosures/keys/{key}/versions",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_disclosures",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_disclosures"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.disclosures",
+   "name": "publish_route",
+   "note": "",
+   "path": "/api/v1/disclosures/versions/{version_id}/publish",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_disclosures",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_disclosures"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.disclosures",
+   "name": "retire_route",
+   "note": "",
+   "path": "/api/v1/disclosures/versions/{version_id}/retire",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "active"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.disclosures",
+   "name": "mine_route",
+   "note": "OWN ROWS: published member-audience disclosures in force for the caller's own households / accounts (DISCLOSURES1, DL.member_disclosures)",
+   "path": "/api/v1/disclosures/mine",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "active"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.disclosures",
+   "name": "file_route",
+   "note": "DISCLOSURES1: view_disclosures \u2192 any version the org can see (RLS); anyone else \u2192 only a version in their own /mine set (else 404)",
+   "path": "/api/v1/disclosures/versions/{version_id}/file",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "active"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.disclosures",
+   "name": "acknowledge_route",
+   "note": "own row only (DISCLOSURES1: the caller acknowledges the version IN FORCE; a member only one in their own /mine set)",
+   "path": "/api/v1/disclosures/acknowledgements",
    "public": false,
    "write": true
   },

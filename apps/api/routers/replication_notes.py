@@ -128,7 +128,7 @@ def _envelope(principal, body: dict) -> dict:
 
 
 async def _gate(conn, org_id) -> dict:
-    return HP.gate(await HP.current(conn, org_id))
+    return await HP.gate_for(conn, org_id)
 
 
 async def _replica_env(conn, principal, org_id, replica_id) -> dict:

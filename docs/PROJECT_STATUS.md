@@ -342,6 +342,71 @@ This file starts with the email item below.
 ---
 
 
+## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. DISCLOSURES1 — one disclosure library for the whole platform: keys, versions (each a FILE in R2 + its summary), platform → org → household → account overrides, maker-checker publish, acknowledgements by version; today's hard-coded disclosures moved in; schema APPLIED; defaults written (loader --dry-run only); verify WRITTEN, not yet run (2026-11-08)
+
+Branch disclosures1-work (base 42c5c57). Task 1 findings: docs/DISCLOSURES1_DISCOVERY.md. The library, the
+rules and the operator step: **docs/DISCLOSURES.md**. Schema: docs/disclosures1_part1.sql, APPLIED with
+`apps/api/scripts/_apply_disclosures1.py --all` ("SCHEMA OK", read back from the catalog). The script created:
+
+* `public.disclosures`, `public.disclosure_versions`, `public.disclosure_acknowledgements`, each with RLS on and a
+  policy for every operation;
+* the partial uniques `disclosures_key_live_uq`, `disclosure_versions_no_uq` and `disclosure_versions_r2_key_uq`;
+* the maker-checker CHECK;
+* the (version id, hash) composite FK;
+* the guard triggers;
+* the permissions `view_disclosures` / `manage_disclosures`, granted to every org_admin role (and to every new
+  org's org_admin by default, `rbac.ORG_ADMIN_DEFAULT_PERMISSIONS`).
+
+- **Library + resolver — DONE.** `services/disclosures.py`. `resolve_many` is ONE query: the most specific
+  PUBLISHED version in force on the as-of date (account > household > org > platform; then the latest effective
+  date, then the highest version number). A draft never shows. A retired version stops on its retire date.
+  `resolve_safe` never raises: on any failure it returns the exact pre-library text (the fallback), inside a
+  savepoint.
+- **R2 folders — DONE.** Uploads go through `storage.upload_bytes` and land at
+  `disclosures/platform|orgs/<org>[/households/<id>|/accounts/<id>]/<key>/v<N>-<sha256>.<ext>`. A new version
+  is a new object, never an overwrite. Reads are PROXIED (`GET /disclosures/versions/{id}/file`) under the
+  caller's RLS, and a read is refused if the bytes no longer match the recorded hash. A member reads only
+  `/disclosures/mine`.
+- **Admin page — DONE.** Admin → Settings → Disclosures (`/admin/disclosures`): the list (in force for this org
+  and why), the versions, Upload (draft), Publish (never the uploader; a second Super Admin for a platform
+  default) and Retire. The household page has a Disclosures tab and the account page a Disclosures panel
+  (overrides). Every control comes from the server's envelope and fails closed. Every action is audited.
+- **Acknowledgements — DONE.** `require_current` checks that the version in force NOW was acknowledged (id + hash).
+  rep13's long/short acknowledge also records the in-force `long_short.risks` version. Submit and approval
+  refuse a stale one ("a newer version was published since…"), so the maker acknowledges again. With no library
+  version in force, rep13's rule is unchanged.
+- **Migration — DONE.** Each piece of hard-coded text now has a key, and each key's fallback is its exact old
+  text:
+  * the rep13 risks → `long_short.risks`;
+  * `NO_POLICY` / the policy text → `hypothetical.performance` (`HP.gate_for`: an org-or-lower version replaces
+    an approved policy's text; the platform default never does; no policy is still staff-only, so the gate
+    itself is unchanged);
+  * `PRICE_GAP_NOTE` → `prices.internal_use_notice`;
+  * the `"estimate"` label → `tax.estimate_label`;
+  * `disclosure_for` → `replica.fund_affiliation`.
+
+  [FIND] The prompt's "estimate — confirm with your tax adviser" text existed nowhere; it is now the default
+  sentence. [FIND] The fee-invoice disclosure is already a managed fee41 template and was not moved. [FIND] The
+  footer's `/disclosures` link has no page.
+- **Defaults — DONE (written; not loaded).** `docs/disclosures/defaults/<key>.md` × 9, each marked "default — have
+  counsel review" and in our own words:
+  * `long_short.risks`: AQR's six + unlimited short loss, margin calls, borrow recall, borrow cost changes;
+  * `direct_indexing.tax_overlay` (Titan's structure);
+  * `section351.exit` (25 % / 50 % looked through, 80 % control, owners, assets, basis, failure, new-fund risk);
+  * `options.overlay`, `notes.replica`, `hypothetical.performance`, `tax.estimate_label`,
+    `prices.internal_use_notice`, `replica.fund_affiliation`.
+
+  `load_disclosure_defaults.py --dry-run` ran: 9 validated, nothing written. **OPERATOR:** run it with
+  `--drafter <super admin>`, then publish each draft as a SECOND Super Admin.
+- **verify_rep13 / verify_rep4 updated** (the text they assert now comes from the library): the six risks must be
+  present (exactly the six when no library version is in force); the fund disclosure is compared with the
+  resolver's text.
+- **Routes:** 11 new, documented in docs/AUTHZ1_ROUTES.* and docs/VISIBILITY1_ROUTES.md (regenerated;
+  `--check` CURRENT for both).
+- **Verify:** `apps/api/scripts/verify_disclosures1.py`, WRITTEN, NOT RUN. Regression: verify_rep13.py once,
+  flat, VERIFY_NESTED=1, 2700 s. It is listed in scripts/regression_set.txt. Node tests:
+  `tests/disclosures1/disclosures1.test.mjs` 9/9 (rep13 + nav 28/28).
+
 ## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CATCHALL1 — the small-fixes sweep: bulk-approve wording, ONE busy indicator, direct-asset End / Edit / History, an option contract defined from the picker, the HollisMuse Lows, three pre-existing verify FAILs; schema APPLIED; verify WRITTEN, not yet run (2026-11-07)
 
 Branch catchall1-work (base 8b7e8f2). Task 1 findings: docs/CATCHALL1_DISCOVERY.md. Schema: docs/catchall1_part1.sql

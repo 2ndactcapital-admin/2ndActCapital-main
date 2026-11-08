@@ -48,6 +48,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from routers.entities import get_org_id
+from services import disclosures as DL
 from services import harvest as HV
 from services import human_tasks as HT
 from services import loss_bank as LB
@@ -226,11 +227,12 @@ async def overview(request: Request):
     try:
         async with pool.acquire() as conn:
             d = await TO.dashboard(conn, org_id)
+            note = await DL.resolve_safe(conn, "tax.estimate_label", org_id=org_id)   # DISCLOSURES1
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
     perms = _permissions(principal)
     actions = ["refresh_loss_bank", "scan_account"] if perms["can_write"] else []
-    return {**_env(principal, dashboard=d), "actions": actions}
+    return {**_env(principal, dashboard=d), "estimate_disclosure": DL.public(note), "actions": actions}
 
 
 @router.get("/tax/subjects")

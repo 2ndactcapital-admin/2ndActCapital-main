@@ -54,6 +54,7 @@ from services import options_sleeve as OS
 from services import options_tax_gate as G
 from services import rebalance_proposals as RP
 from services import replica_terms as T
+from services import disclosures as DL
 from services.authz import require_permission
 from services.database import get_pool
 
@@ -208,6 +209,7 @@ async def options_sleeve(request: Request, entry_id: str,
     try:
         async with pool.acquire() as conn:
             entry = await T.load_entry(conn, org_id, entry_id)
+            tmpl = await DL.text_for(conn, "replica.fund_affiliation", org_id=org_id)   # DISCLOSURES1
             is_options = entry["instrument_class"] in OS.OPTIONS_CLASSES
             kind = OS.KIND_FOR_CLASS.get(entry["instrument_class"])
             terms = await T.live_approved(conn, entry["id"])
@@ -225,7 +227,7 @@ async def options_sleeve(request: Request, entry_id: str,
         _raise(exc)
     return _envelope(principal, {
         "entry": {"id": str(entry["id"]), "display_name": entry["display_name"], "ticker": entry["ticker"],
-                  "instrument_class": entry["instrument_class"], "disclosure": T.disclosure_for(entry["ticker"])},
+                  "instrument_class": entry["instrument_class"], "disclosure": T.disclosure_for(entry["ticker"], tmpl)},
         "is_options_class": is_options, "kind": kind,
         "terms": {"version_id": str(terms["id"]) if terms else None,
                   "missing": OS.missing_terms(terms, kind) if is_options else []},

@@ -33,6 +33,7 @@ from services import human_tasks as HT
 from services import models as M
 from services import replica_models as RM
 from services import replica_terms as T
+from services import disclosures as DL
 from services import replica_viability as RV
 from services.authz import require_permission
 from services.database import get_pool
@@ -136,12 +137,13 @@ async def model_tab(request: Request, entry_id: str):
         reports = await RV.list_reports(conn, org_id, src.entry["id"], limit=10)
         events = await RM.monitoring_events(conn, org_id, src.entry["id"])
         vocab = await _vocab(conn, perms)
+        tmpl = await DL.text_for(conn, "replica.fund_affiliation", org_id=org_id)   # DISCLOSURES1
     snap = src.snapshot
     age = (RV._today() - snap["as_of"]).days if snap else None
     e = src.entry
     return {
         "entry": {"id": str(e["id"]), "ticker": e["ticker"], "display_name": e["display_name"],
-                  "instrument_class": e["instrument_class"], "disclosure": T.disclosure_for(e["ticker"])},
+                  "instrument_class": e["instrument_class"], "disclosure": T.disclosure_for(e["ticker"], tmpl)},
         "permissions": perms,
         "vocabularies": vocab,
         "sources": {

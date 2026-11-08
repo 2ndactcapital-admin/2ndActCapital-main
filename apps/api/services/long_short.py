@@ -40,6 +40,7 @@ from decimal import Decimal
 
 from services import account_models as AM
 from services import authority as AU
+from services import disclosures as DL
 from services import human_tasks as HT
 from services import long_short_rules as R
 from services import rebalance_engine as E
@@ -62,9 +63,48 @@ TE_MIN_OBS_SETTING = "replication.long_short.te_min_observations"
 DEFAULT_TE_MIN_OBS = 60
 SETTING_FIELDS = ("extension", "gross_long", "gross_short", "tracking_error_limit", "max_short_per_name",
                   "borrow_cost_ceiling_bps", "exclusions", "note")
-ACK_ITEMS = R.RISK_KEYS + ("borrow_estimate", "margin_requirement", "member_summary")
+ACK_EXTRA = ("borrow_estimate", "margin_requirement", "member_summary")
+ACK_ITEMS = R.RISK_KEYS + ACK_EXTRA
 ACK_LABELS = {**dict(R.RISKS), "borrow_estimate": "The borrow-cost estimate",
               "margin_requirement": "The margin requirement", "member_summary": "The member-facing summary"}
+#: DISCLOSURES1 — the risks come from the disclosure library (key long_short.risks, most specific version in force for
+#: the account); with none in force, the built-in six (R.RISKS — the exact pre-library text).
+RISKS_KEY = "long_short.risks"
+ACK_SCREEN = "long_short.proposal"
+
+
+def ack_items_of(risks: list[dict] | None) -> list[dict]:
+    """The acknowledgement items for a set of shown risks ([{key, text}]) + the borrow / margin / summary items."""
+    rs = risks or [{"key": k, "text": t} for k, t in R.RISKS]
+    return [{"key": r["key"], "label": r["text"]} for r in rs] + [{"key": k, "label": ACK_LABELS[k]} for k in ACK_EXTRA]
+
+
+async def library_risks(conn, org_id, account_id) -> dict:
+    """The long/short risks in force for the account (library, else the built-in six) — never raises."""
+    res = await DL.resolve_safe(conn, RISKS_KEY, org_id=org_id, account_id=account_id)
+    items = res["items"] if res["items"] else [{"key": k, "text": t} for k, t in R.RISKS]
+    return {**res, "items": items}
+
+
+def _subject(p: dict) -> DL.Subject:
+    return DL.Subject("long_short_proposal", str(p["id"]), str(p["account_id"]) if p.get("account_id") else None)
+
+
+async def disclosure_state(conn, org_id, p: dict, user_id=None) -> dict:
+    """Whether the maker's (or ``user_id``'s) acknowledgement names the long_short.risks version in force NOW. With no
+    library version in force, rep13's own acknowledgement is the whole rule (``required`` False)."""
+    who = user_id or p.get("maker_id")
+    try:
+        async with conn.transaction():
+            st = await DL.ack_state(conn, org_id=org_id, user_id=who, key=RISKS_KEY, subject=_subject(p))
+    except Exception as exc:  # noqa: BLE001 — the library unreadable: rep13's rule alone, flagged
+        log.warning("long/short disclosure state: %s", exc)
+        lib = await library_risks(conn, org_id, p.get("account_id"))
+        return {"resolved": lib, "required": False, "acknowledged": None, "current": True, "degraded": True,
+                "items": ack_items_of(lib["items"])}
+    res = st["resolved"]
+    items = res["items"] if res["items"] else [{"key": k, "text": t} for k, t in R.RISKS]
+    return {**st, "items": ack_items_of(items)}
 SUIT_STATUS_LABELS = {"pending_approval": "Awaiting a second person's approval", "approved": "Approved",
                       "rejected": "Rejected", "removed": "Removed"}
 #: test seam — the verify replaces it with a fixture series reader at the same signature
@@ -1056,8 +1096,12 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, model: di
                            "not a permanent saving", "short_rule": "short positions' gains and losses are "
                                                                    "short-term (IRC §1233)"}
         tax_sentence = f"Estimated tax benefit from harvesting in this proposal: ${R.cents(val)} (estimate)."
+    lib = await library_risks(conn, org_id, account["id"])      # DISCLOSURES1 — long_short.risks in force
     disc = R.disclosures(borrow_total=bb["borrow_cost_annual"], rebate_total=bb["rebate_annual"], margin=margin,
-                         gross_long=Decimal(ls["gross_long"]), gross_short=Decimal(ls["gross_short"]))
+                         gross_long=Decimal(ls["gross_long"]), gross_short=Decimal(ls["gross_short"]),
+                         risks=[(x["key"], x["text"]) for x in lib["items"]])
+    disc["library"] = {k: lib.get(k) for k in ("key", "source", "why", "scope", "version_id", "version_no",
+                                               "content_sha256", "title", "file_href", "effective_from")}
     summary = R.member_summary(account=account["account_number_masked"], gross_long=Decimal(ls["gross_long"]),
                                gross_short=Decimal(ls["gross_short"]),
                                shorts=sum(1 for t in res.trades if t.side in ("sell_short", "buy_to_cover")),
@@ -1150,22 +1194,19 @@ def details_out(r: dict | None) -> dict | None:
     for k in ("acknowledged_at", "created_at", "valid_from", "valid_to", "system_from", "system_to"):
         out[k] = _iso(out.get(k))
     out["blocking_labels"] = [{"key": b, "label": R.BLOCKING_LABELS.get(b, b)} for b in out["blocking"] or []]
-    out["acknowledgement_items"] = [{"key": k, "label": ACK_LABELS[k]} for k in ACK_ITEMS]
+    out["acknowledgement_items"] = ack_items_of((out.get("disclosures") or {}).get("risks"))
     return out
 
 
 # ═══ Submit, approval, acknowledgement ═══════════════════════════════════════
 async def acknowledge(pool, *, org_id, actor_id, proposal_id, items: list[str]) -> dict:
-    """The adviser (the proposal's maker) acknowledges every disclosure — the six risks, the borrow estimate, the
-    margin requirement and the member summary — before submitting. Recorded once."""
+    """The adviser (the proposal's maker) acknowledges every disclosure — the risks in force (DISCLOSURES1: the
+    library's long_short.risks version for the account, else the built-in six), the borrow estimate, the margin
+    requirement and the member summary — before submitting. rep13's record on the proposal is written once; the
+    library acknowledgement names the VERSION (id + hash). When a newer version is published, acknowledging again
+    records it (the proposal's own record stays as first written)."""
     from services import rebalance_proposals as RP
 
-    missing = [k for k in ACK_ITEMS if k not in set(items or [])]
-    extra = sorted(set(items or []) - set(ACK_ITEMS))
-    if extra:
-        raise LongShortError(f"not a disclosure: {extra}")
-    if missing:
-        raise LongShortError("acknowledge every disclosure: missing " + ", ".join(ACK_LABELS[k] for k in missing))
     async with pool.acquire() as conn:
         actor = await HT.assert_human(conn, actor_id, org_id)
         p = await RP.load(conn, org_id, proposal_id)
@@ -1173,33 +1214,62 @@ async def acknowledge(pool, *, org_id, actor_id, proposal_id, items: list[str]) 
             raise MakerCheckerViolation("the disclosures are acknowledged by the adviser who made the proposal")
         if p["status"] != "draft":
             raise LongShortConflict("only a draft is acknowledged (before it is submitted)")
+        state = await disclosure_state(conn, org_id, p, actor["id"])
+        want = [x["key"] for x in state["items"]]
+        labels = {x["key"]: x["label"] for x in state["items"]}
+        missing = [k for k in want if k not in set(items or [])]
+        extra = sorted(set(items or []) - set(want))
+        if extra:
+            raise LongShortError(f"not a disclosure: {extra}")
+        if missing:
+            raise LongShortError("acknowledge every disclosure: missing " + ", ".join(labels[k] for k in missing))
         async with conn.transaction():
             d = await conn.fetchrow(f"SELECT * FROM {T_LSP} WHERE proposal_id = $1::uuid AND valid_to IS NULL "
                                     "AND system_to IS NULL FOR UPDATE", str(p["id"]))
             if d is None:
                 raise LongShortNotFound("not a long/short proposal")
+            res = state["resolved"]
+            if state["required"] and not state["current"]:
+                await DL.acknowledge(conn, org_id=org_id, user_id=actor["id"], resolved=res, subject=_subject(p),
+                                     screen=ACK_SCREEN)
             if d["acknowledged_by"] is not None:
                 return dict(d)
             new = await conn.fetchrow(
                 f"UPDATE {T_LSP} SET acknowledged_by = $2::uuid, acknowledged_at = now(), acknowledgement = $3::jsonb "
                 "WHERE id = $1 RETURNING *", d["id"], str(actor["id"]),
-                _dumps({"items": list(ACK_ITEMS), "texts": {k: ACK_LABELS[k] for k in ACK_ITEMS},
-                        "member_summary": d["member_summary"]}))
+                _dumps({"items": want, "texts": labels, "member_summary": d["member_summary"],
+                        "library": {"key": RISKS_KEY, "source": res.get("source"), "version_id": res.get("version_id"),
+                                    "content_sha256": res.get("content_sha256")}}))
             await _audit(conn, org_id, actor["id"], "disclosures_acknowledged", "rebalance_proposal", p["id"],
-                         {"items": list(ACK_ITEMS)})
+                         {"items": want, "library_version_id": res.get("version_id")})
     return dict(new)
 
 
 async def presubmit(conn, org_id, p: dict) -> None:
-    """rebalance_proposals._submit: a long/short proposal is submitted only after its maker acknowledged."""
+    """rebalance_proposals._submit: a long/short proposal is submitted only after its maker acknowledged — and, when
+    the library has a long_short.risks version in force, only if that acknowledgement names THAT version."""
     d = await details_of(conn, p["id"])
     if d is None:
         return
     if d["acknowledged_by"] is None:
-        raise LongShortConflict("acknowledge the long/short disclosures (the six risks, the borrow-cost estimate, the "
+        raise LongShortConflict("acknowledge the long/short disclosures (the risks, the borrow-cost estimate, the "
                                 "margin requirement and the member summary) before submitting")
     if p["maker_id"] is None or str(d["acknowledged_by"]) != str(p["maker_id"]):
         raise LongShortConflict("the disclosures were not acknowledged by the proposal's maker")
+    why = await _library_refusal(conn, org_id, p)
+    if why:
+        raise LongShortConflict(why)
+
+
+async def _library_refusal(conn, org_id, p: dict) -> str | None:
+    st = await disclosure_state(conn, org_id, p)
+    if not st["required"] or st["current"]:
+        return None
+    res = st["resolved"]
+    if st["acknowledged"]:
+        return (f"a newer version of '{res['title']}' (version {res['version_no']}) was published since the "
+                "acknowledgement — the maker must read it and acknowledge again")
+    return f"acknowledge '{res['title']}' (version {res['version_no']}) before submitting"
 
 
 async def approval_refusal(conn, org_id, p: dict, today: date | None = None) -> str | None:
@@ -1213,6 +1283,9 @@ async def approval_refusal(conn, org_id, p: dict, today: date | None = None) -> 
     today = today or date.today()
     if d["acknowledged_by"] is None:
         return "the disclosures were never acknowledged"
+    why = await _library_refusal(conn, org_id, p)          # DISCLOSURES1 — the version in force now
+    if why:
+        return why
     account = await AM.load_account(conn, org_id, p["account_id"])
     el = await eligibility(conn, org_id, account)
     if not el["eligible"]:
@@ -1364,7 +1437,7 @@ def vocabularies() -> dict:
     return {"extensions": pairs(R.EXTENSION_LABELS), "sides": pairs(R.SIDE_LABELS),
             "skip_reasons": pairs(R.SKIP_LABELS), "line_flags": pairs(R.LINE_FLAG_LABELS),
             "blocking": pairs(R.BLOCKING_LABELS), "risks": [{"key": k, "label": t} for k, t in R.RISKS],
-            "acknowledgement_items": [{"key": k, "label": ACK_LABELS[k]} for k in ACK_ITEMS],
+            "acknowledgement_items": ack_items_of(None), "risks_disclosure_key": RISKS_KEY,
             "suitability_statuses": pairs(SUIT_STATUS_LABELS),
             "rules": {"short_term": "IRC §1233 — a short sale's gain or loss is short-term whatever the holding period",
                       "constructive_sale": "IRC §1259 — no short of a security (or another share class of the same "
