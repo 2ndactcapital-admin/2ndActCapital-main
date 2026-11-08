@@ -427,11 +427,26 @@ COUNTED = {
 }
 
 
+_PARAM_RX = re.compile(r"\$(\d+)\b")
+
+
+def bind(sql: str, *args) -> tuple[str, list]:
+    """Pass ONLY the arguments ``sql`` references, renumbered $1.. in order. The shared WHERE fragments name
+    "$1 fixture orgs, $2 fixture users" but most reference one of them — asyncpg refuses a surplus argument
+    ("the server expects 1 argument for this query, 2 were passed") and Postgres can't type an unreferenced $1
+    ("could not determine data type of parameter $1"); that crashed the pre-run counts (disclosures1 fix 1)."""
+    used = sorted({int(m) for m in _PARAM_RX.findall(sql)})
+    if not used or used[-1] > len(args):
+        raise ValueError(f"bind: {sql!r} references {used} but {len(args)} argument(s) were given")
+    renum = {old: new for new, old in enumerate(used, 1)}
+    return _PARAM_RX.sub(lambda m: f"${renum[int(m.group(1))]}", sql), [args[i - 1] for i in used]
+
+
 async def counts(conn) -> dict:
     out = {}
     for t, where in COUNTED.items():
-        out[t] = int(await platform(conn, f"SELECT count(*) FROM {t} WHERE {where}", FIXTURE_ORGS, list(USERS),
-                                    fetch="fetchval"))
+        sql, args = bind(f"SELECT count(*) FROM {t} WHERE {where}", FIXTURE_ORGS, list(USERS))
+        out[t] = int(await platform(conn, sql, *args, fetch="fetchval"))
     return out
 
 
@@ -439,9 +454,9 @@ async def real_prints(conn) -> dict:
     """Real (non-fixture) library rows: count + checksum by id — they must be unchanged by this run."""
     out = {}
     for t, fx in (("public.disclosures", FIX_CATALOG), ("public.disclosure_versions", FIX_VERSIONS)):
-        r = await platform(conn, f"SELECT count(*) AS n, md5(COALESCE(string_agg(to_jsonb(t)::text, '|' ORDER BY "
-                                 f"t.id), '')) AS h FROM {t} t WHERE NOT {fx}", FIXTURE_ORGS, list(USERS),
-                           fetch="fetchrow")
+        sql, args = bind(f"SELECT count(*) AS n, md5(COALESCE(string_agg(to_jsonb(t)::text, '|' ORDER BY t.id), "
+                         f"'')) AS h FROM {t} t WHERE NOT {fx}", FIXTURE_ORGS, list(USERS))
+        r = await platform(conn, sql, *args, fetch="fetchrow")
         out[t] = (int(r["n"]), r["h"])
     r = await platform(conn, "SELECT count(*) AS n, md5(COALESCE(string_agg(to_jsonb(t)::text, '|' ORDER BY t.id), "
                              "'')) AS h FROM public.disclosure_acknowledgements t WHERE NOT (org_id = ANY($1::uuid[]) "
@@ -966,7 +981,7 @@ async def y_resolver(conn):
         check(bool(r["version_id"] == want and r["scope"] == scope and r["source"] == "library"),
               f"resolver: {label}", f"{dumps(r)[:300]}")
     # independent SQL for the org-level case: the version table read directly, the rule applied by hand
-    rows = await scoped(conn, ORG_A, "SELECT id, scope, effective_from, version_no FROM public.disclosure_versions v "
+    rows = await scoped(conn, ORG_A, "SELECT v.id, v.scope, v.effective_from, v.version_no FROM public.disclosure_versions v "
                                      "JOIN public.disclosures d ON d.id = v.disclosure_id WHERE d.key = $1 AND "
                                      "v.system_to IS NULL AND v.status = 'published' AND v.scope IN ('platform', "
                                      "'org')", K_ALPHA)
@@ -1362,13 +1377,20 @@ async def main_async() -> int:
     try:
         await run("pre-teardown", teardown)
         check(await leftovers(conn) == 0, "pre-run cleanup: zero fixture rows before seeding")
-        pre = await counts(conn)
-        real = await real_prints(conn)
-        print(f"[INFO] real library rows before the run: { {k: v[0] for k, v in real.items()} }")
+        # disclosures1 fix 1: these two crashed the whole run (a surplus query argument) with no traceback — run()
+        # names the failure and prints it; without a pre-count the fixture sections are SKIPPED, loudly
+        pre = await run("pre-run counts", counts, conn)
+        real = await run("real library fingerprints", real_prints, conn)
+        if real is not None:
+            print(f"[INFO] real library rows before the run: { {k: v[0] for k, v in real.items()} }")
         await run("role", y_role_is_real, conn)
         await run("catalog", y_catalog, conn)
-        await run("seed", seed, conn)
-        if S.get("seeded"):
+        if pre is None or real is None:
+            check(False, "pre-run counts + real fingerprints taken",
+                  "every fixture-scoped section SKIPPED — nothing to compare the teardown against")
+        else:
+            await run("seed", seed, conn)
+        if pre is not None and real is not None and S.get("seeded"):
             await run("fixtures", y_fixtures, conn)
             section("[Y] Task 1 — findings 1a–1c")
             await run("task1", self_task1, check, find)
@@ -1385,7 +1407,7 @@ async def main_async() -> int:
             await run("migration", y_migration, conn)
             await run("record panel", y_record_panel, conn)
             await run("audit", y_audit, conn)
-        else:
+        elif pre is not None and real is not None:
             check(False, "seed completed", "every fixture-scoped section skipped")
         section("[Y] Static — docs, defaults, regression set, code markers")
         await run("static", self_static, check, find)
@@ -1436,5 +1458,6 @@ if __name__ == "__main__":
         raise
     except BaseException as exc:  # noqa: BLE001 — TOTAL on every exit path
         print(f"[FAIL] the verify crashed: {type(exc).__name__}: {exc}")
+        traceback.print_exc()
         print(f"\nTOTAL: {_n_pass} PASS, {_n_fail + 1} FAIL")
         sys.exit(1)
