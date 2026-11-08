@@ -163,7 +163,10 @@ export function DraftForm({ env, onDraft, busy }) {
 }
 
 export function ConflictsView({ env }) {
-  const rows = env.conflicts || [];
+  const all = env.conflicts || [];
+  // a Super Admin holds every duty inherently — reported as their own group, not one line per item type
+  const rows = all.filter((p) => p.all_duties !== true);
+  const supers = all.filter((p) => p.all_duties === true);
   return (
     <div className={card}>
       <div className="flex items-baseline justify-between">
@@ -172,7 +175,7 @@ export function ConflictsView({ env }) {
       </div>
       <p className="mt-1 text-sm text-text-muted">Each person below can both make and check items of a type. The rules
         listed still stop them on any one item they made.</p>
-      {rows.length === 0 ? <p className="mt-3 text-sm text-text-muted">No one holds conflicting duties.</p> : (
+      {rows.length === 0 ? <p className="mt-3 text-sm text-text-muted">No one holds conflicting duties through their roles.</p> : (
         <table className="mt-3 w-full text-sm">
           <thead><tr><th className={th}>Person</th><th className={th}>Roles</th><th className={th}>Item types</th></tr></thead>
           <tbody>
@@ -187,6 +190,16 @@ export function ConflictsView({ env }) {
             ))}
           </tbody>
         </table>
+      )}
+      {supers.length > 0 && (
+        <div className="mt-4">
+          <h3 className="font-serif text-lg text-navy">Super Admin — every duty</h3>
+          <p className="mt-1 text-sm text-text-muted">A Super Admin holds every duty. The floor and default rules still
+            stop them on any one item they made.</p>
+          <ul className="mt-2 text-sm">
+            {supers.map((p) => <li key={p.user_id}>{p.name}</li>)}
+          </ul>
+        </div>
       )}
     </div>
   );

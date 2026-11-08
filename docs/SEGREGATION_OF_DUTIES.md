@@ -84,6 +84,23 @@ A role or permission-set grant is checked:
 `GET /admin/sod` → `conflicts` lists every person whose roles combine conflicting duties. Expect every org admin there:
 the matrix warns, and the per-item rule blocks.
 
+**Super Admins in the conflict report (s30 fix 1, the rule).** A Super Admin holds every duty inherently. The report
+always lists them, because hiding them would understate who can both make and check. They are their own group:
+`all_duties: true`, sorted after the people whose roles grant the conflict, and shown on the page as "Super Admin —
+every duty" rather than one line per item type. Their per-item `conflicts` stay in the JSON and the CSV. Per item, the
+floor and default rules stop them exactly as they stop anyone else.
+
+**Every grant path is checked (s30 fix 1).** A grant to yourself is a floor conflict on every path that gives a person
+a role or permissions, from any login of that person, Super Admin included. Each path has its own site key in
+`services.sod_admin.GRANT_SITES`:
+- `role_grant:role` — assign a role, or approve a pending login
+- `role_grant:permission_set` — assign a permission set
+- `role_grant:profile` — assign a profile
+- `role_grant:profile_permission` / `role_grant:permission_set_permission` — add a permission to a profile or set that
+  the caller's own person holds (`check_bundle_edit`)
+
+The paths deliberately left outside it are listed with their reasons in docs/S30_DISCOVERY.md 1a.
+
 ## Workflows (Task 8, S29b readiness)
 
 - Every registered action declares its duty (`AssistantAction.duty`, or `services.sod.VERB_DUTIES`): `read`,

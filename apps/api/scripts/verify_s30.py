@@ -284,8 +284,10 @@ ORG_A, ORG_B = _id(1), _id(2)
 FIXTURE_ORGS = [ORG_A, ORG_B]
 U_A1, U_A2, U_A3, U_AV, U_SA1, U_SA2, U_B1, U_B2 = (_id(10 + i) for i in range(8))
 U_A1R, U_A1D = _id(30), _id(31)      # two RETIRED rows of U_A1's person (operator link; duplicate merge)
+U_PEND = _id(32)                     # s30 fix 1: a PENDING row linked to U_A2's person (approve-pending is a grant)
 HOUSEHOLD = _id(50)                  # a household id (sod_decisions.household_id carries no FK)
 PSET = _id(60)
+PROFILE = _id(61)                    # a fixture profile (view_audit_log) — s30 fix 1: profile grants
 DEF_T1, VER_T1, TRIG_T1 = _id(70), _id(71), _id(72)
 FIXTURE_VERB = "s30verify.tier1_write"
 UNDECLARED_VERB = "s30verify.undeclared_write"
@@ -311,11 +313,12 @@ USERS = {
     U_B2: (ORG_B, "member", "b2", "s30_settings", "S30 Settings Admin"),
 }
 RETIRED = {U_A1R: "a1r", U_A1D: "a1d"}
-ALL_USERS = [*USERS, *RETIRED]
+ALL_USERS = [*USERS, *RETIRED, U_PEND]
 SECOND_SUB = f"auth0|{TAG}-a1-second-login"
 COUNTED = (
     "public.users", "public.organizations", "public.roles", "public.user_roles", "public.role_permissions",
     "public.user_identities", "public.user_person_links", "public.permission_sets", "public.user_permission_sets",
+    "public.profiles", "public.profile_permissions",
     "public.sod_rules", "public.sod_decisions", "public.audit_log", "public.member_todos", "public.agent_proposals",
     "public.workflow_definitions", "public.workflow_versions", "public.workflow_steps", "public.workflow_runs",
     "public.workflow_run_steps", "public.workflow_triggers",
@@ -867,13 +870,18 @@ async def seed(conn) -> None:
                            PSET, ORG_A, "S30 verify set", "verify_s30 fixture")
         await conn.execute("INSERT INTO permission_set_permissions (org_id, permission_set_id, permission_key) "
                            "VALUES ($1, $2, 'view_audit_log')", ORG_A, PSET)
+        await conn.execute("INSERT INTO profiles (id, org_id, name, description, is_seed) VALUES ($1, $2, $3, $4, "
+                           "false)", PROFILE, ORG_A, "S30 verify profile", "verify_s30 fixture")
+        await conn.execute("INSERT INTO profile_permissions (org_id, profile_id, permission_key) "
+                           "VALUES ($1, $2, 'view_audit_log')", ORG_A, PROFILE)
+    seeded = [*USERS, *RETIRED]   # U_PEND is inserted later, by y_roles
     us = {r["id"] for r in await platform(conn, "SELECT id FROM users WHERE id = ANY($1::uuid[]) AND is_test",
-                                          list(ALL_USERS))}
+                                          seeded)}
     os_ = {r["id"] for r in await platform(conn, "SELECT id FROM organizations WHERE id = ANY($1::uuid[]) AND is_test",
                                            FIXTURE_ORGS)}
-    check(us == set(ALL_USERS) and os_ == set(FIXTURE_ORGS), "fixture orgs and users (retired rows included) are "
-          "is_test = true", f"{len(us)}/{len(ALL_USERS)} users, {len(os_)}/2 orgs")
-    S["seeded"] = await check_fixture_roles(conn) and us == set(ALL_USERS) and os_ == set(FIXTURE_ORGS)
+    check(us == set(seeded) and os_ == set(FIXTURE_ORGS), "fixture orgs and users (retired rows included) are "
+          "is_test = true", f"{len(us)}/{len(seeded)} users, {len(os_)}/2 orgs")
+    S["seeded"] = await check_fixture_roles(conn) and us == set(seeded) and os_ == set(FIXTURE_ORGS)
 
 
 # ── pure replay of the rules in force BEFORE S30 (Task 7) ───────────────────────────────────────────────────────
@@ -1121,6 +1129,66 @@ async def y_roles(conn):
     code, b, _ = await api(U_A2, "POST", f"/api/v1/admin/permission-sets/{PSET}/users", {"user_id": str(U_A1)})
     check(code in (200, 201) and isinstance(b.get("sod_warnings"), list),
           "assigning a permission set to someone else is allowed and returns its warnings list", f"{code} {dumps(b)}")
+    # s30 fix 1 — the other grant paths: a profile (carries permissions) and ADDING a permission to a profile / set
+    # the caller holds are self-grants too; each refusal leaves the row unchanged (re-read)
+    async def _profile(uid):
+        return await scoped(conn, ORG_A, "SELECT profile_id::text FROM users WHERE id = $1", uid, fetch="fetchval")
+    p0 = await _profile(U_A2)
+    code, b, _ = await api(U_A2, "PUT", f"/api/v1/admin/users/{U_A2}/profile", {"profile_id": str(PROFILE)})
+    check(code == 403 and await _profile(U_A2) == p0, "assigning YOURSELF a profile is blocked the same way (403, "
+          "profile unchanged)", f"{code} {dumps(b)} {p0}")
+    p0 = await _profile(U_A1)
+    code, b, _ = await api(U_A1, "PUT", f"/api/v1/admin/users/{U_A1}/profile", {"profile_id": str(PROFILE)},
+                           sub=SECOND_SUB)
+    check(code == 403 and await _profile(U_A1) == p0, "… from the person's SECOND login too (profile unchanged)",
+          f"{code} {dumps(b)}")
+    # to U_A1 (an admin, not a member — the fixture org has no member role, so every key is staff-only for a member;
+    # U_A1 already holds the profile's keys, so no fixture's effective permissions change)
+    code, b, _ = await api(U_A2, "PUT", f"/api/v1/admin/users/{U_A1}/profile", {"profile_id": str(PROFILE)})
+    check(code == 200 and isinstance(b.get("sod_warnings"), list) and await _profile(U_A1) == str(PROFILE),
+          "assigning a profile to someone else is allowed (re-read) and returns its warnings list", f"{code} {dumps(b)}")
+    code, b, _ = await api(U_A2, "PUT", f"/api/v1/admin/profiles/{PROFILE}/permissions",
+                           {"permission_key": "view_workflow_runs", "granted": True})
+    held = await scoped(conn, ORG_A, "SELECT array_agg(permission_key ORDER BY permission_key) FROM profile_permissions "
+                                     "WHERE profile_id = $1", PROFILE, fetch="fetchval")
+    check(code == 200 and list(held or []) == ["view_audit_log", "view_workflow_runs"],
+          "adding a permission to a profile the caller does NOT hold is allowed (re-read)", f"{code} {held}")
+    code, b, _ = await api(U_A1, "PUT", f"/api/v1/admin/profiles/{PROFILE}/permissions",
+                           {"permission_key": "manage_compliance", "granted": True})
+    held2 = await scoped(conn, ORG_A, "SELECT array_agg(permission_key ORDER BY permission_key) FROM "
+                                      "profile_permissions WHERE profile_id = $1", PROFILE, fetch="fetchval")
+    check(code == 403 and held2 == held, "adding a permission to a profile the caller HOLDS is a self-grant: 403, the "
+          "profile unchanged", f"{code} {dumps(b)} {held} → {held2}")
+    keys0 = await scoped(conn, ORG_A, "SELECT array_agg(permission_key ORDER BY permission_key) FROM "
+                                      "permission_set_permissions WHERE permission_set_id = $1", PSET, fetch="fetchval")
+    code, b, _ = await api(U_A1, "PUT", f"/api/v1/admin/permission-sets/{PSET}/permissions",
+                           {"permission_key": "view_workflow_runs", "granted": True}, sub=SECOND_SUB)
+    keys1 = await scoped(conn, ORG_A, "SELECT array_agg(permission_key ORDER BY permission_key) FROM "
+                                      "permission_set_permissions WHERE permission_set_id = $1", PSET, fetch="fetchval")
+    check(code == 403 and keys1 == keys0 == ["view_audit_log"], "adding a permission to a set the caller HOLDS (from "
+          "either login) is a self-grant: 403, the set unchanged", f"{code} {dumps(b)} {keys0} → {keys1}")
+    # approving a pending login is a role grant: a pending row of the approver's own person is refused, nothing
+    # changes (still pending, no role); another admin admits it
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        await conn.execute(
+            "INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, status, is_active, is_test) VALUES "
+            "($1, $2, $3, 'S30 pending second row', $4, 'member', 'pending', true, true)", U_PEND, ORG_A,
+            f"{TAG}-pend@test.local", f"auth0|{TAG}-pend")
+        await conn.execute("INSERT INTO user_person_links (user_id, person_user_id, org_id, linked_via) "
+                           "VALUES ($1, $2, $3, 'operator')", U_PEND, U_A2, ORG_A)
+
+    async def _pend():
+        return await platform(conn, "SELECT u.status, (SELECT count(*) FROM user_roles WHERE user_id = u.id) AS n "
+                                    "FROM users u WHERE u.id = $1", U_PEND, fetch="fetchrow")
+    code, b, _ = await api(U_A2, "POST", f"/api/v1/admin/users/{U_PEND}/approve", {"role_id": roles["s30_viewer"]})
+    st = await _pend()
+    check(code == 403 and st["status"] == "pending" and st["n"] == 0, "approving a pending login of YOUR OWN person "
+          "is a self-grant: 403, still pending, no role", f"{code} {dumps(b)} {dict(st)}")
+    code, b, _ = await api(U_A1, "POST", f"/api/v1/admin/users/{U_PEND}/approve", {"role_id": roles["s30_viewer"]})
+    st = await _pend()
+    check(code == 200 and st["status"] == "active" and st["n"] == 1, "… another admin admits it (active, one role)",
+          f"{code} {dumps(b)} {dict(st)}")
     # org B: the floor is not on (platform default) — today's behaviour: allowed, and SAID so
     code, b, _ = await api(U_B2, "PUT", f"/api/v1/admin/users/{U_B2}/role", {"role_id": rolesb["s30_settings"]})
     check(code == 200 and any(x.get("code") == "floor_not_enforced" for x in b.get("sod_warnings") or []),
@@ -1128,7 +1196,8 @@ async def y_roles(conn):
           "'floor not enforced' warning (reported, never silently tightened)", f"{code} {dumps(b.get('sod_warnings'))}")
     refused = await scoped(conn, ORG_A, "SELECT count(*) FROM sod_decisions WHERE org_id = $1 AND item_type = "
                                         "'role_grant' AND outcome = 'refused'", ORG_A, fetch="fetchval")
-    check(refused >= 4, "every refused self-grant is recorded in sod_decisions (fixture org)", f"{refused}")
+    check(refused >= 9, "every refused self-grant is recorded in sod_decisions (fixture org: 3 role, 1 permission "
+          "set, 2 profile, 1 profile edit, 1 set edit, 1 pending approval)", f"{refused}")
     code, ov, _ = await api(U_A2, "GET", "/api/v1/admin/sod")
     people = {p["user_id"]: p for p in ov.get("conflicts") or []}
     check(code == 200 and str(U_A1) in people and any(c["item_type"] == "authority_change"
@@ -1136,6 +1205,13 @@ async def y_roles(conn):
           and str(U_A3) not in people,
           "the conflict report lists the fixture person (U_A1: set + approve authority) and not the reviewer",
           f"{code} {sorted(people)[:6]}")
+    # s30 fix 1 — the stated rule for Super Admins: listed, as their own 'all duties' group, after ordinary people
+    order = [p["user_id"] for p in ov.get("conflicts") or []]
+    check(code == 200 and all(people.get(str(u), {}).get("all_duties") is True for u in (U_SA1, U_SA2))
+          and people.get(str(U_A1), {}).get("all_duties") is False
+          and order.index(str(U_A1)) < min(order.index(str(U_SA1)), order.index(str(U_SA2))),
+          "Super Admins are listed as their own 'all duties' group (never hidden), after the people whose roles grant "
+          "the conflict", f"{[(k[-4:], v.get('all_duties')) for k, v in people.items()]}")
 
 
 async def y_self_approval(conn):

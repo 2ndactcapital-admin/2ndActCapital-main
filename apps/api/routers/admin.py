@@ -691,6 +691,13 @@ async def approve_pending_user(request: Request, user_id: UUID, body: PendingApp
             if role is None:
                 raise HTTPException(status_code=400, detail="Unknown role")
             await _forbid_super_grant(conn, request, target_id=user_id, role_name=role["name"])  # BUGFIX4
+            # S30 fix 1 — admitting a pending login is a role grant: the same floor (a pending row linked to the
+            # approver's own person is the approver granting themselves)
+            try:
+                await sod_admin.check_role_grant(conn, org_id=org_id, actor_id=actor_id, target_user_id=user_id,
+                                                 what="role")
+            except sod_admin.SoDAdminRefused as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
             if role["name"] == ORG_ADMIN_ROLE:
                 from services.rbac import grant_org_admin
 

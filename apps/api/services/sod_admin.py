@@ -120,18 +120,45 @@ async def _active_rules_by_type(conn, org_id) -> dict[str, list[dict]]:
 
 
 # ── Task 6: role / permission-set grants ────────────────────────────────────────────────────────────────────────────
+#: every path that grants a person a role or permissions, by its site key (docs/S30_DISCOVERY.md 1a) → the words the
+#: refusal uses. s30 fix 1: the key was f"role_grant:{what}" with free text ("permission set" carried a space).
+GRANT_SITES = {
+    "role": "role_grant:role",                                   # PUT  /admin/users/{id}/role; approve pending
+    "permission set": "role_grant:permission_set",               # POST /admin/permission-sets/{id}/users
+    "profile": "role_grant:profile",                             # PUT  /admin/users/{id}/profile
+    "profile permission": "role_grant:profile_permission",       # PUT  /admin/profiles/{id}/permissions
+    "permission set permission": "role_grant:permission_set_permission",  # PUT /admin/permission-sets/{id}/permissions
+}
+
+
 async def check_role_grant(conn, *, org_id, actor_id, target_user_id, what: str, record: bool = True) -> sod.Decision:
     """Refuse a self-grant once the floor is enforced for role grants (Super Admin included); record the decision.
-    Raises SoDAdminRefused on a refusal."""
+    Raises SoDAdminRefused on a refusal. ``what`` is a key of GRANT_SITES."""
+    site = GRANT_SITES[what]
     d = await sod.can_check(conn, org_id=org_id, item_type=sod.ROLE_GRANT, checker_id=target_user_id,
-                            maker_ids=[actor_id], item_id=target_user_id, site=f"role_grant:{what}")
+                            maker_ids=[actor_id], item_id=target_user_id, site=site)
     if d.refused:
         if record:
-            await sod.record_refusal(d, site=f"role_grant:{what}")
+            await sod.record_refusal(d, site=site)
         raise SoDAdminRefused(f"Segregation of duties: you cannot grant yourself a {what}. {d.reason}.", d)
     if record:
-        await sod.record_decision(conn, d, site=f"role_grant:{what}")
+        await sod.record_decision(conn, d, site=site)
     return d
+
+
+async def check_bundle_edit(conn, *, org_id, actor_id, holder_ids, what: str) -> sod.Decision | None:
+    """Adding a permission to a profile / permission set grants it to everyone holding that bundle — so when the
+    ACTOR (as a person: any of their logins) is one of the holders, the edit is a self-grant and goes through
+    check_role_grant. Returns None when the actor holds nothing of it (no grant to themselves)."""
+    holders = [str(h) for h in holder_ids if h is not None]
+    if not holders:
+        return None
+    ctx = await sod.load(conn, org_id=org_id, item_type=sod.ROLE_GRANT, ids=[actor_id, *holders])
+    me = ctx.person(str(actor_id))
+    mine = next((h for h in holders if ctx.person(h) == me), None)
+    if mine is None:
+        return None
+    return await check_role_grant(conn, org_id=org_id, actor_id=actor_id, target_user_id=mine, what=what)
 
 
 async def person_conflicts(conn, *, org_id, user_id) -> list[dict]:
@@ -159,7 +186,13 @@ def grant_warnings(decision: sod.Decision | None, conflicts: list[dict]) -> list
 
 
 async def conflict_report(conn, *, org_id) -> list[dict]:
-    """Every admitted person in the org whose effective permissions combine a maker and a checker duty."""
+    """Every admitted person in the org whose effective permissions combine a maker and a checker duty.
+
+    Super Admins (s30 fix 1, the stated rule): a Super Admin holds EVERY duty inherently, so they are always listed —
+    never hidden (that would understate who can make and check) — but reported as their own group: ``all_duties``
+    true, after the ordinary people, so they don't drown out the person whose ROLES grant the conflict. Their
+    per-item ``conflicts`` are still returned (the CSV carries them); the floor / default rules stop them per item
+    exactly as anyone else."""
     rows = await conn.fetch(f"SELECT {PRINCIPAL_COLUMNS}, u.full_name FROM users u WHERE u.org_id = $1::uuid "
                             "ORDER BY u.full_name NULLS LAST, u.email", str(org_id), rbac.SUPER_ADMIN_ROLE)
     duty_rows = await duties(conn)
@@ -174,7 +207,9 @@ async def conflict_report(conn, *, org_id) -> list[dict]:
         if cs:
             out.append({"user_id": p.user_id, "name": r["full_name"] or p.email, "email": p.email,
                         "roles": list(p.roles), "is_super_admin": p.is_super_admin,
+                        "all_duties": bool(p.is_super_admin),
                         "conflicts": cs, "conflict_count": len(cs)})
+    out.sort(key=lambda x: x["all_duties"])   # stable: ordinary people first (by name), then Super Admins
     return out
 
 
@@ -364,8 +399,11 @@ async def decide_rule(conn, *, org_id, actor_id, is_super_admin: bool, rule_id, 
             elif r["retires"]:
                 raise SoDAdminConflict("the rule this draft retires is no longer active")
             new = await conn.fetchrow(
-                f"UPDATE public.sod_rules SET status = $5, checker_id = $2::uuid, decided_at = $3, decision_note = $4, "
-                f"valid_from = valid_from, valid_to = CASE WHEN $5 = 'retired' THEN $3 ELSE NULL END "
+                # explicit casts: inside the CASE an untyped $3 is deduced as text, which conflicts with
+                # decided_at's timestamptz (AmbiguousParameterError → a 500 on every approval; s30 fix 1)
+                f"UPDATE public.sod_rules SET status = $5::text, checker_id = $2::uuid, decided_at = $3::timestamptz, "
+                f"decision_note = $4::text, valid_from = valid_from, "
+                f"valid_to = CASE WHEN $5::text = 'retired' THEN $3::timestamptz ELSE NULL END "
                 f"WHERE id = $1::uuid RETURNING {RULE_COLS}",
                 r["id"], str(actor_id), ts, note, "retired" if r["retires"] else "active")
         await _audit(conn, org_id, actor_id, f"sod.rule_{'approved' if outcome == 'approve' else 'rejected'}",

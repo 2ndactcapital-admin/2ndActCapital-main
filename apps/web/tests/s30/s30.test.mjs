@@ -126,6 +126,18 @@ test("reports: conflicts list the person and the rules that still stop them; sel
   assert.equal(L.csvHref(env, "not_a_report"), null);
 });
 
+test("conflicts: a Super Admin is listed in its own 'every duty' group, never per item type, never hidden", () => {
+  const env = ENV({ conflicts: [...ENV().conflicts, { user_id: ME, name: "Fixture Super", roles: ["super_admin"],
+    is_super_admin: true, all_duties: true, conflicts: [{ item_type: "rebalance_proposal", label: "Rebalance proposal (srv)",
+      still_stopped_by: [{ rule_key: "floor:rebalance_proposal" }] }] }] });
+  const c = render(h(ConflictsView, { env }));
+  assert.ok(c.includes("Super Admin — every duty") && c.includes("Fixture Super"));
+  assert.ok(c.includes("Fixture Person"));
+  assert.equal(c.split("still stopped by floor:rebalance_proposal").length - 1, 1, "only the ordinary person is expanded per item");
+  const none = render(h(ConflictsView, { env: ENV({ conflicts: [] }) }));
+  assert.ok(!none.includes("Super Admin — every duty"));
+});
+
 test("menu: Segregation of duties is a People tab for any of the three read keys (strict), never a member", () => {
   const me = (permissions, extra = {}) => ({ account_role: "member", role: "member", roles: ["x"], permissions, ...extra });
   const tabs = (u) => M.visibleTabs(u, "people").map((t) => t.href);

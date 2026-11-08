@@ -97,7 +97,11 @@ Legend for the "migrated" column:
 | `spv_carry_runs.approve` | services/spv_carry_runs.py:approve | carry_run | assistant_activities.proposed_by | (no router caller) | MakerCheckerError; assistant_activities_maker_checker_chk | no | ✓ can_check + record_refusal |
 | `trading_authority.approve_money_movement` | services/trading_authority.py:approve_money_movement | money_movement | proposed_by | trading_authority_grants ≥ limited | MakerCheckerError; assistant_activities_maker_checker_chk | no | ✓ enforce (`assert_maker_checker` kept, delegating to sod's pure rule) |
 | `sod_admin.decide_rule` | services/sod_admin.py:decide_rule | sod_rule / sod_platform_rule | drafted_by | manage_org_settings (platform: Super Admin) | SoDAdminRefused (403); sod_rules_maker_checker_chk | no | ✓ enforce (new in S30) |
-| `role_grant:role` / `role_grant:permission set` | routers/admin.py:assign_role, routers/profiles.py:assign_permission_set | role_grant | the granter | — | 403 (new in S30) | no | ✓ enforce (new: the floor, behind enforce_floor) |
+| `role_grant:role` | routers/admin.py:assign_role (PUT /admin/users/{id}/role) and approve_pending_user (POST /admin/users/{id}/approve — s30 fix 1) | role_grant | the granter (the receiver is the checker; persons, not logins) | — | SoDAdminRefused → 403 (new in S30); every refusal in sod_decisions | no | ✓ enforce (new: the floor, behind enforce_floor) |
+| `role_grant:permission_set` | routers/profiles.py:assign_permission_set (POST /admin/permission-sets/{id}/users) | role_grant | the granter (the receiver is the checker; persons, not logins) | — | SoDAdminRefused → 403 (new in S30); every refusal in sod_decisions | no | ✓ enforce (new: the floor, behind enforce_floor) |
+| `role_grant:profile` | routers/profiles.py:set_user_profile (PUT /admin/users/{id}/profile — s30 fix 1: a profile carries permissions) | role_grant | the granter (the receiver is the checker; persons, not logins) | — | SoDAdminRefused → 403 (new in S30); every refusal in sod_decisions | no | ✓ enforce (new: the floor, behind enforce_floor) |
+| `role_grant:profile_permission` | routers/profiles.py:toggle_profile_permission (PUT /admin/profiles/{id}/permissions, granted=true, when the caller's person holds the profile — s30 fix 1, services.sod_admin.check_bundle_edit) | role_grant | the granter (the receiver is the checker; persons, not logins) | — | SoDAdminRefused → 403 (new in S30); every refusal in sod_decisions | no | ✓ enforce (new: the floor, behind enforce_floor) |
+| `role_grant:permission_set_permission` | routers/profiles.py:toggle_permission_set_permission (PUT /admin/permission-sets/{id}/permissions, granted=true, when the caller's person holds the set — s30 fix 1, check_bundle_edit) | role_grant | the granter (the receiver is the checker; persons, not logins) | — | SoDAdminRefused → 403 (new in S30); every refusal in sod_decisions | no | ✓ enforce (new: the floor, behind enforce_floor) |
 
 ### Display sites (the screen's Approve / Publish offer; the server re-checks through the rows above)
 
@@ -122,6 +126,21 @@ Not migrated, each with its reason:
 - rebalance_proposals `_submit`, long_short `acknowledge` / `presubmit`: the REVERSE rule (only the maker may submit or
   acknowledge), not a check.
 - routers/workflows.py `can_review`: permission only, with no maker comparison.
+
+**Every path that grants a role or permissions (s30 fix 1 sweep)**: every `INSERT INTO user_roles` /
+`user_permission_sets`, every `users.profile_id` write, and every `profile_permissions` / `permission_set_permissions`
+insert in routers/ and services/ was checked. The five `role_grant:*` rows above all go through
+`services.sod_admin.check_role_grant`. Before fix 1 only `assign_role` and `assign_permission_set` did. The paths left
+outside it, each for a stated reason:
+- `services/invites.py:create_invite` → `grant_org_admin`: the grantee is a NEW row created in the same transaction.
+  No login or person link exists yet, so it can never be the inviter.
+- `services/users.py` provisioning → `grant_named_role(…, 'super_admin')`: no human grants anything here. The grant
+  comes from the Doppler secret `PLATFORM_STAFF_EMAILS` plus a verified email.
+- `routers/admin.py:link_pending_login`: this moves a login onto an existing person and retires the pending row. It
+  grants no role (the pending row holds none).
+- `services/rbac.py` `ensure_*` helpers (role_permissions): these are seeding and system helpers. No route edits a
+  role's permissions.
+- Revocations (deactivate, delete/anonymize, `granted=false` toggles): these grant nothing.
 
 **[FIND]** There are no Python callers of `fee_runs.approve`, `spv_carry_runs.approve` or
 `trading_authority.approve_money_movement` from any router. They are migrated anyway, so they decide the same way the
