@@ -85,7 +85,8 @@ CATEGORY_LABELS = {"risk": "Risk statement", "hypothetical": "Hypothetical perfo
 AUDIENCE_LABELS = {"staff": "Staff", "member": "Members", "both": "Staff and members"}
 SOURCE_LABELS = {"library": "From the disclosure library", "fallback": "Built-in text (no library version in force)",
                  "none": "No version in force"}
-SUBJECT_TYPES = ("long_short_proposal", "section351_plan", "account", "backtest", "proposal", "disclosure")
+SUBJECT_TYPES = ("long_short_proposal", "section351_plan", "account", "backtest", "proposal", "disclosure",
+                 "model_subscription")
 #: file extension → stored content type (the CHECK disclosure_versions_type_chk allows exactly these)
 FILE_TYPES = {
     "pdf": "application/pdf",
@@ -127,7 +128,29 @@ KEYS: dict[str, dict] = {
     "notes.replica": {"title": "Structured-note replica versus the note", "category": "product", "audience": "both",
                       "description": "A replica built from listed options compared with an issuer's structured "
                                      "note."},
+    # rep15 — platform-published models. The ADV and the agreement are counsel's / the adviser's own documents:
+    # no default text exists anywhere in code (operator items); only the member notice has a platform default.
+    "model_provider.adv_2a": {"title": "Model provider — Form ADV Part 2A", "category": "product",
+                              "audience": "both",
+                              "description": "The registered adviser entity's ADV Part 2A brochure, published at the "
+                                             "provider org's scope. Required before the publishing gate opens."},
+    "model_provider.subadvisory_agreement": {"title": "Sub-advisory agreement (model provider)", "category": "other",
+                                             "audience": "staff",
+                                             "description": "The agreement between the model provider and a "
+                                                            "subscribing org. A platform default, overridden by a "
+                                                            "tenant-specific version; acknowledged by version before "
+                                                            "a subscription is requested."},
+    "model_provider.member_notice": {"title": "Model provided by a sub-adviser", "category": "product",
+                                     "audience": "both",
+                                     "description": "Shown on every proposal for a provided model. {provider} is "
+                                                    "replaced by the sub-adviser's name."},
 }
+
+
+#: rep15 — keys the platform defines but ships NO default text for: the provider's ADV (the provider org's own
+#: filing) and the sub-advisory agreement (counsel's text). The defaults loader skips them; a library version is the
+#: only source — with none in force the resolver reports 'none', never a fallback.
+NO_PLATFORM_DEFAULT = frozenset({"model_provider.adv_2a", "model_provider.subadvisory_agreement"})
 
 
 class DisclosureError(ValueError):
@@ -194,7 +217,14 @@ def _fallback_replica() -> str:
 
 
 #: key → a function returning the exact pre-library text (read from the ORIGINAL constant, never copied here)
+def _fallback_member_notice() -> str:
+    from services import model_provider as PM
+
+    return PM.MEMBER_NOTICE_FALLBACK
+
+
 FALLBACK_SOURCES = {
+    "model_provider.member_notice": _fallback_member_notice,
     "long_short.risks": _fallback_long_short,
     "hypothetical.performance": _fallback_hypothetical,
     "tax.estimate_label": _fallback_tax,

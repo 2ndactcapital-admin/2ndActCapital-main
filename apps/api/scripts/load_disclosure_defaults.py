@@ -64,6 +64,8 @@ def validate(d: dict) -> list[str]:
     spec = DL.KEYS.get(d["key"] or "")
     if spec is None:
         return [f"{d['path'].name}: '{d['key']}' is not a key the platform defines (services.disclosures.KEYS)"]
+    if d["key"] in DL.NO_PLATFORM_DEFAULT:      # rep15 — the ADV and the agreement are never shipped as defaults
+        return [f"{d['path'].name}: '{d['key']}' has no platform default (services.disclosures.NO_PLATFORM_DEFAULT)"]
     if d["path"].name != f"{d['key']}.md":
         errs.append(f"{d['path'].name}: file name must be {d['key']}.md")
     for f in ("category", "audience"):
@@ -79,6 +81,8 @@ def validate(d: dict) -> list[str]:
         keys = [i["key"] for i in DL.items_of(d["summary"])]
         if not set(R.RISK_KEYS) <= set(keys) or len(keys) != len(set(keys)):
             errs.append(f"long_short.risks: the summary must list rep13's six risk keys (each once) — got {keys}")
+    if d["key"] == "model_provider.member_notice" and "{provider}" not in d["summary"]:
+        errs.append("model_provider.member_notice: the summary must carry {provider}")
     if d["key"] == "replica.fund_affiliation" and "{ticker}" not in d["summary"]:
         errs.append("replica.fund_affiliation: the summary must carry {ticker}")
     return errs
@@ -96,7 +100,7 @@ def load_all() -> tuple[list[dict], list[str]]:
         docs.append(d)
     from services import disclosures as DL
 
-    missing = sorted(set(DL.KEYS) - {d["key"] for d in docs})
+    missing = sorted(set(DL.KEYS) - DL.NO_PLATFORM_DEFAULT - {d["key"] for d in docs})
     if missing:
         errs.append(f"no default file for: {missing}")
     return docs, errs

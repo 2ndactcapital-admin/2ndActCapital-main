@@ -2346,3 +2346,112 @@ profile's rates).
 2. Add rep14's merge sha to `_verify_self.SPRINT_MERGES` when merged.
 3. Refresh `docs/schema_snapshot.sql`.
 4. Redeploy the API.
+
+## rep15 — platform-published models and tenant subscriptions (PHASE 4 ENDS, 2026-11-08)
+
+The Hollisworks platform org can act as a **sub-adviser**: it publishes models from its own rep3 registry to a
+catalog; tenant orgs subscribe, use a subscribed model's versions in their accounts, and owe a **model-provider fee**.
+Everything sits behind ONE regulatory gate, **OFF** today. Code: `services/model_provider.py`,
+`routers/model_provider.py` (28 routes), `docs/rep15_part1.sql` (APPLIED). Task 1: `docs/REP15_DISCOVERY.md`.
+
+### The gate and the provider record
+- `portfolio.model_providers` — one live record per provider org: legal entity name, SEC file number (`80[12]-…`) or
+  CRD number, registration status (not_registered / pending / registered / withdrawn), effective date, ledger org.
+  Super Admin only. A provider org is the Hollisworks platform org or an is_test org (trigger).
+- `portfolio.model_publishing_gates` — no row = OFF. OPENING needs Super Admin (the `app.is_super_admin` GUC), a
+  COMPLETE record (registered, named, numbered, effective on or before today) and the provider org's OWN published
+  ADV Part 2A (library key `model_provider.adv_2a`, org scope, in force). The service names every missing item; the
+  trigger re-checks all three in the database. Every open / close / refusal is a `model_provider_events` row + an
+  `audit_log` row. Opening provisions the fee's ledger (below).
+- While OFF every publish, subscribe, acknowledge, adopt, join (of a provided model), copy, refresh, accrual and
+  invoice answers **409 "model publishing is not enabled — a registered adviser entity is required"**, and the
+  catalog is invisible to tenants (RLS). The database refuses the same writes (catalog inserts / publication,
+  subscription requests / activation, accruals, invoices all check `model_publishing_open`).
+- A fixture provider can never serve a real tenant and vice versa (`provider_tenant_allowed`: is_test parity).
+- rep3's platform library shelf (ungated until now) is gated for REAL orgs the same way: publishing to it needs the
+  real platform org's gate unless the publisher is a fixture user; loading from it needs the gate unless the org is a
+  fixture org.
+
+### Publishing (provider org, maker-checker)
+1. A provider model is marked **publishable** (`catalog_models`: default fee bps, construction notes). Long/short
+   models are refused (their short book is not in the version's positions — not built).
+2. One of its **approved** rep3 versions is **requested** for the catalog — the maker — with: name ("Holdings of …";
+   never the index's own name — service + CHECK), description ("replicates the holdings of …" — service + CHECK),
+   kind, construction notes, holdings as-of, fee bps. A `catalog_version_publish` task opens.
+3. A **different** Super Admin publishes it — never the requester nor anyone in the rep3 version's `maker_ids`
+   (service, precheck, CHECK `catalog_versions_maker_checker_chk`).
+4. A published version is **immutable** (trigger: only published → retired). A retired version stays readable.
+5. The catalog row carries a frozen snapshot of the **target weights** (look-through, exact Decimal; security id,
+   ticker, name, weight) and its SHA-256 — never the fund's holdings file, an upload, or a provider registry row.
+
+### Subscribing (tenant → platform, maker-checker across the two orgs)
+1. Replication → **Model catalog** lists published provider models (name, "Provided by <legal name>", kind,
+   versions, fee).
+2. An org admin acknowledges the `model_provider.subadvisory_agreement` version **in force for that tenant** (the
+   resolver: a tenant-specific org version overrides the platform default) — by version and hash.
+3. The org admin **requests** (the maker); refused without the acknowledgement of the version in force.
+4. A `provided_subscription_approval` task opens in the PROVIDER org (no maker there; the requester is on the row);
+   a platform **Super Admin** who is not the requester approves (CHECK `provider_subscriptions_maker_checker_chk`),
+   after the agreement in force for the tenant is re-checked against the one acknowledged (a newer agreement →
+   refused; the tenant re-acknowledges and requests again).
+5. Statuses: requested → active ⇄ suspended → ended (or rejected), each dated (`requested_at`, `started_on`,
+   `suspended_at`, `ended_on`). Suspend / resume: platform Super Admin; end: either side. Both orgs log every change.
+
+### Using a subscribed model (tenant)
+- Approval creates a **read-only mirror** in the tenant's registry (`portfolio.models` source `provided`, "Provided
+  by …", named "Holdings of …"): its versions come only from the catalog (trigger `provided_model_guard`: origin
+  `subscription`, positions only through the import path's `models.provided_import` GUC); rep3 refuses drafts,
+  edits, sleeves and renames. Its versions join accounts like the tenant's own (rep5).
+- Every published version arrives as a mirror **draft** + a `provided_version_available` task carrying the exact
+  weight diff (before / after / change per security).
+- **Adopting** is the tenant's maker-checker decision: a holder of manage_models submits the draft (rep3's submit —
+  the maker), a different holder of approve_models approves it (rep3's approval task), and rep5 makes the rebalance
+  PROPOSALS. The org setting `replication.provided_models.pre_approve_adoption` (default **off**; absent = off) makes
+  the person who recorded the setting the standing approver.
+- **Copy** makes a tenant-owned model (source `provided_copy`, "Holdings of …", `copied_from_catalog_version_id`) with
+  no subscription link — so no fee; it goes through rep3's own approval.
+- **Suspending / ending** stops adoptions, joins, copies and imports; accounts already on the model keep their link
+  and version, and each gets a `provided_model_move_account` task.
+- Every proposal on a provided model carries `provider_notice`: the provider, "provided by a sub-adviser", and the
+  library notice `model_provider.member_notice` (a NEW platform default, "have counsel review", `{provider}` filled).
+  The tenant's own ADV disclosure of the sub-adviser relationship is an **operator item, not automated**.
+
+### Cross-org isolation
+- The provider reads, per subscribing tenant, ONLY: subscription status and dates
+  (`portfolio.provider_subscription_status`) and the count of accounts and total model assets per catalog version
+  (`portfolio.provider_model_usage`) — SECURITY DEFINER, answering only for the caller's own provider org. Never a
+  member, account, position, household or person.
+- A tenant never sees another tenant's subscription, events, accruals or invoices (RLS, org_id).
+- Tenants never read the provider's registry rows (no rep3 carve-out is used).
+
+### The model-provider fee and the GL
+- **Asset definition (one place: `provider_model_usage`).** On day d, for each tenant account linked to the
+  subscription's mirror on d: the sum of `market_value` of its live position rows, each asset at its latest
+  `as_of_date` ≤ d (cash positions included; `account_balances_daily` cash excluded). The catalog version on d is the
+  mirror version live (approved by the end of d).
+- **Accrual (daily, valid axis).** `daily_fee = round(model_assets × bps / (10 000 × 365), 10)` — a CHECK holds the
+  formula. A changed day is restated (closed + successor with `supersedes_id`), never edited.
+- **Invoice.** Per subscription per period, one **"Model-provider fee"** line per catalog version (a CHECK holds the
+  label): `amount = round(Σ daily model assets × bps / (10 000 × 365), 2)` = bps × the AVERAGE daily model assets over
+  the period's calendar days × days / 365.
+- **GL.** Posted through `services.ledger.posting` (`build_entry_on_conn` + `post_on_conn`) in the provider record's
+  ledger org: book `MODEL_PROVIDER`, template `MODEL_PROVIDER_FEE` — **Dr 1230 Model-Provider Fee Receivable** (owed
+  by the tenant) / **Cr 4800 Model-Provider Fee Revenue**; `source_event_id` = the invoice id.
+- **Correction = reversal.** `fn_reverse_journal_entry` posts the mirrored entry; a reversal invoice (with mirrored
+  lines) records it; the original invoice, lines and entry never change. Re-accrue, then re-invoice.
+- The fee is not wired to the nightly tick (nothing accrues while the gate is OFF) — an operator item.
+
+### Operator / Joe items
+1. **The registered adviser entity** — a structuring decision (Hollisworks the software company is not an RIA):
+   legal name, SEC file / CRD number, effective date on the provider record.
+2. **The ADV Part 2A** — a library file (`model_provider.adv_2a`) at the provider org's scope, published by a second
+   Super Admin.
+3. **The sub-advisory agreement text** (`model_provider.subadvisory_agreement`) — counsel's; a platform default and
+   any tenant-specific version. No text ships in code.
+4. **The fee bps** per published model.
+5. **Which org's books carry the revenue** (provider record `ledger_org_id`; the provider org by default — the spec
+   says the fee is owed to 2nd Act). Changing it is a deliberate operator step (no API takes an org id).
+6. The member notice default (`docs/disclosures/defaults/model_provider.member_notice.md`) — counsel reviews, then
+   `load_disclosure_defaults.py` loads it.
+7. Super Admins who act for the platform must be users of the Hollisworks org (the provider org is always the
+   caller's own org).

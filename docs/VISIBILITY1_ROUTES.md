@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 923 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
+Routes: 951 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -581,6 +581,34 @@ Routes: 923 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
 | POST | `/api/v1/marketing/contact` | marketing | scrub |
 | GET | `/api/v1/marketing/firm-search` | marketing | scrub |
 | GET | `/api/v1/me/ownership-graph` | ownership_tree | scrub |
+| GET | `/api/v1/model-catalog` | model_provider | scrub |
+| GET | `/api/v1/model-catalog/fees` | model_provider | scrub |
+| GET | `/api/v1/model-catalog/subscriptions` | model_provider | scrub |
+| POST | `/api/v1/model-catalog/subscriptions/{subscription_id}/adopt` | model_provider | scrub |
+| POST | `/api/v1/model-catalog/subscriptions/{subscription_id}/copy` | model_provider | scrub |
+| POST | `/api/v1/model-catalog/subscriptions/{subscription_id}/end` | model_provider | scrub |
+| POST | `/api/v1/model-catalog/subscriptions/{subscription_id}/refresh` | model_provider | scrub |
+| POST | `/api/v1/model-catalog/{catalog_model_id}/acknowledge` | model_provider | scrub |
+| POST | `/api/v1/model-catalog/{catalog_model_id}/subscribe` | model_provider | scrub |
+| GET | `/api/v1/model-provider` | model_provider | scrub |
+| POST | `/api/v1/model-provider/catalog-models/{catalog_model_id}/publish` | model_provider | scrub |
+| POST | `/api/v1/model-provider/catalog-models/{catalog_model_id}/withdraw` | model_provider | scrub |
+| POST | `/api/v1/model-provider/catalog-versions/{catalog_version_id}/decide` | model_provider | scrub |
+| POST | `/api/v1/model-provider/catalog-versions/{catalog_version_id}/retire` | model_provider | scrub |
+| POST | `/api/v1/model-provider/fees/accrue` | model_provider | scrub |
+| GET | `/api/v1/model-provider/fees/invoices` | model_provider | scrub |
+| POST | `/api/v1/model-provider/fees/invoices` | model_provider | scrub |
+| POST | `/api/v1/model-provider/fees/invoices/{invoice_id}/correct` | model_provider | scrub |
+| POST | `/api/v1/model-provider/gate/close` | model_provider | scrub |
+| POST | `/api/v1/model-provider/gate/open` | model_provider | scrub |
+| POST | `/api/v1/model-provider/models/{model_id}/publishable` | model_provider | scrub |
+| PUT | `/api/v1/model-provider/provider` | model_provider | scrub |
+| GET | `/api/v1/model-provider/publishing` | model_provider | scrub |
+| GET | `/api/v1/model-provider/subscribers` | model_provider | scrub |
+| POST | `/api/v1/model-provider/subscriptions/{subscription_id}/decide` | model_provider | scrub |
+| POST | `/api/v1/model-provider/subscriptions/{subscription_id}/end` | model_provider | scrub |
+| POST | `/api/v1/model-provider/subscriptions/{subscription_id}/resume` | model_provider | scrub |
+| POST | `/api/v1/model-provider/subscriptions/{subscription_id}/suspend` | model_provider | scrub |
 | POST | `/api/v1/modeling/ta/calibrate/{commitment_id}` | modeling_ta | guard:commitment_id, scrub |
 | GET | `/api/v1/modeling/ta/calibration-floor` | modeling_ta | scrub |
 | GET | `/api/v1/modeling/ta/defaults` | modeling_ta | scrub |

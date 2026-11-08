@@ -185,6 +185,13 @@ def settings_of(link: dict | None) -> dict:
     return out
 
 
+async def M_load(conn, org_id, model_id) -> dict:
+    """rep15 — the full model row (the provided-model checks read its subscription link)."""
+    from services import models as M
+
+    return await M.load_model(conn, org_id, model_id)
+
+
 async def model_brief(conn, org_id, model_id) -> dict:
     from services import models as M
 
@@ -562,6 +569,12 @@ async def propose_change(pool, *, org_id, actor_id, account_id, change_kind: str
         if change_kind in ("join", "change_model") and (model["status"] != "active" or not model["live_version_id"]):
             raise AccountModelConflict(f"{model['name']} has no approved version — only an approved model from the "
                                        "registry can be joined")
+        if change_kind in ("join", "change_model") and model["source"] == "provided":   # rep15
+            from services import model_provider as PM
+
+            why = await PM.adoptable_refusal(conn, await M_load(conn, org_id, model["id"]))
+            if why:
+                raise AccountModelConflict(why)
         if change_kind in ("join", "change_model"):     # rep13 — a long/short model needs an eligible account
             from services import long_short as LS
 

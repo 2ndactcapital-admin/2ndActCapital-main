@@ -1280,7 +1280,8 @@ async def y_migration(conn):
     n1 = await counts(conn)
     plans = [ln for ln in out.splitlines() if ln.startswith("[PLAN] ")]
     check(bool(code == 0 and "DRY RUN" in out and "nothing written, nothing uploaded" in out
-               and {p.split(":")[0][7:] for p in plans} == set(DL.KEYS) and n0 == n1),
+               and {p.split(":")[0][7:] for p in plans} == set(DL.KEYS) - DL.NO_PLATFORM_DEFAULT
+               and n0 == n1),
           "the operator loader's --dry-run validates every default, plans each R2 key, writes nothing",
           f"{code} {(out + err)[-400:]}")
     check(all("disclosures/platform/" in p for p in plans), "...each planned object is under disclosures/platform/")
