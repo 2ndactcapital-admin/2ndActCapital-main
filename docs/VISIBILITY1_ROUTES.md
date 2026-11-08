@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 951 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
+Routes: 961 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -117,6 +117,10 @@ Routes: 951 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
 | POST | `/api/v1/admin/permission-sets/{set_id}/users` | profiles | scrub |
 | DELETE | `/api/v1/admin/permission-sets/{set_id}/users/{user_id}` | profiles | scrub |
 | GET | `/api/v1/admin/permissions` | profiles | scrub |
+| GET | `/api/v1/admin/platform/workflow-templates` | workflow_templates | scrub |
+| POST | `/api/v1/admin/platform/workflow-templates` | workflow_templates | scrub |
+| POST | `/api/v1/admin/platform/workflow-templates/versions/{version_id}/decide` | workflow_templates | scrub |
+| POST | `/api/v1/admin/platform/workflow-templates/versions/{version_id}/retire` | workflow_templates | scrub |
 | GET | `/api/v1/admin/pricing/note-terms/queue` | pricing_admin | scrub |
 | POST | `/api/v1/admin/pricing/note-terms/{note_terms_id}/resolve` | pricing_admin | scrub |
 | GET | `/api/v1/admin/pricing/stp-policy` | pricing_admin | scrub |
@@ -189,6 +193,12 @@ Routes: 951 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
 | GET | `/api/v1/admin/workflow-runs` | workflows | scrub |
 | GET | `/api/v1/admin/workflow-runs/{run_id}` | workflows | scrub |
 | POST | `/api/v1/admin/workflow-runs/{run_id}/steps/{step_id}/decision` | workflows | scrub |
+| GET | `/api/v1/admin/workflow-templates` | workflow_templates | scrub |
+| GET | `/api/v1/admin/workflow-templates/copies` | workflow_templates | scrub |
+| POST | `/api/v1/admin/workflow-templates/org` | workflow_templates | scrub |
+| POST | `/api/v1/admin/workflow-templates/versions/{version_id}/retire` | workflow_templates | scrub |
+| GET | `/api/v1/admin/workflow-templates/{template_id}` | workflow_templates | scrub |
+| POST | `/api/v1/admin/workflow-templates/{template_id}/use` | workflow_templates | scrub |
 | GET | `/api/v1/admin/workflow-triggers` | workflows | scrub |
 | POST | `/api/v1/admin/workflow-triggers` | workflows | scrub |
 | POST | `/api/v1/admin/workflow-triggers/preview` | workflows | scrub |

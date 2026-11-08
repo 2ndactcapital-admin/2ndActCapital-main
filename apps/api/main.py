@@ -62,6 +62,7 @@ from routers.long_short import router as long_short_router  # REP13
 from routers.disclosures import router as disclosures_router  # DISCLOSURES1
 from routers.section351 import router as section351_router  # REP14
 from routers.model_provider import router as model_provider_router  # REP15
+from routers.workflow_templates import router as workflow_templates_router  # WFTEMPLATES1
 from routers.tax import router as tax_router
 from routers.held_away import router as held_away_router
 from routers.xray import router as xray_router
@@ -691,6 +692,7 @@ app.include_router(long_short_router, prefix="/api/v1")  # REP13 — the long/sh
 app.include_router(disclosures_router, prefix="/api/v1")  # DISCLOSURES1 — the disclosure library
 app.include_router(section351_router, prefix="/api/v1")  # REP14 — the Section 351 exit
 app.include_router(model_provider_router, prefix="/api/v1")  # REP15 — platform-published models
+app.include_router(workflow_templates_router, prefix="/api/v1")  # WFTEMPLATES1 — workflow template library
 app.include_router(tax_router, prefix="/api/v1")
 app.include_router(held_away_router, prefix="/api/v1")
 app.include_router(xray_router, prefix="/api/v1")
