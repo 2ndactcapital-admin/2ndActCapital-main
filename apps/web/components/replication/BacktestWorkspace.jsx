@@ -12,6 +12,7 @@
 import { useState } from "react";
 import { backtestControls, disclosureOf, labelOf, money, pct, vocab } from "@/lib/rep10.mjs";
 import { errorFromDetail } from "@/lib/apiError.mjs";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -48,7 +49,7 @@ export function BacktestResultView({ envelope, backtest }) {
   );
 }
 
-export function BacktestsView({ envelope, onRun }) {
+export function BacktestsView({ envelope, onRun, busy = false }) {
   const c = backtestControls(envelope);
   const v = vocab(envelope);
   const rows = Array.isArray(envelope?.rows) ? envelope.rows : [];
@@ -66,7 +67,8 @@ export function BacktestsView({ envelope, onRun }) {
           <select className={input} value={f.cadence} onChange={(e) => setF({ ...f, cadence: e.target.value })}>
             {(v.cadences || []).map((w) => <option key={w.key} value={w.key}>{w.label}</option>)}
           </select>
-          <button type="button" className={primary} onClick={() => onRun?.(f)}>Run backtest</button>
+          {/* CATCHALL1 busy — busy comes from BacktestWorkspace's useBusy */}
+          <BusyButton busy={busy} busyLabel="Running…" className={primary} onClick={() => onRun?.(f)}>Run backtest</BusyButton>
         </div>
       ) : null}
       {rows.length ? rows.map((b) => <BacktestResultView key={b.id} envelope={envelope} backtest={b} />)
@@ -77,30 +79,27 @@ export function BacktestsView({ envelope, onRun }) {
 
 export default function BacktestWorkspace({ initialEnvelope }) {
   const [env, setEnv] = useState(initialEnvelope);
-  const [msg, setMsg] = useState(null);
-  async function onRun(f) {
-    setMsg(null);
+  const running = useBusy(); // CATCHALL1 busy — Run backtest
+  const onRun = (f) => running.run(async () => {
     if (!String(f.model_id || "").trim() || !String(f.fund_security_id || "").trim()) {
-      setMsg("Enter the replica model id and the fund security id to run a backtest.");
-      return;
+      throw new Error("Enter the replica model id and the fund security id to run a backtest.");
     }
     let res;
     try {
       res = await fetch("/api/replication/backtests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) });
     } catch (e) {
-      setMsg(`The backtest request did not reach the server: ${e?.message || e}`);
-      return;
+      throw new Error(`The backtest request did not reach the server: ${e?.message || e}`);
     }
     const data = await res.json().catch(() => ({}));
     // BT-01: the server's reason (detail), never a bare "Request failed".
-    if (!res.ok) { setMsg(`Backtest not run: ${data.error || errorFromDetail(data.detail, res.status)}`); return; }
+    if (!res.ok) throw new Error(`Backtest not run: ${data.error || errorFromDetail(data.detail, res.status)}`);
     const r2 = await fetch("/api/replication/backtests");
     if (r2.ok) setEnv(await r2.json());
-  }
+  });
   return (
     <div className="space-y-3">
-      {msg ? <p className="text-sm text-[#9B2335]">{msg}</p> : null}
-      <BacktestsView envelope={env} onRun={onRun} />
+      <BusyError error={running.error} className="block text-sm text-[#9B2335]" />
+      <BacktestsView envelope={env} onRun={onRun} busy={running.busy} />
     </div>
   );
 }

@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import DataGrid from "@/components/ui/DataGrid";
+import { BusyButton, useBusy } from "@/components/ui/Busy";
 
 const CARD = "rounded-md border border-[var(--2a-border)] bg-[var(--2a-bg-card)]";
 const CONTROL =
@@ -191,14 +192,14 @@ export default function ModelResearchGrid() {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | ready | forbidden | error
   const [error, setError] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
+  // CATCHALL1 busy — Refresh (a failed refresh lands on the screen's own error card below)
+  const refreshBusy = useBusy();
   const [providers, setProviders] = useState(() => new Set());
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [inTok, setInTok] = useState(null);
   const [outTok, setOutTok] = useState(null);
 
   const load = useCallback(async (refresh) => {
-    if (refresh) setRefreshing(true);
     try {
       const res = await fetch(`/api/admin/model-research${refresh ? "?refresh=true" : ""}`, {
         cache: "no-store",
@@ -228,8 +229,6 @@ export default function ModelResearchGrid() {
     } catch (e) {
       setError(e.message);
       setStatus("error");
-    } finally {
-      setRefreshing(false);
     }
   }, []);
 
@@ -402,14 +401,15 @@ export default function ModelResearchGrid() {
             </span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => load(true)}
-          disabled={refreshing}
+        {/* CATCHALL1 busy */}
+        <BusyButton
+          onClick={() => refreshBusy.run(() => load(true))}
+          busy={refreshBusy.busy}
+          busyLabel="Refreshing…"
           className="rounded border border-[var(--2a-navy)] px-4 py-1.5 text-xs font-medium text-[var(--2a-navy)] hover:bg-[var(--2a-bg)] disabled:opacity-50"
         >
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
+          Refresh
+        </BusyButton>
         {meta.deployments_error && (
           <p className="w-full text-xs text-[var(--2a-text)]">
             Proxy registrations could not be read, so no model is flagged live: {meta.deployments_error}

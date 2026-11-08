@@ -122,6 +122,16 @@ SPRINT_FASTFORWARD = {
     "perms1": ("3fe2cef", "01c0f57"),   # ff54ef0 perms1 … c38240c perms1 fix 1 … 3fe2cef sprint: perms1.fix1
 }
 
+#: CATCHALL1 Task 8 — sprints that SHARE one merge with a follow-up (the merge's second parent is the LATER sprint's
+#: tip), so neither "second parent" nor "merge-base" is either sprint's own line: (tip, base) stated explicitly.
+#: ``sprint_end_ref`` re-checks the tip is an ancestor of main whose subject names the key (``_sprint_commit_rx``)
+#: and that base is an ancestor of the tip. previewperf and its fix 1 both reached main in 22b4c0d "merge
+#: previewperf" (second parent 58a6217 = fix 1): previewperf's own end is ca39a17, fix 1's is 58a6217 on ca39a17.
+SPRINT_PINNED = {
+    "previewperf": ("ca39a17", "d9afcea"),
+    "previewperf fix 1": ("58a6217", "ca39a17"),
+}
+
 #: Sprints that never had a merge commit — committed on main's first-parent line directly. Their end point is the
 #: sprint commit itself (checked: an ancestor of main whose subject names the key).
 SPRINT_LANDED = {
@@ -252,7 +262,19 @@ def sprint_end_ref(sprint_key: str) -> tuple[str, str]:
     sha = SPRINT_MERGES.get(sprint_key)
     landed = SPRINT_LANDED.get(sprint_key)
     ff = SPRINT_FASTFORWARD.get(sprint_key)
-    if ff:
+    pinned = SPRINT_PINNED.get(sprint_key)
+    if pinned:
+        tip, base = pinned
+        code, out, _ = git("log", "-1", "--format=%s", tip)
+        if (code != 0 or git("merge-base", "--is-ancestor", tip, "main")[0] != 0
+                or not re.search(_sprint_commit_rx(sprint_key), out.strip(), re.I)
+                or git("merge-base", "--is-ancestor", base, tip)[0] != 0):
+            raise RuntimeError(f"SPRINT_PINNED[{sprint_key!r}] = {pinned} is not that sprint's own line on main")
+        _BASE_OF[sprint_key] = git("rev-parse", "--short", base)[1].strip()
+        res = (git("rev-parse", "--short", tip)[1].strip(),
+               f"{sprint_key}'s own end pinned at {tip} ('{out.strip()[:50]}'), base {_BASE_OF[sprint_key]} "
+               "(it shares its merge with a follow-up)")
+    elif ff:
         tip, base = ff
         code, out, _ = git("log", "-1", "--format=%s", tip)
         first_parent = git("log", "--first-parent", "--format=%h", "main")[1].split()

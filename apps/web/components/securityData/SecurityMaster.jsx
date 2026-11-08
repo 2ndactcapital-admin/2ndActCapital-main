@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import { jobSwitch } from "@/lib/bugfix4.mjs";
 import { can, labelOf, vocab } from "./sourceLabel.mjs";
 import { describeFilter, listHref, pct, reviewHref } from "@/lib/secmaster2.mjs";
@@ -142,7 +143,7 @@ export function SecuritiesList({ envelope }) {
   );
 }
 
-export function JobsView({ envelope, onRunNow, onClose, onSwitch }) {
+export function JobsView({ envelope, onRunNow, onClose, onSwitch, runningKey = null }) {
   const jobs = envelope?.jobs || [];
   const run = can(envelope, "can_run");
   const close = can(envelope, "can_close_held");
@@ -166,7 +167,9 @@ export function JobsView({ envelope, onRunNow, onClose, onSwitch }) {
                 <td className="text-xs">{last ? last.status : "—"}{last?.error_detail ? <span className="block text-[#9B2335]">{String(last.error_detail).slice(0, 160)}</span> : null}</td>
                 {run ? (
                   <td className="space-x-2 text-right">
-                    <button type="button" className={btn} onClick={() => onRunNow?.(j.key)}>Run now</button>
+                    {/* CATCHALL1 busy — one Run now at a time; the row being started shows Working… */}
+                    <BusyButton className={btn} busy={runningKey === j.key} disabled={runningKey != null}
+                      onClick={() => onRunNow?.(j.key)}>Run now</BusyButton>
                     {/* BUGFIX4 — the Super Admin's schedule switch (audited; the sprint switched nothing on) */}
                     {jobSwitch(envelope, j) && onSwitch
                       ? <button type="button" className={btn} onClick={() => onSwitch(j.key, jobSwitch(envelope, j).next)}>{jobSwitch(envelope, j).label}</button> : null}
@@ -239,14 +242,26 @@ export default function SecurityMasterAdmin({ initialStatus, initialJobs, initia
   const act = async (fn, ok) => {
     try { await fn(); setMsg(ok); await reload(); } catch (e) { setMsg(e.message); }
   };
+  // CATCHALL1 busy — Run now
+  const runNow = useBusy();
+  const [runningKey, setRunningKey] = useState(null);
+  const onRunNow = async (k) => {
+    if (runNow.busy) return;
+    setMsg(null); setRunningKey(k);
+    await runNow.run(async () => {
+      await call(`${base}/jobs/${encodeURIComponent(k)}/run-now`, { method: "POST", body: "{}" });
+      setMsg("Started — it appears on the Runs screen.");
+      await reload();
+    });
+    setRunningKey(null);
+  };
   return (
     <div className="space-y-6">
       {msg ? <p className="text-sm text-navy">{msg}</p> : null}
+      <BusyError error={runNow.error} className="block text-sm text-[#9B2335]" />
       {initialList ? <SecuritiesList envelope={initialList} /> : <SummaryPanel envelope={initialSummary} />}
       <StatusPanel envelope={status} />
-      <JobsView envelope={jobs}
-        onRunNow={(k) => act(() => call(`${base}/jobs/${encodeURIComponent(k)}/run-now`, { method: "POST", body: "{}" }),
-          "Started — it appears on the Runs screen.")}
+      <JobsView envelope={jobs} runningKey={runNow.busy ? runningKey : null} onRunNow={onRunNow}
         onClose={(id) => { const note = window.prompt("Why is this held run being closed?"); if (note) act(() => call(`${base}/runs/${id}/close`, { method: "POST", body: JSON.stringify({ note }) }), "Held run closed — the schedule resumes."); }}
         onSwitch={(k, on) => { if (window.confirm(on ? "Switch this job's schedule ON? It will run on its schedule from now on." : "Switch this job's schedule off?")) act(() => call(`${base}/jobs/${encodeURIComponent(k)}/schedule`, { method: "POST", body: JSON.stringify({ active: on }) }), on ? "Schedule switched on." : "Schedule switched off."); }}
       />
@@ -261,17 +276,29 @@ export default function SecurityMasterAdmin({ initialStatus, initialJobs, initia
 export function PlatformJobsPanel({ initialJobs }) {
   const [jobs, setJobs] = useState(initialJobs);
   const [msg, setMsg] = useState(null);
+  // CATCHALL1 busy — Run now (hooks before the fail-closed early return)
+  const runNow = useBusy();
+  const [runningKey, setRunningKey] = useState(null);
   if (!can(jobs, "can_run")) return null;
   const base = "/api/admin/security-data/master";
   const act = async (fn, ok) => {
     try { await fn(); setMsg(ok); setJobs(await call(`${base}/jobs`)); } catch (e) { setMsg(e.message); }
   };
+  const onRunNow = async (k) => {
+    if (runNow.busy) return;
+    setMsg(null); setRunningKey(k);
+    await runNow.run(async () => {
+      await call(`${base}/jobs/${encodeURIComponent(k)}/run-now`, { method: "POST", body: "{}" });
+      setMsg("Started — refresh the run list to follow it.");
+      setJobs(await call(`${base}/jobs`));
+    });
+    setRunningKey(null);
+  };
   return (
     <div className="mt-6">
       {msg ? <p className="mb-2 text-sm text-navy">{msg}</p> : null}
-      <JobsView envelope={jobs}
-        onRunNow={(k) => act(() => call(`${base}/jobs/${encodeURIComponent(k)}/run-now`, { method: "POST", body: "{}" }),
-          "Started — refresh the run list to follow it.")}
+      <BusyError error={runNow.error} className="mb-2 block text-sm text-[#9B2335]" />
+      <JobsView envelope={jobs} runningKey={runNow.busy ? runningKey : null} onRunNow={onRunNow}
         onClose={(id) => { const note = window.prompt("Why is this held run being closed?"); if (note) act(() => call(`${base}/runs/${id}/close`, { method: "POST", body: JSON.stringify({ note }) }), "Held run closed — the schedule resumes."); }}
         onSwitch={(k, on) => { if (window.confirm(on ? "Switch this job's schedule ON? It will run on its schedule from now on." : "Switch this job's schedule off?")) act(() => call(`${base}/jobs/${encodeURIComponent(k)}/schedule`, { method: "POST", body: JSON.stringify({ active: on }) }), on ? "Schedule switched on." : "Schedule switched off."); }}
       />

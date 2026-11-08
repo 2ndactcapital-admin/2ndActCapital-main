@@ -4,6 +4,7 @@
 // approve / reject by a SECOND Super Admin. Approve / Reject render only from the server's own `actions` list
 // (empty for the uploader). Column names and statuses come from the envelope.
 import { useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import { importActions, money } from "@/lib/portentry.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-6 text-sm";
@@ -43,35 +44,44 @@ export default function IntegratedImport({ initialEnvelope }) {
   const [open, setOpen] = useState(null);
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState(null);
+  // CATCHALL1 busy — Preview (upload) and Approve / Reject each run under the shared busy state
+  const uploading = useBusy();
+  const approving = useBusy();
+  const rejecting = useBusy();
+  const deciding = approving.busy || rejecting.busy;
   const statuses = Array.isArray(env?.vocabularies?.statuses) ? env.vocabularies.statuses : [];
   const rows = Array.isArray(env?.rows) ? env.rows : [];
 
   async function reload() {
     setEnv(await call("/api/portentry/admin/integrated-imports"));
   }
-  async function upload() {
-    setMsg(null);
-    if (!file) { setMsg("Choose the CSV file."); return; }
-    const fd = new FormData();
-    fd.append("file", file);
-    if (asOf) fd.append("as_of", asOf);
-    try {
+  function upload() {
+    // CATCHALL1 busy — call() throws on !res.ok; the error shows beside Preview
+    return uploading.run(async () => {
+      setMsg(null);
+      if (!file) throw new Error("Choose the CSV file.");
+      const fd = new FormData();
+      fd.append("file", file);
+      if (asOf) fd.append("as_of", asOf);
       const imp = await call("/api/portentry/admin/integrated-imports", { method: "POST", body: fd });
       await reload();
       setOpen(await call(`/api/portentry/admin/integrated-imports/${imp.id}`));
-    } catch (e) { setMsg(e.message); }
+    });
   }
   async function show(id) {
     try { setOpen(await call(`/api/portentry/admin/integrated-imports/${id}`)); } catch (e) { setMsg(e.message); }
   }
-  async function decide(outcome) {
-    setMsg(null);
-    try {
+  function decide(outcome) {
+    // CATCHALL1 busy
+    const hook = outcome === "approve" ? approving : rejecting;
+    if (deciding) return undefined;
+    return hook.run(async () => {
+      setMsg(null);
       await call(`/api/portentry/admin/integrated-imports/${open.id}/${outcome}`, { method: "POST",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note: note || undefined }) });
       await reload();
       await show(open.id);
-    } catch (e) { setMsg(e.message); }
+    });
   }
 
   return (
@@ -82,7 +92,9 @@ export default function IntegratedImport({ initialEnvelope }) {
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
           <input type="date" className="rounded border border-[#E2E8F0] px-3 py-2" value={asOf} onChange={(e) => setAsOf(e.target.value)} aria-label="As of (when the file has no date)" />
-          <button type="button" className={button} onClick={upload}>Preview</button>
+          {/* CATCHALL1 busy */}
+          <BusyButton className={button} busy={uploading.busy} busyLabel="Uploading…" onClick={upload}>Preview</BusyButton>
+          <BusyError error={uploading.error} />
         </div>
       </section>
       <section className={card}>
@@ -102,8 +114,10 @@ export default function IntegratedImport({ initialEnvelope }) {
           {importActions(open).length > 0 && (
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <input className="rounded border border-[#E2E8F0] px-3 py-2" placeholder="Note (required to reject)" value={note} onChange={(e) => setNote(e.target.value)} />
-              {importActions(open).includes("approve") && <button type="button" className={button} onClick={() => decide("approve")}>Approve</button>}
-              {importActions(open).includes("reject") && <button type="button" className="rounded-[6px] border border-[#1B2B4B] px-4 py-2 text-[#1B2B4B]" onClick={() => decide("reject")}>Reject</button>}
+              {/* CATCHALL1 busy */}
+              {importActions(open).includes("approve") && <BusyButton className={button} busy={approving.busy} disabled={deciding} busyLabel="Approving…" onClick={() => decide("approve")}>Approve</BusyButton>}
+              {importActions(open).includes("reject") && <BusyButton className="rounded-[6px] border border-[#1B2B4B] px-4 py-2 text-[#1B2B4B] disabled:opacity-50" busy={rejecting.busy} disabled={deciding} busyLabel="Rejecting…" onClick={() => decide("reject")}>Reject</BusyButton>}
+              <BusyError error={approving.error || rejecting.error} />
             </div>
           )}
           {open.status === "draft" && importActions(open).length === 0 && <p className={`mt-3 ${quiet}`}>{open.maker_note || "A different Super Admin must approve this import."}</p>}

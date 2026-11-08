@@ -121,6 +121,20 @@ Each is still hit by verify_vhk2's static scan, and each is listed in its `INVAR
 | verify_navregroup.py | `set(perm_ids) == {"view_deals", "manage_deals"}` | the query is filtered to those two names: "both exist" |
 | verify_dealroom2.py | `pages[3][0] == 404` | the script's own fixture pages |
 | verify_bulkfetch.py | `len(stamps) == 36` | the script's own fixture request stamps |
+| verify_bugfix2.py | `len(b) == 73` | (CATCHALL1) the BEFORE record read at the pinned git ref BEFORE_REF — history, never live |
+| verify_bugfix2.py | `len(table) == 73` | (CATCHALL1) the same pinned BEFORE record, classified |
+| verify_bugfix2.py | `len(from_open) == 45` | (CATCHALL1) BEFORE_REF → bugfix2's own end ref (both pinned) |
+| verify_bugfix2.py | `for l in ls] == ["/portfolio/securities"]` | (CATCHALL1) the links for the script's own fixture principals |
+| verify_crmdetail1.py | `len(db) == 11` | (CATCHALL1) the live detail rows of the script's own fixture trust |
+| verify_bugfix3.py | `len(made) == 17` | (CATCHALL1) the script's own fixture creations (4 + 6 + 6 + cash) |
+| verify_bugfix3.py | `set(plan) == {"real_estate", "other"}` | (CATCHALL1) the backfill plan over the script's own fixture org |
+| verify_secmaster2.py | `len(etf) == 12` | (CATCHALL1) the committed fixture CSVs (fd_etfs_PCX / fd_funds_NAS) |
+| verify_prices1.py | `len(sp) == 30`, `len(fr) == 71`, `len(days) == 71` | (CATCHALL1) the script's own synthetic bar series (SYN) |
+
+**Handed off, not an invariant (CATCHALL1):** verify_bugfix2.py `len(changed) == 45` compares bugfix2's BEFORE
+record with TODAY's AUTHZ1_ROUTES.json, so any later sprint that gates one more of those routes breaks it. It is
+frozen against live state; verify_vhk2 reports it as a `[FIND]` (`HANDED_OFF`) owned by verifyfix1 (read it at
+bugfix2's own end ref, as its line-165 check already does), rather than listing it here.
 | verify_edgarpipelinea.py | `all(n.startswith("Edgar") for n in at_end)` | pinned to edgarpipelinea's own commit 4080f41 (rule 1), not today |
 | verify_edgarpipelinea.py | `len(res["rows"]) == 50` | the API page size |
 | verify_rep2.py | `set(acct) == {"id", "name", "raw"}` | a mocked payload the script builds |

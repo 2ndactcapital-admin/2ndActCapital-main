@@ -10,11 +10,12 @@
  * lib/bulkApprove.mjs; the server decides each item through the single path.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import { formatMoneyExact, formatNumberExact } from "@/lib/decimalString";
 import {
-  blockedReason, bulkControls, canDecide, confirmation, filterRows, itemSummary, labelOf, pruneSelection,
-  requestBody, resultLines, rowsOf, selectAll, selectable, toggle, vocab,
+  blockedReason, bulkControls, cancelConfirmation, canDecide, confirmation, filterRows, finalLabel, itemSummary,
+  pruneSelection, requestBody, resultLines, reviewLabel, rowsOf, selectAll, selectable, toggle, vocab,
 } from "@/lib/bulkApprove.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -80,8 +81,9 @@ export function BulkApproveView({ envelope, selected, filters, expanded, onToggl
           <button type="button" className={secondary} onClick={() => onSelectAll(rows)}>Select all ({selectAll(envelope, rows).length})</button>
           <button type="button" className={secondary} disabled={!selected.length} onClick={onClear}>Clear</button>
           <span className="text-text-muted">{ctl.count} selected</span>
-          <button type="button" className={primary} disabled={!ctl.approve} onClick={() => onAsk("approve")}>Approve selected</button>
-          <button type="button" className={secondary} disabled={!ctl.reject} onClick={() => onAsk("reject")}>Reject selected</button>
+          {/* CATCHALL1 — the first step opens the review; it decides nothing */}
+          <button type="button" className={primary} disabled={!ctl.approve} onClick={() => onAsk("approve")}>{reviewLabel(envelope, selected, "approve")}</button>
+          <button type="button" className={secondary} disabled={!ctl.reject} onClick={() => onAsk("reject")}>{reviewLabel(envelope, selected, "reject")}</button>
           {ctl.overCap ? <span className="text-[#9B2335]">At most {ctl.cap} per request</span> : null}
         </div>
       ) : null}
@@ -123,11 +125,20 @@ export function BulkApproveView({ envelope, selected, filters, expanded, onToggl
   );
 }
 
-export function ConfirmView({ envelope, selected, decision, note, onNote, onConfirm, onCancel, busy }) {
+export function ConfirmView({ envelope, selected, decision, note, onNote, onConfirm, onCancel, busy, autoFocus = true }) {
   const c = confirmation(envelope, selected, decision, note);
+  const ref = useRef(null);
+  // CATCHALL1 — the confirmation comes INTO VIEW: scrolled to and focused when it opens; Escape = Cancel
+  useEffect(() => {
+    if (!autoFocus || !ref.current) return;
+    ref.current.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    ref.current.focus?.({ preventScroll: true });
+  }, [autoFocus, decision]);
   return (
-    <div className={`${card} mt-4 p-6`} role="dialog" aria-label="Confirm">
-      <h2 className="text-lg font-semibold text-navy">{c.title}</h2>
+    <div ref={ref} tabIndex={-1} className={`${card} mt-4 p-6 outline-none`} role="dialog" aria-modal="false"
+      aria-labelledby="bulk-confirm-title" data-confirm="1"
+      onKeyDown={(e) => { if (e.key === "Escape" && !busy) { e.preventDefault(); onCancel(); } }}>
+      <h2 id="bulk-confirm-title" className="text-lg font-semibold text-navy">{c.title}</h2>
       <p className="mt-1 text-sm text-text-muted">Each item is decided on its own, under your name, by the same rules as a single approval.</p>
       <ul className="mt-3 max-h-64 overflow-auto text-sm">{c.items.map((i) => <li key={i.id} className="py-0.5">{i.text}</li>)}</ul>
       {c.noteRequired ? (
@@ -137,8 +148,10 @@ export function ConfirmView({ envelope, selected, decision, note, onNote, onConf
         <input className={`${input} mt-3 w-full`} placeholder="Note (optional)" value={note} onChange={(e) => onNote(e.target.value)} />
       )}
       <div className="mt-3 flex gap-2">
-        <button type="button" className={primary} disabled={!c.canConfirm || busy} onClick={onConfirm}>{labelOf(vocab(envelope).decisions, decision)} {c.items.length}</button>
+        <BusyButton className={primary} busy={busy} disabled={!c.canConfirm} busyLabel={`Working… (${c.items.length})`}
+          onClick={onConfirm}>{finalLabel(envelope, selected, decision)}</BusyButton>
         <button type="button" className={secondary} disabled={busy} onClick={onCancel}>Cancel</button>
+        <span className="self-center text-xs text-text-muted">Esc returns to the list with your selection kept.</span>
       </div>
     </div>
   );
@@ -151,7 +164,8 @@ export default function BulkApprove({ initialEnvelope }) {
   const [expanded, setExpanded] = useState(null);
   const [asking, setAsking] = useState(null);
   const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
+  const action = useBusy();   // CATCHALL1 busy — the shared indicator
+  const busy = action.busy;
   const [results, setResults] = useState(null);
   const [msg, setMsg] = useState(null);
   if (!env || typeof env !== "object") return null;
@@ -165,8 +179,8 @@ export default function BulkApprove({ initialEnvelope }) {
     else setMsg(data.error || `Could not load (${res.status})`);
   }
   async function confirm() {
-    setBusy(true); setMsg(null);
-    try {
+    setMsg(null);
+    await action.run(async () => {
       const res = await fetch("/api/approvals/bulk", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody(env, selected, asking, note)),
@@ -176,7 +190,7 @@ export default function BulkApprove({ initialEnvelope }) {
       setResults(resultLines(env, data));
       setAsking(null); setNote("");
       await load(env.type);
-    } catch (e) { setMsg(e.message); } finally { setBusy(false); }
+    });
   }
 
   return (
@@ -190,6 +204,7 @@ export default function BulkApprove({ initialEnvelope }) {
         </div>
       ) : null}
       {msg ? <p className="mb-3 text-sm text-[#9B2335]">{msg}</p> : null}
+      <BusyError error={action.error} className="mb-3 block text-sm text-[#9B2335]" />
       {results ? (
         <div className={`${card} mb-4 p-4 text-sm`} data-results="1">
           <ul>{results.map((r) => <li key={r.id}>{r.label} — {r.text}{r.reason ? <span className="text-text-muted"> ({r.reason})</span> : null}</li>)}</ul>
@@ -203,7 +218,8 @@ export default function BulkApprove({ initialEnvelope }) {
         onExpand={(id) => setExpanded(expanded === id ? null : id)}
         onAsk={(d) => { setAsking(d); setResults(null); }} />
       {asking ? <ConfirmView envelope={env} selected={selected} decision={asking} note={note} onNote={setNote}
-        onConfirm={confirm} onCancel={() => setAsking(null)} busy={busy} /> : null}
+        onConfirm={confirm} onCancel={() => { const k = cancelConfirmation(selected); setAsking(k.asking); setSelected(k.selected); }}
+        busy={busy} /> : null}
     </div>
   );
 }

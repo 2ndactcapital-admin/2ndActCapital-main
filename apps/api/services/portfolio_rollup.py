@@ -97,6 +97,8 @@ from services.portfolio_assets import (
 # Phase B). Qualified anyway, on both, for the same reason portfolio_assets
 # qualifies its public tables: a reader should not have to know which schema
 # each name happens to resolve in.
+from services.portfolio_assets import TABLE_DISPOSALS  # noqa: E402  CATCHALL1
+
 TABLE_HOLDINGS = "public.entity_holdings"
 TABLE_ENTITY_RELS = "public.entity_relationships"
 
@@ -249,7 +251,9 @@ def _money(value) -> Decimal:
 async def _current_positions(conn, org_id: str, as_of_date: date, scope: list | None = None) -> list:
     """The positions that ARE the portfolio on ``as_of_date``.
 
-    Three filters, each load-bearing:
+    Four filters, each load-bearing (the fourth: CATCHALL1 — a direct asset
+    with a current ``portfolio.asset_disposals`` row counts only on as-of dates
+    BEFORE its ``end_date``; "entered in error" is ended from its start):
 
     * ``valid_to IS NULL AND system_to IS NULL`` — the row is current on both
       temporal axes (CLAUDE.md Rule 3's read side).
@@ -293,6 +297,11 @@ async def _current_positions(conn, org_id: str, as_of_date: date, scope: list | 
           AND p.superseded_by_source IS NULL
           AND ($3::uuid[] IS NULL OR p.owner_entity_id = ANY($3::uuid[]))
           AND {_current('p')}
+          AND NOT EXISTS (
+                SELECT 1 FROM {TABLE_DISPOSALS} d
+                 WHERE d.asset_id = p.asset_id AND d.org_id = p.org_id
+                   AND d.valid_to IS NULL AND d.system_to IS NULL
+                   AND d.end_date <= $2::date)
         ORDER BY p.owner_entity_id, p.asset_id, p.account_id, p.as_of_date DESC,
                  p.system_from DESC
         """,

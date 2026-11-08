@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ReferenceSelect } from "@/components/ReferenceSelect";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
+import { jsonOrThrow } from "@/lib/busyAction.mjs";
 
 const DOC_STATUS_CONFIG = {
   active: { label: "Active", bg: "#E8F5E9", text: "#2D6A4F" },
@@ -48,7 +50,9 @@ export default function DocumentsTab({ entityId }) {
   const [showUpload, setShowUpload] = useState(false);
   const [versionTarget, setVersionTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [uploading, setUploading] = useState(false);
+  // CATCHALL1 busy — Upload and Upload version, each under the shared busy state
+  const uploadBusy = useBusy();
+  const versionBusy = useBusy();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState(null);
   const uploadRef = useRef(null);
@@ -69,51 +73,41 @@ export default function DocumentsTab({ entityId }) {
 
   useEffect(() => { loadDocs(); }, [entityId]);
 
-  async function handleUpload(e) {
+  function handleUpload(e) {
     e.preventDefault();
-    const fd = new FormData(uploadRef.current);
-    const file = fd.get("file");
-    const title = (fd.get("title") || "").trim();
-    if (!file?.name) return setError("Please select a file.");
-    if (!title) return setError("Title is required.");
-    setUploading(true);
-    setError(null);
-    try {
+    // CATCHALL1 busy — validation and a refused upload both throw; the hook shows the message in the modal
+    return uploadBusy.run(async () => {
+      setError(null);
+      const fd = new FormData(uploadRef.current);
+      const file = fd.get("file");
+      const title = (fd.get("title") || "").trim();
+      if (!file?.name) throw new Error("Please select a file.");
+      if (!title) throw new Error("Title is required.");
       const res = await fetch(`/api/entities/${entityId}/documents`, { method: "POST", body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return setError(data.error || data.detail || "Upload failed.");
+      await jsonOrThrow(res);
       setShowUpload(false);
       uploadRef.current?.reset();
       await loadDocs();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setUploading(false);
-    }
+    });
   }
 
-  async function handleVersion(e) {
+  function handleVersion(e) {
     e.preventDefault();
-    const fd = new FormData(versionRef.current);
-    const file = fd.get("file");
-    if (!file?.name) return setError("Please select a file.");
-    setUploading(true);
-    setError(null);
-    try {
+    // CATCHALL1 busy
+    return versionBusy.run(async () => {
+      setError(null);
+      const fd = new FormData(versionRef.current);
+      const file = fd.get("file");
+      if (!file?.name) throw new Error("Please select a file.");
       const res = await fetch(
         `/api/entities/${entityId}/documents/${versionTarget.id}/version`,
         { method: "POST", body: fd },
       );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return setError(data.error || data.detail || "Upload failed.");
+      await jsonOrThrow(res);
       setVersionTarget(null);
       versionRef.current?.reset();
       await loadDocs();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setUploading(false);
-    }
+    });
   }
 
   async function handleDownload(doc) {
@@ -293,22 +287,25 @@ export default function DocumentsTab({ entityId }) {
                 />
               </div>
               {error && <p className="text-sm text-[#9B2335]">{error}</p>}
+              <BusyError error={uploadBusy.error} className="block text-sm text-[#9B2335]" />
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => { setShowUpload(false); setError(null); }}
+                  onClick={() => { setShowUpload(false); setError(null); uploadBusy.clearError(); }}
                   className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-bg-app"
                 >
                   Cancel
                 </button>
-                <button
+                {/* CATCHALL1 busy */}
+                <BusyButton
                   type="submit"
-                  disabled={uploading}
+                  busy={uploadBusy.busy}
+                  busyLabel="Uploading…"
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                   style={{ backgroundColor: "var(--2a-navy)" }}
                 >
-                  {uploading ? "Uploading…" : "Upload"}
-                </button>
+                  Upload
+                </BusyButton>
               </div>
             </form>
           </div>
@@ -335,22 +332,25 @@ export default function DocumentsTab({ entityId }) {
                 />
               </div>
               {error && <p className="text-sm text-[#9B2335]">{error}</p>}
+              <BusyError error={versionBusy.error} className="block text-sm text-[#9B2335]" />
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => { setVersionTarget(null); setError(null); }}
+                  onClick={() => { setVersionTarget(null); setError(null); versionBusy.clearError(); }}
                   className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-bg-app"
                 >
                   Cancel
                 </button>
-                <button
+                {/* CATCHALL1 busy */}
+                <BusyButton
                   type="submit"
-                  disabled={uploading}
+                  busy={versionBusy.busy}
+                  busyLabel="Uploading…"
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                   style={{ backgroundColor: "var(--2a-navy)" }}
                 >
-                  {uploading ? "Uploading…" : "Upload version"}
-                </button>
+                  Upload version
+                </BusyButton>
               </div>
             </form>
           </div>

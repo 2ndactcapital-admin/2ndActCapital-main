@@ -13,6 +13,8 @@
 // display data beyond the fixed proposed-field labels this feature owns.
 
 import { useCallback, useEffect, useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
+import { jsonOrThrow } from "@/lib/busyAction.mjs";
 import { formatDate } from "@/lib/format";
 
 const FIELD_LABELS = [
@@ -98,7 +100,7 @@ export default function VDRProposalsManager() {
   // upload state
   const [files, setFiles] = useState(null);
   const [isVdr, setIsVdr] = useState(true);
-  const [uploading, setUploading] = useState(false);
+  const uploadBusy = useBusy(); // CATCHALL1 busy — Upload
   const [notice, setNotice] = useState(null);
 
   const load = useCallback(async () => {
@@ -122,46 +124,39 @@ export default function VDRProposalsManager() {
     load();
   }, [load]);
 
-  async function onUpload(e) {
+  function onUpload(e) {
     e.preventDefault();
     if (!files || files.length === 0) {
       setNotice({ kind: "error", text: "Choose at least one file." });
       return;
     }
-    setUploading(true);
     setNotice(null);
-    try {
+    const formEl = e.target;
+    // CATCHALL1 busy — a refused upload throws; the hook shows it under the form
+    return uploadBusy.run(async () => {
       const form = new FormData();
       for (const file of files) form.append("files", file);
       form.append("is_vdr", isVdr ? "true" : "false");
       const res = await fetch("/api/documents", { method: "POST", body: form });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setNotice({ kind: "error", text: data.error || "Upload failed." });
+      const data = await jsonOrThrow(res);
+      const v = data.vdr_analysis;
+      if (isVdr && v) {
+        setNotice({
+          kind: v.proposal_created ? "success" : "info",
+          text: v.proposal_created
+            ? "Deal proposal created from the data room — review it below."
+            : `No proposal created: ${v.reason || "the documents did not clearly describe one deal."}`,
+        });
       } else {
-        const v = data.vdr_analysis;
-        if (isVdr && v) {
-          setNotice({
-            kind: v.proposal_created ? "success" : "info",
-            text: v.proposal_created
-              ? "Deal proposal created from the data room — review it below."
-              : `No proposal created: ${v.reason || "the documents did not clearly describe one deal."}`,
-          });
-        } else {
-          setNotice({
-            kind: "success",
-            text: `Uploaded ${data.file_count} document(s).`,
-          });
-        }
-        setFiles(null);
-        e.target.reset();
-        await load();
+        setNotice({
+          kind: "success",
+          text: `Uploaded ${data.file_count} document(s).`,
+        });
       }
-    } catch (err) {
-      setNotice({ kind: "error", text: err.message || "Upload failed." });
-    } finally {
-      setUploading(false);
-    }
+      setFiles(null);
+      formEl.reset();
+      await load();
+    });
   }
 
   async function act(p, action) {
@@ -220,15 +215,18 @@ export default function VDRProposalsManager() {
             />
             This is a VDR for a new deal (analyze the documents together)
           </label>
-          <button
+          {/* CATCHALL1 busy */}
+          <BusyButton
             type="submit"
-            disabled={uploading}
+            busy={uploadBusy.busy}
+            busyLabel="Uploading…"
             className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app hover:opacity-90 disabled:opacity-60"
           >
-            {uploading ? "Uploading…" : "Upload"}
-          </button>
+            Upload
+          </BusyButton>
         </form>
         {notice ? <p className={`mt-3 text-sm ${noticeColor}`}>{notice.text}</p> : null}
+        <BusyError error={uploadBusy.error} className="mt-3 block text-sm text-[#9B2335]" />
       </section>
 
       {/* Proposals panel */}

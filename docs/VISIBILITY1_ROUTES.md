@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 871 · guarded 199 · sql-scope 43 · body-check 4 · legacy-rule 2
+Routes: 874 · guarded 199 · sql-scope 43 · body-check 4 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -340,6 +340,9 @@ Routes: 871 · guarded 199 · sql-scope 43 · body-check 4 · legacy-rule 2
 | POST | `/api/v1/deals/{deal_id}/unarchive` | marketplace | scrub |
 | DELETE | `/api/v1/deals/{deal_id}/vote` | marketplace | scrub |
 | POST | `/api/v1/deals/{deal_id}/vote` | marketplace | scrub |
+| PATCH | `/api/v1/direct-assets/{asset_id}` | portentry | scrub |
+| POST | `/api/v1/direct-assets/{asset_id}/end` | portentry | scrub |
+| GET | `/api/v1/direct-assets/{asset_id}/history` | portentry | scrub |
 | POST | `/api/v1/direct-assets/{asset_id}/valuations` | portentry | scrub |
 | POST | `/api/v1/document-drops/{drop_id}/analyze-vdr` | vdr | scrub |
 | GET | `/api/v1/document-link-proposals` | document_links | scrub |

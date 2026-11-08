@@ -992,7 +992,22 @@ async def y_review(conn, specs, proposed, run_id) -> None:
     check(s_m == 200 and s_f == 200, "two more reviewed fields saved (issuer_entity corrected, protection_type absent)")
     have = {r["field_key"] for r in await rls_fetch(
         conn, "SELECT field_key FROM portfolio.note_gold_values WHERE reference_filing_id = $1 AND valid_to IS NULL", fid)}
-    remaining = [k for k in sorted(live) if k not in have]
+    # CATCHALL1 Task 8 — the 422 on proceeds_to_issuer_usd was a VERIFY defect: bulkfetch (1ef399c) added the
+    # CALCULATED registry rows total_fees_usd / proceeds_to_issuer_usd, which the route refuses to edit (422 "is
+    # calculated … never edited") and routers.note_extraction_admin._reviewable leaves out of progress. A candidate
+    # is done when every REVIEWABLE live field has a gold value; each calculated field is still refused (the negative).
+    from services.note_extraction import derive as _derive
+    calculated = sorted(set(live) & set(_derive.CALCULATED_FIELDS))
+    reviewable = {k for k in live if k not in _derive.CALCULATED_FIELDS}
+    for k in calculated:
+        n_c0 = await rls_val(conn, "SELECT count(*) FROM portfolio.note_gold_values WHERE reference_filing_id = $1 "
+                                   "AND field_key = $2", fid, k)
+        s_c, b_c = await api(U_SUPER, "PUT", f"{base}/fields/{k}", {"action": "absent", "value": None})
+        n_c1 = await rls_val(conn, "SELECT count(*) FROM portfolio.note_gold_values WHERE reference_filing_id = $1 "
+                                   "AND field_key = $2", fid, k)
+        check(s_c == 422 and n_c1 == n_c0, f"a calculated field ({k}) is refused (422) and nothing is written",
+              f"HTTP {s_c} {_detail(b_c)}; {n_c0} -> {n_c1}")
+    remaining = [k for k in sorted(reviewable) if k not in have]
     st_mid = await rls_val(conn, "SELECT status FROM portfolio.note_gold_candidates WHERE reference_filing_id = $1", fid)
     check(st_mid == "in_review" and len(remaining) > 0, "with fields left, the candidate stays in_review",
           f"{st_mid}, {len(remaining)} left")
@@ -1004,8 +1019,9 @@ async def y_review(conn, specs, proposed, run_id) -> None:
             fails.append((k, s))
     st_done = await rls_val(conn, "SELECT status FROM portfolio.note_gold_candidates WHERE reference_filing_id = $1", fid)
     prog = (last or {}).get("progress") or {}
-    check(not fails and st_done == "done" and prog.get("fields_done") == prog.get("fields_total") == len(live),
-          "when every live field has a current gold value the candidate is 'done'",
+    check(not fails and st_done == "done" and prog.get("fields_done") == prog.get("fields_total") == len(reviewable),
+          "when every reviewable live field (calculated ones excluded) has a current gold value the candidate is "
+          "'done'",
           f"{st_done}; progress {prog}; failures {fails[:3]}")
     s, lst = await api(U_SUPER, "GET", f"/api/v1/admin/note-extraction/gold/candidates?batch={BATCH_1}")
     pr = (lst or {}).get("progress") or {}

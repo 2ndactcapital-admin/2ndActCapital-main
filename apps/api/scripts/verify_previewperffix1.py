@@ -61,6 +61,8 @@ BEFORE_REF = "ca39a17"   # previewperf
 OWN_FILES = {
     "apps/api/services/authz.py", "apps/api/services/users.py", "apps/api/scripts/verify_previewperffix1.py",
     "docs/PROJECT_STATUS.md", "scripts/regression_set.txt", "sprint_prompts/previewperf.fix1.structural.md",
+    # CATCHALL1 Task 8 — the fix's own commit 58a6217 is "… ; ignore Claude outputs/" (its .gitignore line)
+    ".gitignore",
 }
 
 

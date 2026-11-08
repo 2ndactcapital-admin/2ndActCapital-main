@@ -12,9 +12,11 @@
 import { useState } from "react";
 import { labelOf, money, pageControls, vocab } from "@/lib/tax.mjs";
 import { Estimate, card, post, secondary } from "@/components/tax/common";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 
 export default function HarvestDashboard({ envelope, onReload }) {
   const [msg, setMsg] = useState(null);
+  const refresh = useBusy(); // CATCHALL1 busy — Refresh loss bank
   const d = envelope?.dashboard || {};
   const v = vocab(envelope);
   const c = pageControls(envelope);
@@ -25,10 +27,10 @@ export default function HarvestDashboard({ envelope, onReload }) {
   const windows = Array.isArray(d.wash_windows) ? d.wash_windows : [];
   const bank = Array.isArray(d.loss_bank) ? d.loss_bank : [];
 
-  async function act(path) {
+  const act = (path) => {
     setMsg(null);
-    try { await post(path); if (onReload) await onReload(); setMsg("Done."); } catch (e) { setMsg(e.message); }
-  }
+    return refresh.run(async () => { await post(path); if (onReload) await onReload(); setMsg("Done."); });
+  };
 
   return (
     <div className="space-y-5">
@@ -36,7 +38,8 @@ export default function HarvestDashboard({ envelope, onReload }) {
         <h2 className="text-lg font-semibold text-navy">Harvestable losses today</h2>
         <p className="mt-1 text-text-muted">As of {d.as_of || "—"} · loss {money(h.loss)} · estimated value {money(h.est_value)} (estimate, {h.estimated ?? 0} valued, {h.not_estimated ?? 0} not estimated)</p>
         <div className="mt-2 flex gap-2">
-          {c.refreshLossBank ? <button type="button" className={secondary} onClick={() => act("tax/loss-bank/refresh")}>Refresh loss bank</button> : null}
+          {c.refreshLossBank ? <BusyButton busy={refresh.busy} busyLabel="Refreshing…" className={secondary} onClick={() => act("tax/loss-bank/refresh")}>Refresh loss bank</BusyButton> : null}
+          <BusyError error={refresh.error} />
         </div>
         {rows.length ? (
           <table className="mt-3 w-full">

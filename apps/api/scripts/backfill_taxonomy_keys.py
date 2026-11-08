@@ -71,7 +71,12 @@ sys.path.insert(0, str(HERE.parent))
 import asyncpg  # noqa: E402
 
 from services.portfolio_assets import _OrgWrite  # noqa: E402
-from services.portfolio_kind_taxonomy import kind_map, org_taxonomy_keys  # noqa: E402
+from services.portfolio_kind_taxonomy import (  # noqa: E402
+    ReclassifyError,
+    kind_map,
+    org_taxonomy_keys,
+    reclassify_target,
+)
 from services.portfolio_securities import update_asset  # noqa: E402
 
 CANDIDATES_SQL = """
@@ -134,28 +139,30 @@ async def reclassify(conn, org: str, items: list[tuple[str, str]], *, dry_run: b
     kind with that key is reported UNCHANGED."""
     changed = 0
     async with _OrgWrite(conn, org) as c:
-        mapping = await kind_map(c, org)
-        keys = await org_taxonomy_keys(c, org)
         rows = {r["id"]: r for r in await c.fetch(
             "SELECT id::text AS id, name, asset_type, default_taxonomy_key FROM portfolio.assets WHERE org_id = "
             "$1::uuid AND id = ANY($2::uuid[]) AND valid_to IS NULL AND system_to IS NULL", org,
             [a for a, _ in items])}
-    for aid, kind in items:
-        as_key = kind.startswith("taxonomy_")          # ROLLUP2 — ASSET_ID:KEY keeps the kind, sets the key
+        targets = {}
+        for aid, target in items:   # CATCHALL1 — the ONE rule (portfolio_kind_taxonomy.reclassify_target)
+            r = rows.get(aid)
+            if r is None:
+                continue
+            try:
+                targets[aid] = await reclassify_target(c, org, current_kind=r["asset_type"], target=target)
+            except ReclassifyError as exc:
+                targets[aid] = exc
+    for aid, target in items:
+        as_key = target.startswith("taxonomy_")          # ROLLUP2 — ASSET_ID:KEY keeps the kind, sets the key
         r = rows.get(aid)
         if r is None:
             print(f"  RECLASSIFY {aid}: NOT FOUND in org {org} (current rows only) — skipped")
             continue
-        if as_key:
-            key, kind = kind, r["asset_type"]
-            if key not in keys:
-                print(f"  RECLASSIFY {aid}: key {key!r} is not an active key of this org's taxonomy — skipped")
-                continue
-        else:
-            key = mapping.get(kind)
-            if not key or key not in keys:
-                print(f"  RECLASSIFY {aid}: kind {kind!r} has no key in this org's taxonomy — skipped")
-                continue
+        got = targets[aid]
+        if isinstance(got, ReclassifyError):
+            print(f"  RECLASSIFY {aid}: {got} — skipped")
+            continue
+        kind, key = got
         if r["asset_type"] == kind and r["default_taxonomy_key"] == key:
             print(f"  RECLASSIFY {aid} ({r['name']}): already {kind} -> {key} — UNCHANGED")
             continue

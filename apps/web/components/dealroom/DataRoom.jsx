@@ -37,6 +37,7 @@ import DocumentViewer from "@/components/dealroom/DocumentViewer";
 import QAPanel from "@/components/dealroom/QAPanel";
 import ActivityPanel from "@/components/dealroom/ActivityPanel";
 import { AdvisorAcknowledgement, InvestorAdvisors } from "@/components/dealroom/AdvisorsPanel";
+import { BusyButton, useBusy } from "@/components/ui/Busy";
 
 const CARD = "rounded-[6px] border border-[#ece8dd] bg-white";
 
@@ -68,6 +69,7 @@ export function FolderList({ envelope, manage, levels, onChange, setError }) {
   const dealId = envelope?.deal?.id;
   const [viewer, setViewer] = useState(null);
   const [opened, setOpened] = useState({});
+  const upload = useBusy(); // CATCHALL1 busy — one folder upload at a time
   const docsOf = (f) => envelope.folders.find((x) => x.id === f.id)?.documents || [];
   const run = async (fn) => {
     try {
@@ -110,14 +112,17 @@ export function FolderList({ envelope, manage, levels, onChange, setError }) {
                 >
                   {levels.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
                 </select>
-                <label className="cursor-pointer text-xs font-medium text-navy hover:underline">
-                  Upload
-                  <input type="file" className="hidden" onChange={(e) => {
+                {/* CATCHALL1 busy — the input is disabled while an upload is pending; errors go to setError */}
+                <label className="cursor-pointer text-xs font-medium text-navy hover:underline"
+                  aria-busy={upload.busy ? "true" : "false"} aria-disabled={upload.busy || undefined}
+                  data-busy-action="1">
+                  {upload.busy ? "Uploading…" : "Upload"}
+                  <input type="file" className="hidden" disabled={upload.busy} onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
                     const form = new FormData();
                     form.append("file", file, file.name);
-                    run(() => call(`deals/${dealId}/folders/${f.id}/documents`, { method: "POST", form }));
+                    upload.run(() => run(() => call(`deals/${dealId}/folders/${f.id}/documents`, { method: "POST", form })));
                   }} />
                 </label>
                 <button type="button" className="text-xs text-navy hover:underline" onClick={() => {
@@ -198,7 +203,8 @@ export function InvestorPanel({ envelope, onChange }) {
   const [name, setName] = useState("");
   const [consent, setConsent] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const step = useBusy();   // CATCHALL1 busy — the shared indicator (no local copy)
+  const busy = step.busy;
   const [error, setError] = useState(null);
   const state = investorStep(envelope);
   const needsScroll = doc?.kind === "upload" || Boolean(doc?.exhibit);
@@ -206,15 +212,14 @@ export function InvestorPanel({ envelope, onChange }) {
   const access = envelope?.my_access;
 
   const act = async (fn) => {
-    setBusy(true);
     setError(null);
-    try {
-      await fn();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
+    await step.run(async () => {
+      try {
+        await fn();
+      } catch (e) {
+        setError(e.message);
+      }
+    });
   };
 
   return (
@@ -376,6 +381,7 @@ function AgreementManager({ envelope, a, run }) {
   const [policy, setPolicy] = useState("");
   const [scope, setScope] = useState("all");
   const [file, setFile] = useState(null);
+  const replace = useBusy(); // CATCHALL1 busy — Replace PDF
   const kindLabel = (v.agreement_kinds || []).find((k) => k.key === a.kind)?.label || a.kind;
   const needsPolicy = (a.signatures || 0) > 0;
   const policySelect = needsPolicy && (
@@ -444,15 +450,16 @@ function AgreementManager({ envelope, a, run }) {
           <input type="file" accept="application/pdf,.pdf" aria-label={`Replacement PDF for ${a.title}`}
             className="text-xs" onChange={(e) => setFile(e.target.files?.[0] || null)} />
           {policySelect}
-          <button type="button" disabled={!file || (needsPolicy && !policy)}
+          {/* CATCHALL1 busy — errors are shown by the panel's run → setError */}
+          <BusyButton busy={replace.busy} disabled={!file || (needsPolicy && !policy)} busyLabel="Uploading…"
             className="mt-2 rounded border border-navy px-3 py-1 text-xs font-medium text-navy disabled:opacity-50"
-            onClick={() => run(async () => {
+            onClick={() => replace.run(() => run(async () => {
               const form = new FormData();
               form.append("file", file, file.name);
               if (policy) form.append("resign_policy", policy);
               await call(`deals/${dealId}/agreements/${a.id}/versions/file`, { method: "POST", form });
               setFile(null);
-            })}>Replace PDF (version {(a.current_version || 0) + 1})</button>
+            }))}>{`Replace PDF (version ${(a.current_version || 0) + 1})`}</BusyButton>
         </div>
       )}
       {controls.includes("make_master") && envelope.publisher_entity_id && (
@@ -475,6 +482,7 @@ function AgreementManager({ envelope, a, run }) {
 function UploadAgreement({ dealId, run }) {
   const [title, setTitle] = useState("");
   const [file, setFile] = useState(null);
+  const upload = useBusy(); // CATCHALL1 busy — Upload agreement
   return (
     <div className="mt-3 flex flex-wrap items-end gap-2 text-xs text-text-secondary" data-testid="upload-agreement">
       <label>Your own agreement (PDF only)
@@ -483,15 +491,16 @@ function UploadAgreement({ dealId, run }) {
       </label>
       <input type="file" accept="application/pdf,.pdf" aria-label="Agreement PDF"
         onChange={(e) => setFile(e.target.files?.[0] || null)} />
-      <button type="button" disabled={!file || title.trim().length < 2}
+      {/* CATCHALL1 busy — errors are shown by the panel's run → setError */}
+      <BusyButton busy={upload.busy} disabled={!file || title.trim().length < 2} busyLabel="Uploading…"
         className="rounded border border-navy px-3 py-1.5 font-medium text-navy disabled:opacity-50"
-        onClick={() => run(async () => {
+        onClick={() => upload.run(() => run(async () => {
           const form = new FormData();
           form.append("file", file, file.name);
           form.append("title", title);
           await call(`deals/${dealId}/agreements/upload`, { method: "POST", form });
           setTitle(""); setFile(null);
-        })}>Upload agreement</button>
+        }))}>Upload agreement</BusyButton>
       <span className="w-full text-text-muted">Uploaded agreements are signed exactly as uploaded — no fill-in fields.</span>
     </div>
   );

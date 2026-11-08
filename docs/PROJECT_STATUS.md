@@ -342,6 +342,70 @@ This file starts with the email item below.
 ---
 
 
+## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CATCHALL1 — the small-fixes sweep: bulk-approve wording, ONE busy indicator, direct-asset End / Edit / History, an option contract defined from the picker, the HollisMuse Lows, three pre-existing verify FAILs; schema APPLIED; verify WRITTEN, not yet run (2026-11-07)
+
+Branch catchall1-work (base 8b7e8f2). Task 1 findings: docs/CATCHALL1_DISCOVERY.md. Schema: docs/catchall1_part1.sql
+(APPLIED via the Supabase MCP and confirmed live: `portfolio.asset_disposals`, RLS on, 4 policies one per operation,
+NULLIF on the org GUC, reason CHECK, partial unique `asset_disposals_one_current`, app_service granted).
+
+**UPDATE (fix 1, 2026-11-08).** The first full run was 118 PASS / 3 FAIL; all three were VERIFY defects, so no code changed. (1+2, VERIFY, one cause) The teardown leaked the master 'option' security rep8's `find_or_create_contract` creates for the contract the verify defines (correct behaviour: `option_contracts.global_security_id` is NOT NULL). Cause: the plan found that security through a subquery on `option_contracts`, but `_verify_cleanup` deletes children first, so by the time `securities_global` was deleted the subquery matched nothing. Now the ids are materialised before the delete (`fixture_option_secs`: recorded from rep8's response + contracts on a fixture underlying + an orphaned 'option' security named after the fixture ticker), with a refusal if a reserved-name security sits on a non-fixture contract. The reserved-prefix check and the leftovers also match security names `CA1V%` (no space) and contracts on a fixture underlying. The leaked row 1933ecd0… ("CA1VSPY 2026-12-18 660 CALL …": `contract_name` of the verify's own terms, the only contract-less option in the master, created in the run window, no identifiers, no FK references) was removed by `--cleanup-only`: 1 row deleted, `securities_global` 16000 → 15999, the checksum of every other row unchanged. A one-off that defined a fixture contract and tore it down left 0 rows. (3, VERIFY) verify_rollup2's `funds()` needle was tied to the exact signature; secmaster2 added `refine`, so it is now a regex on the name + `dry_run`, plus the `--funds` flag. No other needle was stale. `--self-checks-only`: verify_rollup2 49/0, verify_catchall1 34/0. The full verify was NOT re-run (WSL memory).
+
+### CATCHALL1 — items
+
+- **Bulk approve wording — DONE.** First buttons "Review N selected →" / "Review N to reject →" (they only open the
+  review); the confirmation is scrolled into view and focused on open, Escape / Cancel return with the selection
+  kept; final button "Approve N" / "Reject N" on the shared busy indicator ("Working… (N)").
+- **One busy indicator — DONE.** `lib/busyAction.mjs` (pure state) + `components/ui/Busy.jsx` (`useBusy`,
+  `BusyButton`, `BusyError`): disabled while pending, spinner, "Working…" / the action's own label, aria-busy;
+  restored on error with the error shown; a double click sends nothing. Applied to every slow action of 1b (34 files:
+  bulk approve, Recalculate ×2, custody / held-away / integrated / model imports, every upload, PDFs, refreshes,
+  rebalance, backtest, replication builds, run-now jobs …); every local busy copy removed (node test asserts both).
+- **Direct assets: End and Edit — DONE.** Same permission as Add asset: internal + `manage_members` (org admin
+  admitted); a member's envelope carries `can_write false`, `editable []`, row `actions []` — no controls; the routes
+  refuse them (403), another org gets 404.
+  `PATCH /direct-assets/{id}` — name / kind / notes are a NEW VERSION (outgoing version archived on the system axis,
+  every column; the id kept), value / as-of / method a NEW valuation row; a kind change re-keys the taxonomy through
+  `portfolio_kind_taxonomy.reclassify_target` — the ONE rule `backfill_taxonomy_keys.py --reclassify` now also uses;
+  audited `portfolio.direct_asset_edited`.
+  `POST /direct-assets/{id}/end` — reason sold / disposed / transferred / written off / entered in error, end date,
+  optional proceeds, note: a disposal row; nothing deleted. **The net-worth core counts an ended asset only before its
+  end date** (`portfolio_rollup._current_positions` — card, Recalculate, household total and the stored snapshot all
+  read it); "entered in error" ends it at its first as-of (never counted) and takes no proceeds. An ended asset is not
+  edited or ended again (409). Audited `portfolio.direct_asset_ended`.
+  `GET /direct-assets/{id}/history` — versions (current + archived), every valuation, the end, the audited edits.
+  UI: Assets & Investments → each direct asset: New valuation / Edit / End / History; an ended asset shows its end.
+  K.19 (eddf9851…) still shows "Estimate (mark to model)" — demo data, NOT edited; Muse can now Edit it.
+- **Option contract from the picker — DONE.** When the held-away option line's picker finds none, "Define this
+  contract" (call / put, strike, expiry, multiplier 100, style; settlement and broad-based from the underlying's
+  kind) posts **rep8's own route** (`POST /replication/options/contracts`, gate manage_replication, Super Admin first
+  — rep8 has no maker-checker on a contract, so none added); offered only when the picker's envelope publishes
+  `define_contract` (a holder of manage_replication); same terms → rep8's find-or-create returns the existing one
+  (selected, "already existed"). The picker also searches by itself when the underlying changes (paste / autofill).
+- **The Lows — DONE.** Liability labels: the plan's "Secured credit line" for both L.1 and L.7 → "Secured credit
+  line — securities" / "Secured credit line — other assets (art, property)" (labels only; keys and
+  `liabilities_kind_chk` unchanged). Lists: HouseholdManager re-reads on every open (`no-store`); Employment /
+  TaxIds / Social / Compliance follow a re-read (bugfix3's AddressesTab fix). Pickers: HouseholdManager's member
+  picker, tax SecurityPicker, New instruction's security search and the option picker search on ANY change (shared
+  `components/ui/useTypeahead.js`, `onChange` + `onInput`, debounced, stale-safe). Left, named: the CRM Overview's
+  "Owns" tree still uses the server-rendered graph (OwnershipTab re-reads its own copy).
+- **Three pre-existing verify FAILs — DONE.** verify_goldset's 422 on `proceeds_to_issuer_usd`: a VERIFY defect
+  (bulkfetch 1ef399c made it a calculated, never-edited field; the verify PUT every live field) — now reviews the
+  reviewable fields and asserts each calculated one is refused (422, nothing written); notefix1 / notefix2 inherit
+  it (not run here — it needs the full fixture flow). verify_previewperf 4/0, verify_previewperffix1 5/0 (its merge
+  22b4c0d carried previewperf + fix 1 together: ends pinned in `_verify_self.SPRINT_PINNED`; the DDL scan limited to
+  code; fix 1's OWN_FILES gained `.gitignore`). verify_vhk2 41/0 (11 later-script hits are true invariants, listed
+  with why in VHK2_FINDINGS; `verify_bugfix2.py len(changed) == 45` IS frozen against today's route record — a
+  `[FIND]` handed to verifyfix1, not whitelisted). All three `--self-checks-only` were run here: 0 FAIL.
+
+**Run here:** the three repaired `--self-checks-only` (0 FAIL); `node --test tests/` 603 / 602 pass / 0 fail / 1
+skip; `tests/catchall1` 12/12; `authz1_routes.py --check` and `visibility1_routes.py --check` CURRENT (both
+regenerated for the 3 new routes); an EXPLAIN of the changed core query on the live DB.
+**Not run:** `verify_catchall1.py` (written; it runs npm build, node tests and the rollup2 regression itself),
+`npm run build` (WSL memory), verify_goldset / notefix1 / notefix2 in full.
+
+**Operator:** `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_catchall1.py 2>&1 | grep -E "^\[FAIL\]|^TOTAL"`
+(regression: verify_rollup2.py, once, flat, after teardown, VERIFY_NESTED=1, 2700 s).
+
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. S28 — AI drift monitor: a standing alarm over S27's decision log, governed alerts, versioned thresholds, a platform job (OFF); schema APPLIED, job SEEDED (OFF); verify WRITTEN, not yet run (2026-11-07)
 
 Branch s28-work. Task 1 findings: docs/S28_DISCOVERY.md. Live dry run + incident replay: docs/S28_DRY_RUN.txt.

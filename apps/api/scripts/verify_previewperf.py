@@ -87,7 +87,9 @@ def self_checks(check, find) -> None:
     extra = sorted(f for f in files if f not in OWN_FILES and not f.startswith("Claude outputs/"))
     check(code == 0 and not extra, "PREVIEWPERF's own diff touches only the preview code, its verify, the status "
           "doc and the regression list", f"exit {code} {err.strip()[:200]}; unexpected {extra}")
-    code, diff, _ = VS.own_diff(BEFORE_REF, SPRINT_KEY)
+    # CATCHALL1 Task 8 — DDL is looked for in CODE (python / SQL under apps/ and docs/*.sql), never in prose: the
+    # sprint prompt's own STANDING RULES sentence "except a new index (CREATE INDEX CONCURRENTLY, …" was a hit
+    code, diff, _ = VS.own_diff(BEFORE_REF, SPRINT_KEY, "apps/", "docs/*.sql")
     added = [ln for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++")]
     ddl = [ln for ln in added if re.search(r"\b(CREATE|DROP|ALTER)\s+(UNIQUE\s+)?(INDEX|TABLE)\b", ln, re.I)
            and "verify_previewperf" not in ln and "re.search" not in ln]

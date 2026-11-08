@@ -70,8 +70,8 @@ const view = (e, o = {}) => renderToStaticMarkup(h(BulkApproveView, {
 test("an approver sees the pending items, a checkbox only on the decidable ones, greyed rows with the server's reason", () => {
   const html = view(env());
   for (const r of ROWS) assert.match(html, new RegExp(`data-item="${r.id}"`));
-  assert.match(html, /Approve selected/);
-  assert.match(html, /Reject selected/);
+  assert.match(html, /Review 0 selected →/);   // CATCHALL1 — the first step opens the review
+  assert.match(html, /Review 0 to reject →/);
   assert.match(html, /data-item="4" data-selectable="0"/);
   assert.match(html, /data-item="5" data-selectable="0"/);
   assert.match(html, /data-item="1" data-selectable="1"/);
@@ -84,7 +84,7 @@ test("an approver sees the pending items, a checkbox only on the decidable ones,
 
 test("a view-only envelope renders NO decision control and every row greyed with the permission reason", () => {
   const html = view(VIEW_ONLY);
-  assert.doesNotMatch(html, /Approve selected|Reject selected|Select all|type="checkbox"/);
+  assert.doesNotMatch(html, /Review \d+ selected|Review \d+ to reject|Select all|type="checkbox"/);
   assert.match(html, /You do not hold approve_authority/);
   assert.equal(B.canDecide(VIEW_ONLY), false);
   assert.deepEqual(B.selectAll(VIEW_ONLY, ROWS), []);

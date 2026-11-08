@@ -97,8 +97,6 @@ CODE_NEEDLES = [
      "Task 3: a fund's key from its category, cross-checked with its name"),
     ("apps/api/services/portfolio_kind_taxonomy.py", "if kind in FUND_KINDS:",
      "Task 3: a fund kind is never keyed by its kind"),
-    ("apps/api/scripts/backfill_taxonomy_keys.py", "async def funds(conn, org: str, *, dry_run: bool) -> int:",
-     "Task 3: backfill --funds"),
     ("apps/api/services/ownership_duplicates.py", "def group(rows: list[dict]) -> list[dict]:",
      "Task 4: the duplicate report"),
     ("apps/api/routers/entity_graph.py", "separate_holding: bool = False",
@@ -121,6 +119,15 @@ CODE_NEEDLES = [
      "fix 1: another org's entity id is a 404 on the entity_graph reads"),
     ("apps/api/routers/entity_graph.py", "except asyncpg.UniqueViolationError as exc:",
      "fix 1: the unique index's refusal is a 409, never a 500"),
+]
+#: markers matched by a regex, not an exact signature: later sprints may add parameters (secmaster2 added
+#: ``refine: bool = False`` to funds()) — the function by name with its dry_run parameter, and the --funds flag
+CODE_PATTERNS = [
+    ("apps/api/scripts/backfill_taxonomy_keys.py",
+     r"^async def funds\(conn, org: str, \*,[^)]*\bdry_run: bool\b[^)]*\) -> int:",
+     "Task 3: backfill --funds (the funds() function, still taking dry_run)"),
+    ("apps/api/scripts/backfill_taxonomy_keys.py", r"""add_argument\(\s*["']--funds["']""",
+     "Task 3: backfill --funds (the --funds flag still exists)"),
 ]
 REPO_ROLLUP = "apps/api/services/portfolio_rollup.py"
 
@@ -155,6 +162,8 @@ def self_task1(check, find):
 def self_static(check, find):
     for rel, needle, meaning in CODE_NEEDLES:
         check(needle in _read(rel), meaning, f"{rel}: needle missing")
+    for rel, pattern, meaning in CODE_PATTERNS:
+        check(bool(re.search(pattern, _read(rel), re.M)), meaning, f"{rel}: pattern {pattern!r} missing")
     check("verify_rollup2.py" in _read("scripts/regression_set.txt"), "Task 9: in scripts/regression_set.txt")
     status = _read("docs/PROJECT_STATUS.md")
     m_sec = re.search(r"\n## 0+\. ROLLUP2 — .*?(?=\n## )", status, re.S)

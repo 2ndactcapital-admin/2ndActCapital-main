@@ -11,11 +11,13 @@
 import { useEffect, useState } from "react";
 import { consolidationControls, labelOf, pct, vocab } from "@/lib/rep10.mjs";
 import { consolidateMessage } from "@/lib/bugfix4.mjs";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
+import { jsonOrThrow } from "@/lib/busyAction.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const primary = "rounded bg-navy px-3 py-1 text-white disabled:opacity-50";
 
-export function ConsolidationView({ envelope, onAct }) {
+export function ConsolidationView({ envelope, onAct, busy = false }) {
   const v = vocab(envelope);
   const lines = Array.isArray(envelope?.lines) ? envelope.lines : [];
   if (!envelope) return null;
@@ -33,7 +35,7 @@ export function ConsolidationView({ envelope, onAct }) {
                 <td>{l.label}</td><td>{l.account} ({l.authority})</td>
                 <td>{pct(l.replica_overlap?.overlap_weight ?? l.fund_overlap?.overlap_weight)}</td>
                 <td>{l.transition_tax?.amount ?? "not estimated"}</td><td>{l.break_even?.years ?? l.break_even?.note ?? "—"}</td>
-                <td>{c.consolidate ? <button type="button" className={primary} onClick={() => onAct?.(l)}>{labelOf(v.consolidation_actions, l.action)}</button> : labelOf(v.consolidation_actions, l.action)}</td>
+                <td>{/* CATCHALL1 busy */}{c.consolidate ? <BusyButton busy={busy} className={primary} onClick={() => onAct?.(l)}>{labelOf(v.consolidation_actions, l.action)}</BusyButton> : labelOf(v.consolidation_actions, l.action)}</td>
               </tr>
             );
           })}</tbody>
@@ -55,21 +57,26 @@ export default function ConsolidatePanel({ householdId }) {
     if (res.ok) setEnv(data); else setEnv(null);
   }
   useEffect(() => { load(); }, [householdId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // CATCHALL1 busy — one consolidate action at a time (every line's button shares it)
+  const action = useBusy();
   async function onAct(l) {
     setMsg(null);
-    const res = await fetch(`/api/replication/consolidation/households/${householdId}`, { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ account_id: l.account_id, fund_security_id: l.fund_security_id }) });
-    const data = await res.json().catch(() => ({}));
-    setMsg(res.ok ? `Created: ${data.action}` : data.error);
+    await action.run(async () => {
+      const res = await fetch(`/api/replication/consolidation/households/${householdId}`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account_id: l.account_id, fund_security_id: l.fund_security_id }) });
+      const data = await jsonOrThrow(res);
+      setMsg(`Created: ${data.action}`);
+    });
     await load();
   }
   return (
     <div className="space-y-2">
       {msg ? <p className="text-sm text-text-muted">{msg}</p> : null}
+      <BusyError error={action.error} className="block text-sm text-[#9B2335]" />
       {!env && consolidateMessage(state) ? (
         <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">{consolidateMessage(state)}</div>
       ) : null}
-      <ConsolidationView envelope={env} onAct={onAct} />
+      <ConsolidationView envelope={env} onAct={onAct} busy={action.busy} />
     </div>
   );
 }

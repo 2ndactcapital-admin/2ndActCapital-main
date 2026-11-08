@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import DataGrid from "@/components/ui/DataGrid";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import { catalogView } from "@/lib/catalogLoadState.mjs";
 
 const CARD = { borderColor: "#ece8dd", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
@@ -58,7 +59,9 @@ export default function SystemOneCatalogManager() {
   const [loaded, setLoaded] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [message, setMessage] = useState(null);
-  const [busy, setBusy] = useState(false);
+  // CATCHALL1 busy — every catalog write (Add / Verify now / default / availability / remove) is one at a time
+  const action = useBusy();
+  const busy = action.busy;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const canWrite = permissions?.can_write === true;
@@ -125,20 +128,14 @@ export default function SystemOneCatalogManager() {
     [],
   );
 
-  async function run(action, after) {
-    setBusy(true);
+  function run(request, after) {
     setMessage(null);
-    try {
-      const { ok, data } = await action();
-      if (!ok) {
-        setMessage({ error: true, text: typeof data.error === "string" ? data.error : "Request failed." });
-        return;
-      }
+    return action.run(async () => {
+      const { ok, data } = await request();
+      if (!ok) throw new Error(typeof data.error === "string" ? data.error : "Request failed.");
       if (after) after(data);
       await reload();
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   function submitCreate(e) {
@@ -244,14 +241,17 @@ export default function SystemOneCatalogManager() {
                 New entries start disabled. Run Verify now to make one available.
               </p>
               {message && <p className="text-xs" style={message.error ? ERROR : undefined}>{message.text}</p>}
+              <BusyError error={action.error} className="block text-xs text-[#9B2335]" />
               <div className="flex gap-2 pt-1">
-                <button
+                {/* CATCHALL1 busy */}
+                <BusyButton
                   type="submit"
-                  disabled={busy}
+                  busy={busy}
+                  busyLabel="Adding…"
                   className="rounded bg-[var(--2a-navy)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
                 >
-                  {busy ? "Adding…" : "Add"}
-                </button>
+                  Add
+                </BusyButton>
                 <button
                   type="button"
                   onClick={() => setMode("read")}
@@ -283,9 +283,9 @@ export default function SystemOneCatalogManager() {
               {canWrite && (
                 <div className="mt-4 space-y-3 border-t border-[var(--2a-border)] pt-3">
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={busy}
+                    {/* CATCHALL1 busy */}
+                    <BusyButton
+                      busy={busy}
                       onClick={() =>
                         run(
                           () => send(`${base}/verify`, "POST"),
@@ -295,8 +295,8 @@ export default function SystemOneCatalogManager() {
                       }
                       className="rounded bg-[var(--2a-navy)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
                     >
-                      {busy ? "Working…" : "Verify now"}
-                    </button>
+                      Verify now
+                    </BusyButton>
                     {!selected.is_default && (
                       <button
                         type="button"
@@ -330,6 +330,7 @@ export default function SystemOneCatalogManager() {
                   )}
 
                   {message && <p className="text-xs" style={message.error ? ERROR : undefined}>{message.text}</p>}
+                  <BusyError error={action.error} className="block text-xs text-[#9B2335]" />
 
                   {confirmingDelete ? (
                     <div className="flex gap-2">

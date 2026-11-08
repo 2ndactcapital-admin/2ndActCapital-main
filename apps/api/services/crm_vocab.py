@@ -425,10 +425,13 @@ def person_flags(entity_type: str, dob: date | None, date_of_death: date | None,
 
 
 # ── Liabilities (Task 5) ─────────────────────────────────────────────────────────────────────────────────────────
-LIABILITY_KINDS = (("mortgage", "Mortgage"), ("securities_backed_line", "Securities-backed line of credit"),
+#: CATCHALL1 (HollisMuse Low) — the labels use the Olivo plan's own wording ("Secured credit line", for BOTH L.1 and
+#: L.7) with what it is secured by, so the one phrase picks between the two kinds. Labels only: the stored keys (and
+#: liabilities_kind_chk) are unchanged.
+LIABILITY_KINDS = (("mortgage", "Mortgage"), ("securities_backed_line", "Secured credit line — securities"),
                    ("margin", "Margin loan"), ("term_loan", "Term loan"),
-                   ("asset_secured_line", "Asset-secured line of credit"), ("personal_loan", "Personal loan"),
-                   ("other", "Other"))
+                   ("asset_secured_line", "Secured credit line — other assets (art, property)"),
+                   ("personal_loan", "Personal loan"), ("other", "Other"))
 RATE_TYPES = (("fixed", "Fixed"), ("floating", "Floating"))
 LIABILITY_KIND_KEYS = frozenset(k for k, _ in LIABILITY_KINDS)
 RATE_TYPE_KEYS = frozenset(k for k, _ in RATE_TYPES)

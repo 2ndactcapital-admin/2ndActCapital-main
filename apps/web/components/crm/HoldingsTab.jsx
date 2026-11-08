@@ -6,7 +6,11 @@
 // types come from the API envelope; money arrives and leaves as strings. Write controls only when the envelope
 // says so (lib/portentry.mjs canDo — no truthy fallback).
 import { useEffect, useState } from "react";
-import { canDo, commitmentRule, directAssetPayload, money, options, privateEditPayload, privatePayload } from "@/lib/portentry.mjs";
+import {
+  canDo, commitmentRule, directAssetPayload, directEditForm, directEditPayload, directEndPayload, directRowControls, money,
+  options, privateEditPayload, privatePayload,
+} from "@/lib/portentry.mjs";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import { privateRowControls } from "@/lib/bugfix4.mjs";
 import { listView } from "@/lib/listState.mjs";
 
@@ -51,7 +55,9 @@ export default function HoldingsTab({ entityId }) {
   const [error, setError] = useState(null);
   const [adding, setAdding] = useState(null);
   const [form, setForm] = useState({});
-  const [busy, setBusy] = useState(false);
+  const save = useBusy();   // CATCHALL1 busy — the shared indicator
+  const busy = save.busy;
+  const [history, setHistory] = useState(null);   // CATCHALL1 — {asset_id, data} of the open History view
 
   async function load() {
     try {
@@ -65,10 +71,16 @@ export default function HoldingsTab({ entityId }) {
   }
   useEffect(() => { load(); }, [entityId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  async function showHistory(assetId) {
+    if (history?.asset_id === assetId) { setHistory(null); return; }
+    try {
+      setHistory({ asset_id: assetId, data: await call(`/api/portentry/direct-assets/${assetId}/history`) });
+    } catch (err) { setError(err.message); }
+  }
+
   async function submit(e) {
     e.preventDefault();
-    setBusy(true);
-    try {
+    await save.run(async () => {
       if (adding === "asset") await call(`${base}/direct-assets`, { method: "POST", body: JSON.stringify(directAssetPayload(form)) });
       if (adding === "private") await call(`${base}/private-investments`, { method: "POST", body: JSON.stringify(privatePayload(form, commitmentRule(priv, form.kind))) });
       if (adding?.startsWith("value:")) {
@@ -90,18 +102,26 @@ export default function HoldingsTab({ entityId }) {
         await call(`/api/portentry/private-investments/assets/${adding.slice(5)}`, { method: "PATCH",
           body: JSON.stringify(privateEditPayload(form, row)) });
       }
+      if (adding?.startsWith("dedit:")) {
+        // CATCHALL1 — a new version of the direct asset (name / kind / notes) and / or a new valuation
+        const row = (assets?.rows || []).find((r) => r.asset_id === adding.slice(6));
+        const body = directEditPayload(form, row);
+        if (!Object.keys(body).length) throw new Error("Nothing changed");
+        await call(`/api/portentry/direct-assets/${adding.slice(6)}`, { method: "PATCH", body: JSON.stringify(body) });
+      }
+      if (adding?.startsWith("dend:")) {
+        await call(`/api/portentry/direct-assets/${adding.slice(5)}/end`, { method: "POST",
+          body: JSON.stringify(directEndPayload(form)) });
+      }
       if (adding?.startsWith("nav:")) {
         await call(`/api/portentry/private-investments/${adding.slice(4)}/nav`, { method: "POST",
           body: JSON.stringify({ value: form.nav, date: form.nav_date }) });
       }
       setAdding(null);
       setForm({});
+      setHistory(null);
       await load();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   // BUGFIX3 (1e) — null = still loading: say so, never the empty sentence first
@@ -176,6 +196,32 @@ export default function HoldingsTab({ entityId }) {
           </>
         );
       })()}
+      {adding.startsWith("dedit:") && (
+        <>
+          <Field name="name" text="Name" form={form} setForm={setForm} />
+          <Choice name="kind" text="Kind" list={options(assets, "direct_asset_kinds")} form={form} setForm={setForm} />
+          <Field name="value" text="Value" form={form} setForm={setForm} />
+          <Field name="as_of" text="As of" type="date" form={form} setForm={setForm} />
+          <Choice name="method" text="Valuation method" list={methods} form={form} setForm={setForm} />
+          <div className="sm:col-span-2"><Field name="notes" text="Notes" form={form} setForm={setForm} /></div>
+          <p className={`${quiet} sm:col-span-2`}>Saved as a new version; the prior one stays in History.</p>
+        </>
+      )}
+      {adding.startsWith("dend:") && (
+        <>
+          <Choice name="end_reason" text="Reason" list={options(assets, "end_reasons")} form={form} setForm={setForm} />
+          {form.end_reason !== "entered_in_error" && (
+            <>
+              <Field name="end_date" text="End date" type="date" form={form} setForm={setForm} />
+              <Field name="proceeds" text="Proceeds (optional)" form={form} setForm={setForm} />
+            </>
+          )}
+          <div className="sm:col-span-2"><Field name="end_notes" text="Note" form={form} setForm={setForm} /></div>
+          <p className={`${quiet} sm:col-span-2`}>{form.end_reason === "entered_in_error"
+            ? "Ends it from its start: it will never have counted in net worth. Its history is kept."
+            : "It stops counting in net worth from the end date. Nothing is deleted; its history is kept."}</p>
+        </>
+      )}
       {adding.startsWith("flow:") && (
         <>
           <Choice name="flow_type" text="Type" list={options(priv, "flow_types")} form={form} setForm={setForm} />
@@ -184,8 +230,9 @@ export default function HoldingsTab({ entityId }) {
         </>
       )}
       <div className="flex gap-2 sm:col-span-2">
-        <button type="submit" disabled={busy} className={button}>{busy ? "Saving…" : "Save"}</button>
+        <BusyButton type="submit" busy={busy} busyLabel="Saving…" className={button}>Save</BusyButton>
         <button type="button" className="text-sm text-[#64748B]" onClick={() => { setAdding(null); setForm({}); }}>Cancel</button>
+        <BusyError error={save.error} />
       </div>
     </form>
   );
@@ -198,7 +245,7 @@ export default function HoldingsTab({ entityId }) {
           <h2 className="font-[Spectral,Georgia,serif] text-xl text-[#1B2B4B]">Direct assets</h2>
           {canDo(assets, "add") && !adding && <button type="button" className="text-sm text-[#1B2B4B] hover:underline" onClick={() => setAdding("asset")}>Add asset</button>}
         </div>
-        {adding && (adding === "asset" || adding.startsWith("value:")) && form_}
+        {adding && (adding === "asset" || adding.startsWith("value:") || adding.startsWith("dedit:") || adding.startsWith("dend:")) && form_}
         {viewA.state === "loading" ? <p className={`mt-3 ${quiet}`}>Loading…</p> : rowsA.length === 0 ? <p className={`mt-3 ${quiet}`}>No direct assets.</p> : (
           <ul className="mt-3 divide-y divide-[#E2E8F0]">
             {rowsA.map((a) => (
@@ -211,7 +258,24 @@ export default function HoldingsTab({ entityId }) {
                 <details className="mt-1"><summary className={`${quiet} cursor-pointer`}>Valuation history ({a.valuations.length})</summary>
                   <ul className="mt-1">{a.valuations.map((v) => <li key={v.id} className={quiet}>{v.date} · {money(v.value)} · {methods.find((m) => m.value === v.method)?.label || v.method}{v.source ? ` · ${v.source}` : ""}</li>)}</ul>
                 </details>
-                {canDo(assets, "revalue") && !adding && <button type="button" className="mt-1 text-xs text-[#1B2B4B] hover:underline" onClick={() => setAdding(`value:${a.asset_id}`)}>New valuation</button>}
+                {a.ended && (
+                  <p className="text-xs text-[#64748B]" data-ended="1">Ended {a.ended.end_date} · {a.ended.reason_label}
+                    {a.ended.proceeds ? ` · proceeds ${money(a.ended.proceeds)}` : ""}
+                    {a.ended.counting ? " · counts until then" : " · no longer counted in net worth"}</p>
+                )}
+                {(() => {
+                  const ctl = directRowControls(assets, a);   // CATCHALL1 — none for a member (fails closed)
+                  if (adding) return null;
+                  return (
+                    <div className="mt-1 flex gap-3 text-xs" data-direct-controls="1">
+                      {ctl.revalue && <button type="button" className="text-[#1B2B4B] hover:underline" onClick={() => setAdding(`value:${a.asset_id}`)}>New valuation</button>}
+                      {ctl.edit && <button type="button" className="text-[#1B2B4B] hover:underline" onClick={() => { setForm(directEditForm(a)); setAdding(`dedit:${a.asset_id}`); }}>Edit</button>}
+                      {ctl.end && <button type="button" className="text-[#1B2B4B] hover:underline" onClick={() => { setForm({}); setAdding(`dend:${a.asset_id}`); }}>End</button>}
+                      {ctl.history && <button type="button" className="text-[#1B2B4B] hover:underline" onClick={() => showHistory(a.asset_id)}>{history?.asset_id === a.asset_id ? "Hide history" : "History"}</button>}
+                    </div>
+                  );
+                })()}
+                {history?.asset_id === a.asset_id && <DirectHistory data={history.data} methods={methods} />}
               </li>
             ))}
           </ul>
@@ -264,6 +328,23 @@ export default function HoldingsTab({ entityId }) {
         )}
         {priv?.vocabularies?.unfunded_formula && <p className={`mt-2 ${quiet}`}>Unfunded = {priv.vocabularies.unfunded_formula}</p>}
       </section>
+    </div>
+  );
+}
+
+// CATCHALL1 — a direct asset's History: its versions (current first), every valuation and its end
+export function DirectHistory({ data, methods = [] }) {
+  const v = Array.isArray(data?.versions) ? data.versions : [];
+  const vals = Array.isArray(data?.valuations) ? data.valuations : [];
+  const ends = Array.isArray(data?.ends) ? data.ends : [];
+  return (
+    <div className="mt-2 rounded-[6px] border border-[#ece8dd] bg-[#FAF9F6] p-3 text-xs text-[#334155]" data-history="1">
+      <p className="font-medium text-[#1B2B4B]">Versions</p>
+      <ul>{v.map((x) => <li key={x.id} data-version={x.current ? "current" : "prior"}>{x.current ? "Current" : `Until ${String(x.system_to).slice(0, 10)}`} · {x.name} · {x.kind_label}{x.notes ? ` · ${x.notes}` : ""}</li>)}</ul>
+      <p className="mt-2 font-medium text-[#1B2B4B]">Valuations</p>
+      <ul>{vals.map((x) => <li key={x.id}>{x.date} · {money(x.value)} · {methods.find((m) => m.value === x.method)?.label || x.method}</li>)}</ul>
+      {ends.length > 0 && <p className="mt-2 font-medium text-[#1B2B4B]">End</p>}
+      <ul>{ends.map((x) => <li key={x.id}>{x.end_date} · {x.reason_label}{x.proceeds ? ` · proceeds ${money(x.proceeds)}` : ""}{x.notes ? ` · ${x.notes}` : ""}</li>)}</ul>
     </div>
   );
 }

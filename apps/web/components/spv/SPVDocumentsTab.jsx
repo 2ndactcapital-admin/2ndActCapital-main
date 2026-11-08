@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { formatDate } from "@/lib/format";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 
 const DOC_TYPES = [
   { value: "formation", label: "Formation" },
@@ -52,7 +53,9 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [versionTarget, setVersionTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [uploading, setUploading] = useState(false);
+  // CATCHALL1 busy — Upload and Upload version, each under the shared busy state
+  const uploadBusy = useBusy();
+  const versionBusy = useBusy();
   const [deleting, setDeleting] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [docType, setDocType] = useState("formation");
@@ -68,11 +71,10 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
     }
   }
 
-  async function handleUpload(e) {
+  function handleUpload(e) {
     e.preventDefault();
     const file = fileRef.current?.files?.[0];
     if (!file) { setUploadError("Please select a file."); return; }
-    setUploading(true);
     setUploadError(null);
 
     const fd = new FormData();
@@ -80,48 +82,41 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
     fd.append("document_type", docType);
     fd.append("title", title || file.name);
 
-    try {
+    // CATCHALL1 busy — a refused upload throws; the hook shows it in the modal
+    return uploadBusy.run(async () => {
       const res = await fetch(`/api/spvs/${spvId}/documents`, { method: "POST", body: fd });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw extractErrorMessage(data.error ?? data.detail ?? data);
+      if (!res.ok) throw new Error(extractErrorMessage(data.error ?? data.detail ?? data));
       await refreshDocs();
       setUploadOpen(false);
       setTitle("");
       setDocType("formation");
       if (fileRef.current) fileRef.current.value = "";
-    } catch (err) {
-      setUploadError(typeof err === "string" ? err : extractErrorMessage(err));
-    } finally {
-      setUploading(false);
-    }
+    });
   }
 
-  async function handleVersion(e) {
+  function handleVersion(e) {
     e.preventDefault();
     const file = versionFileRef.current?.files?.[0];
     if (!file) { setUploadError("Please select a file."); return; }
-    setUploading(true);
     setUploadError(null);
 
     const fd = new FormData();
     fd.append("file", file);
     fd.append("document_type", versionTarget.document_type || "general");
 
-    try {
+    // CATCHALL1 busy
+    return versionBusy.run(async () => {
       const res = await fetch(
         `/api/spvs/${spvId}/documents/${versionTarget.id}/version`,
         { method: "POST", body: fd },
       );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw extractErrorMessage(data.error ?? data.detail ?? data);
+      if (!res.ok) throw new Error(extractErrorMessage(data.error ?? data.detail ?? data));
       await refreshDocs();
       setVersionTarget(null);
       if (versionFileRef.current) versionFileRef.current.value = "";
-    } catch (err) {
-      setUploadError(typeof err === "string" ? err : extractErrorMessage(err));
-    } finally {
-      setUploading(false);
-    }
+    });
   }
 
   async function handleDownload(doc) {
@@ -296,22 +291,25 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
                 />
               </div>
               {uploadError && <p className="text-xs text-[#9B2335]">{uploadError}</p>}
+              <BusyError error={uploadBusy.error} className="block text-xs text-[#9B2335]" />
               <div className="flex justify-end gap-3 pt-1">
                 <button
                   type="button"
-                  onClick={() => { setUploadOpen(false); setUploadError(null); }}
+                  onClick={() => { setUploadOpen(false); setUploadError(null); uploadBusy.clearError(); }}
                   className="rounded-md px-4 py-2 text-sm text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
                 >
                   Cancel
                 </button>
-                <button
+                {/* CATCHALL1 busy */}
+                <BusyButton
                   type="submit"
-                  disabled={uploading}
+                  busy={uploadBusy.busy}
+                  busyLabel="Uploading…"
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                   style={{ backgroundColor: "var(--2a-navy)" }}
                 >
-                  {uploading ? "Uploading…" : "Upload"}
-                </button>
+                  Upload
+                </BusyButton>
               </div>
             </form>
           </div>
@@ -343,22 +341,25 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
                 />
               </div>
               {uploadError && <p className="text-xs text-[#9B2335]">{uploadError}</p>}
+              <BusyError error={versionBusy.error} className="block text-xs text-[#9B2335]" />
               <div className="flex justify-end gap-3 pt-1">
                 <button
                   type="button"
-                  onClick={() => { setVersionTarget(null); setUploadError(null); }}
+                  onClick={() => { setVersionTarget(null); setUploadError(null); versionBusy.clearError(); }}
                   className="rounded-md px-4 py-2 text-sm text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
                 >
                   Cancel
                 </button>
-                <button
+                {/* CATCHALL1 busy */}
+                <BusyButton
                   type="submit"
-                  disabled={uploading}
+                  busy={versionBusy.busy}
+                  busyLabel="Uploading…"
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                   style={{ backgroundColor: "var(--2a-navy)" }}
                 >
-                  {uploading ? "Uploading…" : "Upload version"}
-                </button>
+                  Upload version
+                </BusyButton>
               </div>
             </form>
           </div>

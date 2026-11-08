@@ -14,6 +14,7 @@
  */
 
 import { useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import { labelOf, messagesByRow, pctText, perms, positionLabel, vocab } from "@/lib/models.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -140,7 +141,14 @@ export default function UploadWizard({ envelope, targetModel = null }) {
   const [modelName, setModelName] = useState("");
   const [msg, setMsg] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [busy, setBusy] = useState(false);
+  // CATCHALL1 busy — Upload / Re-read columns / Validate / Create draft, each under the shared busy state (hooks
+  // before the fail-closed return); any one pending disables the others
+  const uploading = useBusy();
+  const rereading = useBusy();
+  const validating = useBusy();
+  const creating = useBusy();
+  const busy = uploading.busy || rereading.busy || validating.busy || creating.busy;
+  const busyError = uploading.error || rereading.error || validating.error || creating.error;
   if (!canWrite) return null;
 
   const fromWizard = (w) => {
@@ -151,19 +159,25 @@ export default function UploadWizard({ envelope, targetModel = null }) {
     setMapping(m);
   };
 
-  async function upload() {
-    setMsg(null); setMessages([]); setBusy(true);
+  // CATCHALL1 busy — a refused step keeps its row messages, then rethrows so the hook shows the error
+  const withMessages = (fn) => async () => {
+    try { return await fn(); } catch (e) { setMessages(e.detail?.messages || []); throw e; }
+  };
+
+  function upload() {
+    if (busy) return undefined;
+    return uploading.run(withMessages(async () => {
+    setMsg(null); setMessages([]);
     const fd = new FormData();
     fd.append("file", file);
     if (provider.trim()) fd.append("provider_name", provider.trim());
     if (targetModel?.id) fd.append("model_id", targetModel.id);
     const res = await fetch("/api/models/uploads", { method: "POST", body: fd });
     const data = await res.json().catch(() => ({}));
-    setBusy(false);
     if (!res.ok) {
-      setMsg(data.error || `Upload refused (${res.status}) — it is recorded in the upload log`);
-      setMessages(data.detail?.messages || []);
-      return;
+      const err = new Error(data.error || `Upload refused (${res.status}) — it is recorded in the upload log`);
+      err.detail = data.detail;
+      throw err;
     }
     if (data.duplicate_of) {
       setMsg(`This exact file was uploaded before (${data.duplicate_of.file_name}, ${String(data.duplicate_of.uploaded_at || "").slice(0, 10)}) and a live model still uses it — logged as a duplicate.`);
@@ -176,6 +190,7 @@ export default function UploadWizard({ envelope, targetModel = null }) {
     setStep(data);
     fromWizard(data);
     if (!modelName) setModelName((file?.name || "").replace(/\.[^.]+$/, ""));
+    }));
   }
 
   const stepBody = () => ({
@@ -183,16 +198,17 @@ export default function UploadWizard({ envelope, targetModel = null }) {
     provider_name: provider.trim() || null, fill_with_cash: fillCash, model_id: targetModel?.id || null,
   });
 
-  async function runPreview(resetMapping = false) {
-    setMsg(null); setMessages([]); setBusy(true);
-    try {
+  function runPreview(resetMapping = false) {
+    // CATCHALL1 busy — Re-read columns (resetMapping) and Validate are separate actions
+    if (busy) return undefined;
+    return (resetMapping ? rereading : validating).run(withMessages(async () => {
+      setMsg(null); setMessages([]);
       const body = stepBody();
       if (resetMapping) body.mapping = null;
       const out = await post(`uploads/${step.upload.id}/preview`, body);
       setPreview(out);
       if (resetMapping) fromWizard(out);
-    } catch (e) { setMsg(e.message); setMessages(e.detail?.messages || []); }
-    setBusy(false);
+    }));
   }
 
   async function saveMapping() {
@@ -204,13 +220,14 @@ export default function UploadWizard({ envelope, targetModel = null }) {
     } catch (e) { setMsg(e.message); }
   }
 
-  async function confirm() {
-    setMsg(null); setMessages([]); setBusy(true);
-    try {
+  function confirm() {
+    // CATCHALL1 busy
+    if (busy) return undefined;
+    return creating.run(withMessages(async () => {
+      setMsg(null); setMessages([]);
       const out = await post(`uploads/${step.upload.id}/confirm`, { ...stepBody(), model_name: targetModel ? null : modelName });
       window.location.href = `/portfolio/models/${out.model.id}`;
-    } catch (e) { setMsg(e.message); setMessages(e.detail?.messages || []); }
-    setBusy(false);
+    }));
   }
 
   async function abandonUpload() {
@@ -230,7 +247,8 @@ export default function UploadWizard({ envelope, targetModel = null }) {
         <label className="flex flex-col gap-1">Provider (optional — its saved mapping is applied first)
           <input className={input} value={provider} onChange={(e) => setProvider(e.target.value)} />
         </label>
-        <button type="button" className={primary} disabled={!file || busy || !!step} onClick={upload}>Upload</button>
+        {/* CATCHALL1 busy */}
+        <BusyButton className={primary} busy={uploading.busy} disabled={!file || busy || !!step} busyLabel="Uploading…" onClick={upload}>Upload</BusyButton>
         <p className="text-xs text-text-muted">.xlsx, .xls or .csv, up to 5 MB and 5,000 rows. Formulas are never evaluated;
           macro-enabled workbooks are refused. Every upload is kept in the upload log.</p>
       </div>
@@ -246,7 +264,8 @@ export default function UploadWizard({ envelope, targetModel = null }) {
             <label className="flex flex-col gap-1">Header row
               <input className={`${input} w-24`} value={headerRow} onChange={(e) => setHeaderRow(e.target.value)} />
             </label>
-            <button type="button" className={secondary} onClick={() => runPreview(true)}>Re-read columns</button>
+            {/* CATCHALL1 busy */}
+            <BusyButton className={secondary} busy={rereading.busy} disabled={busy} busyLabel="Reading…" onClick={() => runPreview(true)}>Re-read columns</BusyButton>
           </div>
           <MappingTable envelope={envelope} headers={(preview || step).headers} mapping={mapping}
             suggestions={(preview || step).suggestions} onChange={setMapping} />
@@ -255,13 +274,15 @@ export default function UploadWizard({ envelope, targetModel = null }) {
             Fill any gap below 100% with cash
           </label>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className={primary} disabled={busy} onClick={() => runPreview(false)}>Validate</button>
+            {/* CATCHALL1 busy */}
+            <BusyButton className={primary} busy={validating.busy} disabled={busy} busyLabel="Validating…" onClick={() => runPreview(false)}>Validate</BusyButton>
             <button type="button" className={secondary} disabled={!provider.trim()} onClick={saveMapping}>Save mapping</button>
             <button type="button" className={secondary} onClick={abandonUpload}>Abandon upload</button>
           </div>
         </div>
       ) : null}
       {msg ? <p className="text-sm text-[#9B2335]">{msg}</p> : null}
+      <BusyError error={busyError} className="block text-sm text-[#9B2335]" />
       {messages.length ? <MessageList messages={messages} envelope={envelope} /> : null}
       {preview ? (
         <>
@@ -273,8 +294,9 @@ export default function UploadWizard({ envelope, targetModel = null }) {
                 <input className={input} value={modelName} onChange={(e) => setModelName(e.target.value)} />
               </label>
             ) : null}
-            <button type="button" className={primary} disabled={busy || preview.report?.blocking || (!targetModel && !modelName.trim())}
-              onClick={confirm}>Create draft</button>
+            {/* CATCHALL1 busy */}
+            <BusyButton className={primary} busy={creating.busy} disabled={busy || preview.report?.blocking || (!targetModel && !modelName.trim())}
+              busyLabel="Creating…" onClick={confirm}>Create draft</BusyButton>
             {preview.report?.blocking ? <p className="text-[#9B2335]">Fix the errors above first.</p> : null}
           </div>
         </>

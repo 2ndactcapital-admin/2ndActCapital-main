@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import {
   buildBody, costRows, findOffer, formatWeight, labelOf, modelControls, offerText, viabilityRows,
 } from "@/lib/replication.mjs";
@@ -176,7 +177,8 @@ export function ModelTabView({ envelope, form, onForm, report, preview, busy, ms
             <input className={input} value={f.account_size || ""} onChange={set("account_size")} />
           </label>
           {controls.viability ? (
-            <button type="button" disabled={busy} className="rounded bg-navy px-3 py-1 text-white disabled:opacity-50" onClick={onCheck}>Check viability</button>
+            // CATCHALL1 busy
+            <BusyButton busy={busy} className="rounded bg-navy px-3 py-1 text-white disabled:opacity-50" onClick={onCheck}>Check viability</BusyButton>
           ) : null}
         </div>
         <ViabilityChecklist report={shown} vocab={vocab} />
@@ -234,17 +236,17 @@ export function ModelTabView({ envelope, form, onForm, report, preview, busy, ms
             </div>
             <div className="flex gap-2">
               {controls.preview ? (
-                <button type="button" disabled={busy} className="rounded border border-navy px-3 py-1 text-navy disabled:opacity-50" onClick={onPreview}>Preview</button>
+                <BusyButton busy={busy} className="rounded border border-navy px-3 py-1 text-navy disabled:opacity-50" onClick={onPreview}>Preview</BusyButton>
               ) : null}
               {controls.build && preview && !preview.existing ? (
-                <button type="button" disabled={busy} className="rounded bg-navy px-3 py-1 text-white disabled:opacity-50" onClick={onBuild}>Build model</button>
+                <BusyButton busy={busy} className="rounded bg-navy px-3 py-1 text-white disabled:opacity-50" onClick={onBuild}>Build model</BusyButton>
               ) : null}
             </div>
             <PreviewTable preview={preview} vocab={vocab} />
           </div>
         ) : null}
         {!offer && !controls.build ? <p className="text-sm text-text-muted">No model has been built from this fund for this choice yet.</p> : null}
-        {msg ? <p className="text-sm text-[#9B2335]">{msg}</p> : null}
+        <BusyError error={msg} className="block text-sm text-[#9B2335]" />
       </section>
 
       {models.length ? (
@@ -288,8 +290,9 @@ export default function ModelTab({ entryId, initialEnvelope = null }) {
   const [form, setForm] = useState(null);
   const [report, setReport] = useState(null);
   const [preview, setPreview] = useState(null);
-  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  // CATCHALL1 busy — Check viability / Preview / Build model are mutually exclusive: one hook
+  const action = useBusy();
 
   async function reload() {
     try {
@@ -301,10 +304,7 @@ export default function ModelTab({ entryId, initialEnvelope = null }) {
   }
   useEffect(() => { reload(); }, [entryId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function act(fn) {
-    setBusy(true); setMsg(null);
-    try { await fn(); } catch (err) { setMsg(err.message); } finally { setBusy(false); }
-  }
+  const act = (fn) => { setMsg(null); return action.run(fn); };
   const onForm = (next) => { setForm(next); setPreview(null); };
   const onCheck = () => act(async () => {
     setReport(await call("POST", `registry/${entryId}/viability`, {
@@ -315,6 +315,6 @@ export default function ModelTab({ entryId, initialEnvelope = null }) {
   const onBuild = () => act(async () => { await call("POST", `registry/${entryId}/models`, buildBody(form)); setPreview(null); await reload(); });
 
   if (!env) return <p className="text-sm text-text-muted">{msg || "Loading…"}</p>;
-  return <ModelTabView envelope={env} form={form} onForm={onForm} report={report} preview={preview} busy={busy}
-    msg={msg} onCheck={onCheck} onPreview={onPreview} onBuild={onBuild} />;
+  return <ModelTabView envelope={env} form={form} onForm={onForm} report={report} preview={preview} busy={action.busy}
+    msg={action.error || msg} onCheck={onCheck} onPreview={onPreview} onBuild={onBuild} />;
 }

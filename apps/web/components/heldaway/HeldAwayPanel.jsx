@@ -13,6 +13,7 @@ import OptionContractPicker from "@/components/heldaway/OptionContractPicker";
 import { contractTerms } from "@/lib/bugfix3.mjs";
 import SecuritySearch from "@/components/heldaway/SecuritySearch";
 import { useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import {
   blankLine, changeKind, draftSaveState, importStateText, lineFields, lineLabel, lineRow, neverMaster, qty,
 } from "@/lib/bugfix4.mjs";
@@ -57,6 +58,7 @@ export function Imports({ envelope, onAct }) {
   const v = vocab(envelope);
   const rows = Array.isArray(envelope?.imports) ? envelope.imports : [];
   const [note, setNote] = useState("");
+  const approve = useBusy(); // CATCHALL1 busy — Approve (onAct reports its own failure in the panel's message line)
   if (!rows.length) return <p className="text-text-muted">No import yet.</p>;
   return (
     <ul className="space-y-3">{rows.map((r) => {
@@ -76,7 +78,10 @@ export function Imports({ envelope, onAct }) {
           {c.approve || c.reject ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <input className={input} placeholder="Note (required to reject)" value={note} onChange={(e) => setNote(e.target.value)} />
-              {c.approve ? <button type="button" className={primary} onClick={() => onAct?.(`imports/${r.id}/approve`, { note: note || undefined })}>Approve</button> : null}
+              {/* CATCHALL1 busy */}
+              {c.approve ? <BusyButton className={primary} busy={approve.busy} busyLabel="Approving…"
+                onClick={() => approve.run(() => onAct?.(`imports/${r.id}/approve`, { note: note || undefined }))}>Approve</BusyButton> : null}
+              <BusyError error={approve.error} className="text-xs text-[#9B2335]" />
               {c.reject ? <button type="button" className={secondary} onClick={() => onAct?.(`imports/${r.id}/reject`, { note })}>Reject</button> : null}
             </div>
           ) : null}
@@ -125,6 +130,9 @@ export default function HeldAwayPanel({ initialEnvelope }) {
   const [ack, setAck] = useState(false);
   const [file, setFile] = useState(null);
   const [docId, setDocId] = useState("");
+  // CATCHALL1 busy — Upload file and Extract statement, each its own action (hooks before the fail-closed return)
+  const uploading = useBusy();
+  const extracting = useBusy();
   const panel = env?.panel;
   if (!panel || typeof panel !== "object" || panel.account?.is_held_away !== true) return null;
   const v = vocab(env);
@@ -168,12 +176,23 @@ export default function HeldAwayPanel({ initialEnvelope }) {
       await checkReplaces(asOf);
     } catch (e) { setMsg(e.message); }
   }
-  async function upload() {
-    if (!file || !asOf) { setMsg("Choose a file and its as-of date."); return; }
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("as_of", asOf);
-    await act(`accounts/${id}/imports/file`, null, { form: fd });
+  function upload() {
+    // CATCHALL1 busy — call() throws on !res.ok; the error shows beside the button
+    return uploading.run(async () => {
+      if (!file || !asOf) throw new Error("Choose a file and its as-of date.");
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("as_of", asOf);
+      await call(`accounts/${id}/imports/file`, null, { form: fd });
+      await reload();
+    });
+  }
+  function extractStatement() {
+    // CATCHALL1 busy
+    return extracting.run(async () => {
+      await call(`accounts/${id}/imports/statement`, { document_id: docId, as_of: asOf });
+      await reload();
+    });
   }
 
   return (
@@ -195,7 +214,9 @@ export default function HeldAwayPanel({ initialEnvelope }) {
         <div className="mt-2 flex flex-wrap gap-2">
           <input className={input} placeholder="Chancery document id" value={docId} onChange={(e) => setDocId(e.target.value)} />
           <button type="button" className={secondary} onClick={() => act(`accounts/${id}/statements`, { document_id: docId })}>Link statement</button>
-          {c.statementImport ? <button type="button" className={secondary} onClick={() => act(`accounts/${id}/imports/statement`, { document_id: docId, as_of: asOf })}>Extract statement</button> : null}
+          {/* CATCHALL1 busy */}
+          {c.statementImport ? <BusyButton className={secondary} busy={extracting.busy} busyLabel="Extracting…" onClick={extractStatement}>Extract statement</BusyButton> : null}
+          <BusyError error={extracting.error} />
         </div>
       ) : null}
       {c.manualImport || c.fileImport ? (
@@ -259,7 +280,9 @@ export default function HeldAwayPanel({ initialEnvelope }) {
           {c.fileImport ? (
             <div className="flex flex-wrap items-center gap-2">
               <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-              <button type="button" className={secondary} onClick={upload}>Upload file</button>
+              {/* CATCHALL1 busy */}
+              <BusyButton className={secondary} busy={uploading.busy} busyLabel="Uploading…" onClick={upload}>Upload file</BusyButton>
+              <BusyError error={uploading.error} />
             </div>
           ) : null}
         </div>

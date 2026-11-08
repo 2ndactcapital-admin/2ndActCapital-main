@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 
 // Custody import wizard — upload → map → dry-run → commit.
 //
@@ -83,8 +84,10 @@ export default function CustodyImportWizard({
   const [columnMap, setColumnMap] = useState({});
   const [plan, setPlan] = useState(null);
   const [result, setResult] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
+  // CATCHALL1 busy — one shared busy state for the three mutually exclusive steps (Read / Preview / Commit)
+  const wizard = useBusy();
+  const busy = wizard.busy;
+  const error = wizard.error;
   const [batches, setBatches] = useState(initialBatches);
 
   const step = result ? 4 : plan ? 3 : inspection ? 2 : 1;
@@ -105,17 +108,8 @@ export default function CustodyImportWizard({
     [custodianCode, file],
   );
 
-  const run = useCallback(async (fn) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await fn();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  // CATCHALL1 busy — post() throws on !res.ok; the hook restores the button and shows the error
+  const run = wizard.run;
 
   const onInspect = () =>
     run(async () => {
@@ -165,7 +159,7 @@ export default function CustodyImportWizard({
     setColumnMap({});
     setPlan(null);
     setResult(null);
-    setError(null);
+    wizard.clearError();
   };
 
   const counts = plan?.counts;
@@ -188,7 +182,7 @@ export default function CustodyImportWizard({
 
       {error ? (
         <div className="rounded border border-border bg-bg-card p-4 text-sm text-gold">
-          {error}
+          <BusyError error={error} className="" />
         </div>
       ) : null}
 
@@ -238,14 +232,16 @@ export default function CustodyImportWizard({
             />
           </label>
         </div>
-        <button
-          type="button"
+        {/* CATCHALL1 busy */}
+        <BusyButton
           onClick={onInspect}
+          busy={busy && step === 1}
           disabled={!canWrite || !file || !custodianCode || busy}
+          busyLabel="Reading…"
           className="mt-4 rounded bg-navy px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
         >
-          {busy && step === 1 ? "Reading…" : "Read columns"}
-        </button>
+          Read columns
+        </BusyButton>
       </section>
 
       {/* ── Step 2 — map ──────────────────────────────────────────────── */}
@@ -304,14 +300,16 @@ export default function CustodyImportWizard({
 
           <SamplePreview rows={inspection.sample_rows} headers={inspection.headers} />
 
-          <button
-            type="button"
+          {/* CATCHALL1 busy */}
+          <BusyButton
             onClick={onDryRun}
+            busy={busy && step === 2}
             disabled={busy || mappedKinds.length === 0}
+            busyLabel="Checking…"
             className="mt-5 rounded bg-navy px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
-            {busy && step === 2 ? "Checking…" : "Preview changes"}
-          </button>
+            Preview changes
+          </BusyButton>
         </section>
       ) : null}
 
@@ -406,14 +404,16 @@ export default function CustodyImportWizard({
             )}
           </div>
 
-          <button
-            type="button"
+          {/* CATCHALL1 busy */}
+          <BusyButton
             onClick={onCommit}
+            busy={busy && step === 3}
             disabled={!canWrite || busy}
+            busyLabel="Committing…"
             className="mt-6 rounded bg-navy px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
-            {busy && step === 3 ? "Committing…" : "Commit import"}
-          </button>
+            Commit import
+          </BusyButton>
         </section>
       ) : null}
 

@@ -11,6 +11,7 @@
  */
 
 import { useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import { blockControls, guidanceText, labelOf, settlementText, vocab } from "@/lib/blocks.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -300,23 +301,22 @@ export function Charges({ envelope, onDone }) {
 export function SheetPanel({ envelope }) {
   const b = envelope?.block || {};
   const c = blockControls(envelope);
-  const [msg, setMsg] = useState(null);
+  const sheet = useBusy(); // CATCHALL1 busy — Download order execution sheet
   if (!c.sheet) return null;
-  async function download() {
-    setMsg(null);
+  const download = () => sheet.run(async () => {
     const res = await fetch(`/api/execution/blocks/${b.id}/sheet`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-    if (!res.ok) { const data = await res.json().catch(() => ({})); setMsg(data.error || "Could not generate the sheet"); return; }
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || "Could not generate the sheet"); }
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");
     a.href = url; a.download = `order-execution-sheet-${String(b.id).slice(0, 8)}.pdf`; a.click();
     URL.revokeObjectURL(url);
-  }
+  });
   return (
     <div className={`${card} p-6 text-sm`}>
       <h2 className="text-lg font-semibold text-navy">Order execution sheet</h2>
       <p className="mt-1 text-text-muted">Print it and give it to the broker of your choice; enter the fills by hand. Account references are masked and no member names appear. Nothing is sent electronically.</p>
-      <div className="mt-3"><button type="button" className={primary} onClick={download}>Download order execution sheet</button></div>
-      {msg ? <p className="mt-2 text-[#9B2335]">{msg}</p> : null}
+      <div className="mt-3"><BusyButton busy={sheet.busy} busyLabel="Generating…" className={primary} onClick={download}>Download order execution sheet</BusyButton></div>
+      <BusyError error={sheet.error} className="mt-2 block text-[#9B2335]" />
     </div>
   );
 }
