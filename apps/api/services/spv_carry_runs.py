@@ -131,6 +131,7 @@ from services.spv_carry import (
     compute_carry,
     terms_from_resolved,
 )
+from services import sod  # S30 — the ONE maker-checker rule
 
 logger = logging.getLogger(__name__)
 
@@ -867,7 +868,10 @@ async def approve(conn, org_id, run_id, *, gate: str, approved_by) -> dict[str, 
             f"two hats",
             run_id=str(run_id), gate=gate,
         )
-    if str(proposal["proposed_by"]) == str(approved_by):
+    _d = await sod.can_check(conn, org_id=org_id, item_type=sod.CARRY_RUN, checker_id=approved_by,
+                             maker_ids=[proposal["proposed_by"]], item_id=run_id, site="spv_carry_runs.approve")
+    if _d.refused:
+        await sod.record_refusal(_d, site="spv_carry_runs.approve")
         raise MakerCheckerError(
             f"user {approved_by} proposed the {gate} approval of "
             f"spv_carry_run {run_id} and cannot also approve it",

@@ -47,6 +47,7 @@ from decimal import Decimal
 
 from services import human_tasks as HT
 from services import rebalance_engine as E
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -460,9 +461,9 @@ async def _apply(pool, task: dict, outcome: str, actor_id, note) -> dict | None:
             if row is None or row["status"] != "draft":
                 return dict(row) if row else None
             checker = uuid.UUID(str(actor_id))
-            if checker == row["maker_id"]:
-                raise MakerCheckerViolation("maker-checker: the person who asked for a lot-method change cannot "
-                                            "approve it")
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.LOT_METHOD_CHANGE, checker_id=checker,
+                           maker_ids=[row["maker_id"]], item_id=row["id"], site="lot_method._apply",
+                           refuse=lambda d: MakerCheckerViolation("maker-checker: the person who asked for a lot-method change cannot approve it"))
             status = "approved" if outcome == "approve" else "rejected"
             if status == "approved":
                 prev = await conn.fetchrow(f"SELECT id FROM {table} WHERE {key} = $1 AND status = 'approved' "
@@ -500,8 +501,10 @@ async def decide(pool, *, org_id, actor_id, change_id, outcome: str, note: str |
         row, subject = await load_change(conn, org_id, change_id)
     if row["status"] != "draft":
         raise LotMethodConflict(f"the lot-method change is {row['status']}, not awaiting approval")
-    if actor["id"] == row["maker_id"]:
-        raise MakerCheckerViolation("maker-checker: the person who asked for a lot-method change cannot decide it")
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.LOT_METHOD_CHANGE, checker_id=actor["id"],
+                       maker_ids=[row["maker_id"]], item_id=row["id"], site="lot_method.decide",
+                       refuse=lambda d: MakerCheckerViolation("maker-checker: the person who asked for a lot-method change cannot decide it"))
     try:
         done = await HT.complete_task(pool, org_id=org_id, task_id=row["approval_task_id"], actor_id=actor["id"],
                                       outcome=outcome, note=note)
@@ -542,7 +545,7 @@ def change_out(r: dict, subject: str) -> dict:
 
 
 def change_actions(r: dict, *, can_approve: bool, user_id) -> list[str]:
-    if r["status"] == "draft" and can_approve and str(r["maker_id"]) != str(user_id):
+    if r["status"] == "draft" and can_approve and sod.may_check_display(user_id, [r["maker_id"]]):
         return ["approve", "reject"]
     return []
 

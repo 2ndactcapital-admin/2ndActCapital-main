@@ -57,6 +57,7 @@ from services.audit import write_audit_log
 from services.bpmn_layout import BpmnLayoutError, ensure_bpmn_di
 from services.workflow_engine import SUSPEND_TIER, compute_effective_tier
 from services.workflow_steps_deriver import derive_and_store_steps, derive_steps
+from services import sod  # S30 — the ONE maker-checker rule
 
 PLATFORM_ORG_ID = "bb347258-8f28-4f49-8cc9-e29ccad82884"
 
@@ -792,9 +793,10 @@ async def decide_platform_version(pool, *, org_id, actor_id, version_id, outcome
             v = await _platform_version(conn, org_id, version_id, lock=True)
             if v["status"] != "draft":
                 raise TemplateConflict(f"version {v['version_no']} is {v['status']} — only a draft is decided")
-            if str(v["drafted_by"]) == str(actor_id):
-                raise MakerCheckerViolation("maker-checker: you drafted this version — a different Super Admin "
-                                            "publishes it")
+            await sod.enforce(conn, org_id=org_id, item_type=sod.WORKFLOW_TEMPLATE_VERSION, checker_id=actor_id,
+                           maker_ids=[v["drafted_by"]], item_id=v["id"], site="workflow_templates.decide_platform_version",
+                           record=sod.RECORD_ALL, refuse=lambda d: MakerCheckerViolation("maker-checker: you drafted this version — a different Super Admin "
+                                                                "publishes it"))
             now = datetime.now(timezone.utc)
             fields = ({"status": "published", "checker_id": _uuid(actor_id), "published_at": now,
                        "decision_note": (note or "").strip() or None} if outcome == "approve" else
@@ -889,7 +891,7 @@ async def platform_overview(pool, *, org_id, actor_id) -> dict:
         out = version_out(r)
         out.update({"drafted_by": str(r["drafted_by"]), "checker_id": str(r["checker_id"]) if r["checker_id"] else None,
                     "decision_note": r["decision_note"], "retire_reason": r["retire_reason"], "copies": c, "orgs": o,
-                    "can_decide": r["status"] == "draft" and str(r["drafted_by"]) != str(actor_id),
+                    "can_decide": r["status"] == "draft" and sod.may_check_display(actor_id, [r["drafted_by"]]),
                     "can_retire": r["status"] == "published"})
         t["versions"].append(out)
     return {"platform_org_allowed": allowed, "templates": list(by.values())}

@@ -209,6 +209,8 @@ async def ensure_platform_jobs(conn, *, org_id=PLATFORM_ORG_ID, created_by, jobs
             "SELECT id FROM workflow_triggers WHERE workflow_definition_id = $1 AND org_id = $2::uuid AND "
             "trigger_type = 'scheduled' ORDER BY created_at LIMIT 1", def_id, str(org_id))
         if trig is None:
+            if created_by is None:  # S30 (Task 8): a trigger names its owner — the maker of every run it fires
+                raise PlatformJobError(f"{spec.name}: a scheduled trigger needs a named owner (created_by)")
             trig = await conn.fetchval(
                 "INSERT INTO workflow_triggers (workflow_definition_id, org_id, trigger_type, schedule_cron, timezone, "
                 "is_active, created_by) VALUES ($1, $2::uuid, 'scheduled', $3, $4, $5, $6::uuid) RETURNING id",

@@ -125,6 +125,9 @@ export const GATE_VIEW_WORKFLOW_RUNS = { perm: "view_workflow_runs", strict: tru
 export const GATE_WORKFLOW_TRIGGERS_READ = { anyOf: ["view_workflow_runs", "configure_workflow_triggers"], strict: true };
 // WFTEMPLATES1 — the template library: any of the three workflow keys (API require_any_permission); using or saving a
 // template needs author_workflows and is decided by the page from the server's envelope.
+// S30 — Admin → Segregation of duties: GET /admin/sod is any(manage_org_settings | manage_compliance | view_audit_log);
+// STRICT, so a lost envelope hides the tab. Editing is decided by the page from the server's envelope.
+export const GATE_SOD_READ = { anyOf: ["manage_org_settings", "manage_compliance", "view_audit_log"], strict: true };
 export const GATE_WORKFLOW_TEMPLATES_READ = {
   anyOf: ["author_workflows", "view_workflow_runs", "configure_workflow_triggers"], strict: true,
 };
@@ -322,6 +325,7 @@ export const MENU_ITEMS = [
   tab("org_admin", "people", 2, "/admin/staff-visibility", "Teams & Coverage", GATE_MANAGE_MEMBERS, true),
   tab("org_admin", "people", 3, "/admin/profiles", "Profiles", GATE_MANAGE_ORG_SETTINGS, true),
   tab("org_admin", "people", 4, "/admin/permission-sets", "Permission Sets", GATE_MANAGE_ORG_SETTINGS, true),
+  tab("org_admin", "people", 5, "/admin/sod", "Segregation of duties", GATE_SOD_READ, true),
   tab("org_admin", "settings", 1, "/admin/settings", "Organization", GATE_MANAGE_ORG_SETTINGS, true),
   tab("org_admin", "settings", 2, "/admin/modeling/ta", "TA Model Defaults", GATE_MANAGE_ORG_SETTINGS, true),
   // MARKETDATA1 — price sources (rank overrides, file uploads) and data quality

@@ -66,6 +66,7 @@ from starlette.concurrency import run_in_threadpool
 from services import human_tasks as HT
 from services import model_upload as U
 from services import storage
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -1064,8 +1065,9 @@ async def _apply_outcome(pool, org_id, task: dict, outcome: str, actor_id, note)
         row = dict(row)
         model = await load_model(conn, org_id, row["model_id"], lock=True)
         if outcome == "approve":
-            if uuid.UUID(str(actor_id)) in (row["maker_ids"] or []):
-                raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+            await sod.gate(conn, org_id=org_id, item_type=sod.MODEL_VERSION, checker_id=actor_id,
+                           maker_ids=list(row["maker_ids"] or []), item_id=row["id"], site="models._apply_outcome",
+                           refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
             unresolved = [r for r in await positions_of(conn, row["id"]) if r["resolution_state"] == "unresolved"]
             if unresolved:
                 raise unresolved_refusal(unresolved, model_id=model["id"], version_id=row["id"])
@@ -1152,8 +1154,9 @@ async def decide(pool, *, org_id, actor_id, model_id, version_id, outcome: str, 
                                     "changed")
             raise ModelConflict(f"version {v['version_no']} is {VERSION_STATUS_LABELS[v['status']].lower()}, not "
                                 "awaiting approval")
-        if actor["id"] in (v["maker_ids"] or []):
-            raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+        await sod.gate(conn, org_id=org_id, item_type=sod.MODEL_VERSION, checker_id=actor["id"],
+                       maker_ids=list(v["maker_ids"] or []), item_id=v["id"], site="models.decide",
+                       refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
         if outcome == "approve":
             unresolved = [r for r in await positions_of(conn, v["id"]) if r["resolution_state"] == "unresolved"]
             if unresolved:

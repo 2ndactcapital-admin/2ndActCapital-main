@@ -405,11 +405,13 @@ async def tasks_for_user(conn, org_id, *, user_id, permissions, is_super_admin: 
     """The signed-in user's view: open tasks they may decide, and open tasks
     they opened that are waiting on someone else."""
     open_tasks = await list_tasks(conn, org_id, status="open", limit=500)
+    from services.sod import may_check_display
+
     perms = set(permissions or ())
     mine = str(user_id)
-    actionable = [t for t in open_tasks if t["maker_id"] != mine
+    actionable = [t for t in open_tasks if may_check_display(mine, [t["maker_id"]])
                   and (is_super_admin or t["eligible_permission"] in perms)]
-    waiting = [t for t in open_tasks if t["maker_id"] == mine]
+    waiting = [t for t in open_tasks if not may_check_display(mine, [t["maker_id"]])]
     return {"actionable": actionable, "waiting_on_others": waiting}
 
 
@@ -417,7 +419,9 @@ def can_decide(task: dict, *, user_id, permissions, is_super_admin: bool) -> boo
     """The rule the screens use to show Approve / Reject (the server re-checks)."""
     if task.get("status") != "open":
         return False
-    if task.get("maker_checker") and task.get("maker_id") == str(user_id):
+    from services.sod import may_check_display
+
+    if task.get("maker_checker") and not may_check_display(user_id, [task.get("maker_id")]):
         return False
     return bool(is_super_admin or task.get("eligible_permission") in set(permissions or ()))
 
@@ -486,7 +490,7 @@ async def open_task(pool, *, org_id, kind: str, subject_type: str, subject_id, m
 
 
 async def complete_task(pool, *, org_id, task_id, actor_id, outcome: str, note: str | None = None,
-                        actor_kind: str = "user") -> dict:
+                        actor_kind: str = "user", sod_household_id=None) -> dict:
     """Decide a task through the engine's ``complete_user_task``.
 
     Order of refusals (each leaves the task open and unchanged): not a person
@@ -505,13 +509,26 @@ async def complete_task(pool, *, org_id, task_id, actor_id, outcome: str, note: 
         raise HumanTaskError(f"a {k.label.lower()} task is decided by {' or '.join(k.outcomes)}, not {outcome!r}")
     if outcome == "reject" and not (note or "").strip():
         raise HumanTaskError("a rejection needs a note saying why")
-    if k.maker_checker and task["maker_id"] == str(actor["id"]):
-        from services.maker_names import maker_refusal  # BUGFIX4 — the refusal names the maker
+    if k.maker_checker:
+        # S30 — the ONE maker-checker rule (services.sod): persons, not logins; the decision is recorded. The refusal
+        # text still names who made it (services.maker_names, BUGFIX4).
+        from services import sod
+        from services.maker_names import maker_refusal
 
         async with pool.acquire() as conn:
-            who = await maker_refusal(conn, maker_id=task["maker_id"], checker_id=actor["id"],
-                                      approver=f"holder of {task['eligible_permission']}", item=f"task ({task['title']})")
-        raise MakerCheckerError(f"maker-checker: {who}")
+            d = await sod.can_check(conn, org_id=org_id, item_type=sod.item_type_for_task_kind(task["kind"]),
+                                    checker_id=actor["id"], maker_ids=[task["maker_id"]],
+                                    item_id=task["subject_id"], household_id=sod_household_id,
+                                    site="human_tasks.complete_task")
+            if d.refused:
+                await sod.record_refusal(d, site="human_tasks.complete_task")
+                who = await maker_refusal(conn, maker_id=task["maker_id"], checker_id=actor["id"],
+                                          approver=f"holder of {task['eligible_permission']}",
+                                          item=f"task ({task['title']})")
+                raise MakerCheckerError(f"maker-checker: {who}")
+        sod_decision = d
+    else:
+        sod_decision = None
     from services.rbac import has_permission
 
     if not await has_permission(pool, actor["id"], org_id, task["eligible_permission"]):
@@ -534,6 +551,10 @@ async def complete_task(pool, *, org_id, task_id, actor_id, outcome: str, note: 
             await _audit(conn, org_id, actor["id"], "human_task.completed", task["id"],
                          {"kind": task["kind"], "subject_type": task["subject_type"],
                           "subject_id": task["subject_id"], "outcome": outcome, "note": note})
+            if sod_decision is not None:
+                from services import sod
+
+                await sod.record_decision(conn, sod_decision, site="human_tasks.complete_task")
             done = await get_task(conn, org_id, task["id"])
     await _publish(pool, org_id, "human_task.completed", task["id"],
                    {"kind": task["kind"], "subject_type": task["subject_type"], "subject_id": task["subject_id"],

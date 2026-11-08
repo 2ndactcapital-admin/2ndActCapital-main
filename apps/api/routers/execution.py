@@ -44,6 +44,7 @@ from services import human_tasks as HT
 from services.authz import require_permission
 from services.custody.trading import LotInstruction, PriceGuidance, TradeList, _decimal, route_trade_list
 from services.database import get_pool
+from services import sod  # S30 — the ONE maker-checker rule
 
 router = APIRouter(tags=["execution"])
 
@@ -215,7 +216,7 @@ async def get_instruction(request: Request, instruction_id: str):
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
     open_task = next((t for t in d["tasks"] if t["status"] == "open"), None)
-    is_maker = principal.user_id in set(d["maker_ids"])
+    is_maker = not sod.may_check_display(principal.user_id, d["maker_ids"])
     perms = {**perms, "is_maker": is_maker,
              "can_decide": bool(open_task) and HT.can_decide(open_task, user_id=principal.user_id,
                                                               permissions=principal.permissions,

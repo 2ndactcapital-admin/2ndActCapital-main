@@ -54,3 +54,4 @@ verify_disclosures1.py
 verify_rep14.py
 verify_rep15.py
 verify_wftemplates1.py
+apps/api/scripts/verify_s30.py

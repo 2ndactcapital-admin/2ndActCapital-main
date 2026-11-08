@@ -58,6 +58,7 @@ from decimal import Decimal
 
 from services import human_tasks as HT
 from services import held_away_adapters as AD
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -1029,13 +1030,18 @@ async def decide_import(pool, *, org_id, actor_id, import_id, outcome: str, note
         imp = await _import(conn, org_id, import_id)
     if imp["status"] != "draft":
         raise HeldAwayConflict(f"this import is {imp['status']}, not a draft")
-    if str(imp["entered_by"]) == str(actor["id"]):
-        from services.maker_names import maker_refusal  # BUGFIX4 — the refusal names who entered it
+    async with pool.acquire() as conn:
+        # S30 — the ONE rule (services.sod, persons not logins); the refusal text still names who entered it and the
+        # shared sign-ins (services.maker_names, BUGFIX4)
+        d = await sod.can_check(conn, org_id=org_id, item_type=sod.HELD_AWAY_IMPORT, checker_id=actor["id"],
+                                maker_ids=[imp["entered_by"]], item_id=imp["id"], site="held_away.decide_import")
+        if d.refused:
+            from services.maker_names import maker_refusal
 
-        async with pool.acquire() as conn:
+            await sod.record_refusal(d, site="held_away.decide_import")
             who = await maker_refusal(conn, maker_id=imp["entered_by"], checker_id=actor["id"],
                                       approver=f"holder of {APPROVE}", item="held-away import")
-        raise MakerCheckerViolation(f"maker-checker: {who}")
+            raise MakerCheckerViolation(f"maker-checker: {who}")
     if outcome == "approve" and (imp["extraction"] or {}) and _loads(imp["extraction"]).get("refused"):
         raise HeldAwayConflict("the file was refused — reject this import and load a corrected file")
     try:
@@ -1141,8 +1147,9 @@ async def _apply_import(pool, org_id, task: dict, outcome: str, actor_id, note) 
                 return dict(imp) if imp else None
             imp = dict(imp)
             checker = uuid.UUID(str(actor_id))
-            if checker == imp["entered_by"]:
-                raise MakerCheckerViolation("maker-checker: the person who entered an import never approves it")
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.HELD_AWAY_IMPORT, checker_id=checker,
+                           maker_ids=[imp["entered_by"]], item_id=imp["id"], site="held_away._apply_import",
+                           refuse=lambda d: MakerCheckerViolation("maker-checker: the person who entered an import never approves it"))
             now = datetime.now(timezone.utc)
             if outcome != "approve":
                 new = await _decide_row(conn, imp, "rejected", checker, now, note)
@@ -1500,7 +1507,7 @@ def import_out(r: dict) -> dict:
 
 
 def import_actions(r: dict, *, can_approve: bool, user_id) -> list[str]:
-    if r["status"] != "draft" or not can_approve or str(r["entered_by"]) == str(user_id):
+    if r["status"] != "draft" or not can_approve or not sod.may_check_display(user_id, [r["entered_by"]]):
         return []
     if (_loads(r["extraction"]) or {}).get("refused"):
         return ["reject"]

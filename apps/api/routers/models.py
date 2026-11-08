@@ -53,6 +53,7 @@ from services import model_upload as U
 from services import models as M
 from services.authz import require_permission
 from services.database import get_pool
+from services import sod  # S30 — the ONE maker-checker rule
 
 router = APIRouter(tags=["models"])
 
@@ -234,7 +235,7 @@ def _version_actions(v: dict | None, principal, perms: dict) -> list[str]:
     if not v:
         return []
     acts: list[str] = []
-    maker = str(principal.user_id) in (v.get("maker_ids") or [])
+    maker = not sod.may_check_display(principal.user_id, v.get("maker_ids") or [])
     if v["status"] == "draft" and perms["can_write"]:
         acts += ["edit", "submit", "abandon"]
     if v["status"] == "submitted":
@@ -248,7 +249,7 @@ def _version_actions(v: dict | None, principal, perms: dict) -> list[str]:
 def _version_envelope(detail: dict, principal, perms: dict) -> dict:
     v = detail["version"]
     return {**detail, "actions": _version_actions(v, principal, perms),
-            "is_maker": str(principal.user_id) in (v.get("maker_ids") or [])}
+            "is_maker": not sod.may_check_display(principal.user_id, v.get("maker_ids") or [])}
 
 
 # ── list / create ───────────────────────────────────────────────────────────

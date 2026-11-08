@@ -27,6 +27,7 @@ from routers.entities import get_org_id
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.authz import is_member_principal, load_principal as load_authz_principal, staff_only_keys
+from services import sod_admin
 from services.rbac import can_manage_org_settings, load_principal
 from services.users import ensure_user
 
@@ -210,6 +211,15 @@ async def toggle_profile_permission(
             raise HTTPException(status_code=422, detail="Unknown permission key")
 
         if body.granted:
+            # S30 fix 1 — adding a permission to a profile the caller (any login of the person) holds is a self-grant
+            holders = [r["id"] for r in await conn.fetch(
+                "SELECT id FROM users WHERE profile_id = $1 AND org_id = $2 AND status <> 'retired'",
+                profile_id, org_id)]
+            try:
+                await sod_admin.check_bundle_edit(conn, org_id=org_id, actor_id=actor_id, holder_ids=holders,
+                                                  what="profile permission")
+            except sod_admin.SoDAdminRefused as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
             await conn.execute(
                 """
                 INSERT INTO profile_permissions (org_id, profile_id, permission_key)
@@ -379,6 +389,15 @@ async def toggle_permission_set_permission(
             raise HTTPException(status_code=422, detail="Unknown permission key")
 
         if body.granted:
+            # S30 fix 1 — adding a permission to a set the caller (any login of the person) holds is a self-grant
+            holders = [r["user_id"] for r in await conn.fetch(
+                "SELECT ups.user_id FROM user_permission_sets ups JOIN users u ON u.id = ups.user_id "
+                "WHERE ups.permission_set_id = $1 AND u.org_id = $2 AND u.status <> 'retired'", set_id, org_id)]
+            try:
+                await sod_admin.check_bundle_edit(conn, org_id=org_id, actor_id=actor_id, holder_ids=holders,
+                                                  what="permission set permission")
+            except sod_admin.SoDAdminRefused as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
             await conn.execute(
                 """
                 INSERT INTO permission_set_permissions
@@ -457,6 +476,12 @@ async def assign_permission_set(request: Request, set_id: UUID, body: UserAssign
         keys = [r["permission_key"] for r in await conn.fetch(
             "SELECT permission_key FROM permission_set_permissions WHERE permission_set_id = $1", set_id)]
         await _refuse_staff_only_for_member(conn, org_id, body.user_id, keys, "permission set")
+        # S30 — granting YOURSELF a permission set is the same floor as a role (services.sod_admin)
+        try:
+            sod_decision = await sod_admin.check_role_grant(conn, org_id=org_id, actor_id=actor_id,
+                                                            target_user_id=body.user_id, what="permission set")
+        except sod_admin.SoDAdminRefused as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         await conn.execute(
             """
             INSERT INTO user_permission_sets (user_id, permission_set_id, granted_by)
@@ -465,7 +490,9 @@ async def assign_permission_set(request: Request, set_id: UUID, body: UserAssign
             """,
             body.user_id, set_id, actor_id,
         )
-    return {"ok": True}
+        warnings = sod_admin.grant_warnings(
+            sod_decision, await sod_admin.person_conflicts(conn, org_id=org_id, user_id=body.user_id))
+    return {"ok": True, "sod_warnings": warnings}
 
 
 @router.delete("/admin/permission-sets/{set_id}/users/{user_id}", status_code=200)
@@ -528,6 +555,14 @@ async def set_user_profile(request: Request, user_id: UUID, body: ProfileAssign)
             keys = [r["permission_key"] for r in await conn.fetch(
                 "SELECT permission_key FROM profile_permissions WHERE profile_id = $1", body.profile_id)]
             await _refuse_staff_only_for_member(conn, org_id, user_id, keys, "profile")
+        sod_decision = None
+        if body.profile_id is not None:
+            # S30 fix 1 — a profile carries permissions: assigning YOURSELF one is the same floor as a role
+            try:
+                sod_decision = await sod_admin.check_role_grant(conn, org_id=org_id, actor_id=actor_id,
+                                                                target_user_id=user_id, what="profile")
+            except sod_admin.SoDAdminRefused as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
         await conn.execute(
             "UPDATE users SET profile_id = $1, updated_at = now() WHERE id = $2",
             body.profile_id, user_id,
@@ -539,4 +574,7 @@ async def set_user_profile(request: Request, user_id: UUID, body: ProfileAssign)
                  "actor": str(actor_id)},
             actor=actor_id,
         )
-    return {"ok": True, "profile_id": str(body.profile_id) if body.profile_id else None}
+        warnings = sod_admin.grant_warnings(
+            sod_decision, await sod_admin.person_conflicts(conn, org_id=org_id, user_id=user_id)) \
+            if sod_decision is not None else []
+    return {"ok": True, "profile_id": str(body.profile_id) if body.profile_id else None, "sod_warnings": warnings}

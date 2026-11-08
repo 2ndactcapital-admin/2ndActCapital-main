@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+S30 (2026-11-08, SEGREGATION OF DUTIES — one duty model + one maker-checker rule (services.sod) on every approval site; persons not logins; platform floors + versioned org rules; governed self-approval; self-grant floor + conflict report; verbs declare duties, a trigger names its maker; Admin → Segregation of duties; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 SECMASTER2 (2026-11-07, SEC mutual-fund share classes into the master (dry run: 22,789 new / 4,609 matched; 10 Olivo funds would relink, none relinked), the FinanceDatabase attributes load fixed (etfs/ASE.csv is not published) + US mutual-fund categories, US / international / EM / cap fund categories with REFINE proposals, the load summary with every count linked to its list; schema APPLIED, job seeded OFF; verify WRITTEN, not yet run): see the top entry.
 VISIBILITY1 (2026-11-07, team-based staff visibility — org admins see every family, staff their assigned / team / reports' families, an unassigned family only its owner; one shared helper on every route, Team panel, preview and an audited org switch that is OFF everywhere; verify WRITTEN, not yet run): see the top entry.
 BULKAPPROVE1 (2026-11-05, Approvals → Bulk approve for authority & custody changes and held-away entries — the SAME single-approval service per item, per-item results, cap 200, audit per item + per batch; verify WRITTEN, not yet run): see the top entry.
@@ -341,6 +342,47 @@ This file starts with the email item below.
 
 ---
 
+
+## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. S30 — SEGREGATION OF DUTIES: one duty model and ONE maker-checker rule (services.sod) every approval site calls; persons not logins; platform floors + org rules (versioned, maker-checker); governed self-approval with a compliance to-do; conflicting-role warnings + self-grant floor; workflow verbs declare duties, a trigger names its maker; Admin → Segregation of duties; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
+
+Branch s30-work. Prerequisite for S29b (autonomous write verbs). The model, the rule, the floor list and how a NEW approval site must call the service (a platform rule for later sprints): docs/SEGREGATION_OF_DUTIES.md. Task 1 inventory (every site, a "migrated" column): docs/S30_DISCOVERY.md.
+
+- **Schema.** `docs/s30_part1.sql`, APPLIED (`_apply_s30.py --all`: SCHEMA OK). Tables:
+  - `sod_duties` (49 duties)
+  - `sod_item_types` (38)
+  - `sod_rules`: valid-time versions; floor / default / policy / org kinds; maker-checker CHECK; content frozen by a guard trigger; platform rows only under the Super Admin GUC
+  - `sod_decisions`: append-only, teardown GUC `sod.teardown`; no FK to users, by design
+  - `user_person_links`
+
+  RLS on every table, every operation. It writes PLATFORM catalog rows only: 9 floor rules, 29 default rules, 38 policies. **The seeded policies EQUAL the pre-S30 rules**: self-approval only for agent proposals / Tier-1 steps; enforce_floor true everywhere except role grants.
+- **One service.** `services/sod.py` is one read (`load`), then a pure `Context.evaluate`; around it `can_check` / `enforce` / `gate` / `record_decision` / `record_refusal` / `eligible_checkers` / `may_check_display`. `services/sod_admin.py` holds the role-grant check, the conflict report, rule drafting and decisions (maker-checker through sod itself), and the reports + CSV.
+- **Every site migrated** (61 enforcement sites, 34 display sites):
+  - `human_tasks.complete_task` decides for the 23 maker-checker kinds (`TASK_KIND_ITEM_TYPES`).
+  - Each module's own pre-check / apply re-check is a `sod.gate`.
+  - The non-task sites are `sod.enforce`: disclosures, platform templates, data uploads, substitutions retire, replica terms, money movement, fee / carry runs.
+  - agent_proposals self-approval now goes through the policy.
+  - The DB CHECKs are kept. The refusal text still comes from `maker_names` where BUGFIX4 put it.
+- **Persons.** A retired row resolves to its person through `user_person_links` (both link paths now write it) or the live duplicate-merge rule. Live: 2 retired rows; 0 rows in 124 maker columns reference them, so no live decision changes (Task 7).
+- **Task 6.** Granting yourself a role / permission set is the role-grant floor: 403 once the org turns `enforce_floor` on (it is OFF by default because no rule existed — reported, never silently tightened). A conflicting grant returns `sod_warnings` naming the rules that still stop the person per item. A conflict report lists every person combining a maker and a checker duty: every org admin, by design.
+- **Task 8.**
+  - Every registered verb declares a duty (`AssistantAction.duty` / `sod.VERB_DUTIES`); the shared validator refuses a write verb without one.
+  - Creating a trigger requires a named owner.
+  - `resolve_tier_approval` checks the reviewer against the run's starter AND the trigger's owner. **FIND:** an event-started run's trigger owner could approve its own trigger's Tier-1 step before.
+- **Admin → Segregation of duties** (`/admin/sod`, People tab). Routes `routers/sod.py` (4: read `manage_org_settings | manage_compliance | view_audit_log`; write `manage_org_settings`); AUTHZ1_ROUTES + VISIBILITY1_ROUTES regenerated (`--check` CURRENT). Web: `components/admin/SegregationOfDuties.jsx`, `lib/sod.mjs` (fails closed), `/api/sod` proxy (CSV pass-through), `tests/s30/s30.test.mjs` 7/7 (`node --test tests/`: 655 tests, 654 pass, 0 fail, 1 skipped).
+- **Shared tooling.** `_verify_cleanup.cleanup` always sets `sod.teardown = 'fixture'`, because every verify's fixture approvals are now recorded in the append-only log.
+- **verify_bulkapprove1.py fixed for the regression:**
+  - identity / role tables and audit_log are counted by fixture ids (they were whole-table);
+  - the app's decision on every fixture role is asserted;
+  - TOTAL is printed on every exit path.
+- **Verify.** `apps/api/scripts/verify_s30.py` WRITTEN, NOT RUN (`--self-checks-only` offline: only the "own routes" checks fail until commit); added to `scripts/regression_set.txt`. Regression: verify_bulkapprove1.py once, flat, VERIFY_NESTED=1, 2700 s.
+- **FINDs.**
+  - `fee_runs.approve` / `spv_carry_runs.approve` / `trading_authority.approve_money_movement` have no router caller (migrated anyway).
+  - The self-approval emptiness gate counts ROLE holders only (kept, exact replay).
+  - Retired row `80f1744f…` has no recorded link target.
+  - The one live event trigger has no owner.
+  - Fixture leftovers `udf01bverify_*` profiles / permission sets.
+
+**UPDATE 2026-11-08 (s30 fix 1):** the operator run was 133 PASS / 19 FAIL. ONE code defect caused 18 of them. (B, CODE) `sod_admin.decide_rule`'s approve UPDATE used `$3` both in `decided_at = $3` and inside `CASE WHEN $5 = 'retired' THEN $3`, so Postgres deduced `$3` as text against timestamptz (`AmbiguousParameterError`). Every approval of an SoD rule answered 500 (reject has no CASE, so it worked). Fix: explicit casts. Because the org's role-grant policy was never approved, the floor stayed off and y_roles' self-grants succeeded (200). That stripped U_A1/U_A2 of `s30_admin`, so C (self-grant not blocked), D (permission-set 403 'Admin access required': U_A2 had lost manage_org_settings), E (U_A1 missing from the conflict report), F (NotEligibleError: U_A1/U_A2 had lost review_agent_proposals) and G (can_write false, no refusals or CSV rows) were all knock-on effects. No verify seeding or gate defect: check_fixture_roles had passed and every gate is correct. (A, DOC) the 1a table row held two keys in one cell (`` `role_grant:role` / `role_grant:permission set` ``), which the row regex cannot parse. It is now one row per real key, and the code's free-text `role_grant:{what}` became fixed keys in `sod_admin.GRANT_SITES` (`role_grant:role | permission_set | profile | profile_permission | permission_set_permission`). (C sweep, CODE) every role or permission grant path was checked, and THREE never called services.sod: `PUT /admin/users/{id}/profile` (a profile carries permissions), `PUT /admin/profiles/{id}/permissions` and `PUT /admin/permission-sets/{id}/permissions` (adding a permission to a bundle the caller's own person holds is a self-grant: new `check_bundle_edit`), plus `POST /admin/users/{id}/approve`. All four now go through `check_role_grant`. invites, staff provisioning and link_pending_login stay outside it, with reasons in S30_DISCOVERY 1a. (E, CODE + DOC) the Super Admin rule: always listed, as their own `all_duties` group after ordinary people ('Super Admin — every duty' on the page), stated in SEGREGATION_OF_DUTIES.md. (VERIFY, strengthened only) y_roles adds the profile self-grant from both logins, profile/set permission edits by a holder and by a non-holder, pending-approval self-grant and admit, and the Super Admin grouping. The refused-grant count went from >= 4 to >= 9. The seed is_test check now covers only the rows seed writes. node test +1 (tests/s30 8/8). PROOF (one-off `scripts/_s30fix1_sections.py`, fixtures): repro reproduced the 500 with its traceback; `fixtures` (catalog, seed, replay … isolation, real rows) 130 PASS / 0 FAIL; `task1` 4/0; `verify_s30 --self-checks-only` 12/0; `--cleanup-only` 0 leftovers; authz1/visibility1 `--check` CURRENT; real user_roles 14 rows md5 5f15cf5f… unchanged. NOT run (WSL memory): the full verify_s30, the nested verify_bulkapprove1 and npm run build.
 
 ## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. WFTEMPLATES1 — Workflow Manager Wave 2 (S29a) COMPLETE: the WORKFLOW TEMPLATE LIBRARY — platform templates (drafted by one Super Admin, published by another), org templates (inside one firm), browse / preview / copy as a draft the firm owns, "a newer version exists" never overwrites; 12 templates shipped; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
 

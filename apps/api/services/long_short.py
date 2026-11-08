@@ -45,6 +45,7 @@ from services import human_tasks as HT
 from services import long_short_rules as R
 from services import rebalance_engine as E
 from services import wash_sale as WS
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -380,9 +381,9 @@ async def _apply_margin_outcome(pool, org_id, task: dict, outcome: str, actor_id
                                     "AND system_to IS NULL FOR UPDATE", task["id"], str(org_id))
             if r is None or r["status"] != "pending_approval":
                 return dict(r) if r else None
-            if str(r["maker_id"]) == str(actor_id):
-                raise MakerCheckerViolation("maker-checker: the person who recorded the margin agreement cannot "
-                                            "approve it")
+            await sod.gate(conn, org_id=org_id, item_type=sod.MARGIN_AGREEMENT, checker_id=actor_id,
+                           maker_ids=[r["maker_id"]], item_id=r["id"], site="long_short._apply_margin_outcome",
+                           refuse=lambda d: MakerCheckerViolation("maker-checker: the person who recorded the margin agreement cannot approve it"))
             await _suit_archive(conn, r["id"])
             if outcome == "approve":
                 new = await conn.fetchrow(f"UPDATE {T_SUIT} SET status = 'approved', approved_by = $2::uuid, "
@@ -415,9 +416,11 @@ async def decide_margin_agreement(pool, *, org_id, actor_id, record_id, outcome:
         raise LongShortNotFound("suitability record not found")
     if r["status"] != "pending_approval":
         raise LongShortConflict(f"the margin agreement is {SUIT_STATUS_LABELS[r['status']].lower()}")
-    if str(r["maker_id"]) == str(actor["id"]):
-        raise MakerCheckerViolation("maker-checker: the person who recorded the margin agreement cannot approve it — "
-                                    "a different holder of approve_proposals decides")
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.MARGIN_AGREEMENT, checker_id=actor["id"],
+                       maker_ids=[r["maker_id"]], item_id=r["id"], site="long_short.decide_margin_agreement",
+                       refuse=lambda d: MakerCheckerViolation("maker-checker: the person who recorded the margin agreement cannot approve it — "
+                                                            "a different holder of approve_proposals decides"))
     try:
         done = await HT.complete_task(pool, org_id=org_id, task_id=r["approval_task_id"], actor_id=actor["id"],
                                       outcome=outcome, note=note)

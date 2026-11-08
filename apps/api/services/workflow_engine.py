@@ -28,6 +28,7 @@ Design decisions (confirmed, do not re-litigate):
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -836,12 +837,30 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
             )
 
         # Application-level maker-checker guard (do not rely on the DB alone to
-        # communicate the problem).
-        if step["proposed_by"] is not None and completed_by == step["proposed_by"]:
-            raise MakerCheckerError(
-                "maker-checker violation: the approver of a Tier-1 User Task must "
-                "differ from the member who proposed it "
-                f"(proposed_by == completed_by == {completed_by})"
+        # communicate the problem). S30 — through the ONE rule (services.sod): a
+        # governed human task's decision is recorded by services.human_tasks, so
+        # here only a refusal is recorded; any other User Task is decided here.
+        if step["proposed_by"] is not None and completed_by is not None:
+            from services import sod
+
+            _ctx = step["context"]
+            if isinstance(_ctx, (str, bytes)):
+                try:
+                    _ctx = json.loads(_ctx)
+                except (ValueError, TypeError):
+                    _ctx = {}
+            _ht = (_ctx or {}).get("human_task") if isinstance(_ctx, dict) else None
+            _item_type = sod.item_type_for_task_kind(_ht.get("kind")) if _ht else sod.WORKFLOW_USER_TASK
+            await sod.enforce(
+                conn, org_id=step["org_id"], item_type=_item_type, checker_id=completed_by,
+                maker_ids=[step["proposed_by"]], item_id=workflow_run_step_id,
+                site="workflow_engine.complete_user_task",
+                record=sod.RECORD_REFUSALS if _ht else sod.RECORD_ALL,
+                refuse=lambda d: MakerCheckerError(
+                    "maker-checker violation: the approver of a Tier-1 User Task must "
+                    "differ from the member who proposed it "
+                    f"(proposed_by == completed_by == {completed_by}; {d.reason})"
+                ),
             )
 
         org_id = step["org_id"]
@@ -1019,6 +1038,26 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
         }
 
 
+async def run_trigger_owner(conn, context) -> Any:
+    """S30 — the owner (``workflow_triggers.created_by``) of the trigger that
+    started a run, read from the run's ``context.trigger_id``; None for a
+    manual run or a trigger with no owner."""
+    ctx = context
+    if isinstance(ctx, (str, bytes)):
+        try:
+            ctx = json.loads(ctx)
+        except (ValueError, TypeError):
+            ctx = {}
+    trigger_id = (ctx or {}).get("trigger_id") if isinstance(ctx, dict) else None
+    if not trigger_id:
+        return None
+    try:
+        tid = uuid.UUID(str(trigger_id))
+    except (TypeError, ValueError):
+        return None
+    return await conn.fetchval("SELECT created_by FROM workflow_triggers WHERE id = $1", tid)
+
+
 async def resolve_tier_approval(
     pool, workflow_run_step_id, *, reviewed_by, decision,
     review_notes: str | None = None, self_approval_reason: str | None = None,
@@ -1079,10 +1118,15 @@ async def resolve_tier_approval(
         org_id = step["org_id"]
         run_id = step["workflow_run_id"]
 
+        # S30 (Task 8): a Tier-1 step's checker must pass services.sod against the
+        # run's NAMED maker — the member who started it AND, for a scheduled or
+        # event-triggered run, the trigger's owner (workflow_triggers.created_by).
+        trigger_owner = await run_trigger_owner(conn, step["context"])
         proposal = await agent_proposals.review_proposal(
             pool, conn, org_id, str(step["agent_proposal_id"]),
             reviewed_by=reviewed_by, decision=decision,
             review_notes=review_notes, self_approval_reason=self_approval_reason,
+            item_type="workflow_step", extra_maker_ids=[trigger_owner] if trigger_owner else [],
         )
 
         if decision == agent_proposals.STATUS_REJECTED:

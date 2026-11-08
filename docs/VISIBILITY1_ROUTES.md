@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 961 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
+Routes: 965 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -154,6 +154,10 @@ Routes: 961 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
 | GET | `/api/v1/admin/security-data/rank` | security_data | scrub |
 | PUT | `/api/v1/admin/security-data/rank/{data_type}` | security_data | scrub |
 | GET | `/api/v1/admin/security-data/runs/latest` | security_data | scrub |
+| GET | `/api/v1/admin/sod` | sod | scrub |
+| GET | `/api/v1/admin/sod/reports/{name}` | sod | scrub |
+| POST | `/api/v1/admin/sod/rules` | sod | scrub |
+| POST | `/api/v1/admin/sod/rules/{rule_id}/decide` | sod | scrub |
 | GET | `/api/v1/admin/staff-visibility` | staff_visibility | scrub |
 | POST | `/api/v1/admin/staff-visibility/bulk-assign` | staff_visibility | sql-scope, scrub |
 | PUT | `/api/v1/admin/staff-visibility/enforcement` | staff_visibility | scrub |

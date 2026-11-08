@@ -61,6 +61,7 @@ from decimal import ROUND_CEILING, Decimal, localcontext
 from services import human_tasks as HT
 from services import rebalance_engine as E
 from services import rep10_common as C
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -564,7 +565,7 @@ def actions_for(g: dict, *, can_write: bool, can_approve: bool, user_id) -> list
             a.append("acknowledge")
         if s in ("received", "acknowledged") and g["rebuy"] != "none" and not g["rebuy_proposal_ids"]:
             a.append("rebuy")
-    if s == "pending_approval" and can_approve and me not in (g["maker_id"], g.get("submitted_by")):
+    if s == "pending_approval" and can_approve and sod.may_check_display(me, [g["maker_id"], g.get("submitted_by")]):
         a += ["approve", "reject"]
     return a
 
@@ -604,9 +605,11 @@ async def decide(pool, *, org_id, actor_id, gift_id, outcome: str, note: str | N
         g = await load(conn, org_id, gift_id)
     if g["status"] != "pending_approval":
         raise C.Rep10Conflict(f"the gift proposal is {STATUS_LABELS[g['status']].lower()}, not awaiting approval")
-    if str(actor["id"]) in (str(g["maker_id"]), str(g["submitted_by"])):
-        raise C.MakerCheckerViolation(f"maker-checker: you made this gift proposal, so a different holder of {APPROVE} "
-                                      f"must {outcome} it")
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.GIFT_PROPOSAL, checker_id=actor["id"],
+                       maker_ids=[g["maker_id"], g["submitted_by"]], item_id=g["id"], site="gifts.decide",
+                       refuse=lambda d: C.MakerCheckerViolation(f"maker-checker: you made this gift proposal, so a different holder of {APPROVE} "
+                                                              f"must {outcome} it"))
     await C.complete(pool, org_id=org_id, task_id=g["approval_task_id"], actor_id=actor["id"], outcome=outcome,
                      note=note)
     async with pool.acquire() as conn:
@@ -622,8 +625,9 @@ async def _apply(pool, task: dict, outcome: str, actor_id, note) -> dict | None:
             if g is None or g["status"] != "pending_approval":
                 return None
             checker = uuid.UUID(str(actor_id))
-            if checker in (g["maker_id"], g["submitted_by"]):
-                raise C.MakerCheckerViolation("maker-checker: the maker of a gift proposal cannot approve it")
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.GIFT_PROPOSAL, checker_id=checker,
+                           maker_ids=[g["maker_id"], g["submitted_by"]], item_id=g["id"], site="gifts._apply",
+                           refuse=lambda d: C.MakerCheckerViolation("maker-checker: the maker of a gift proposal cannot approve it"))
             now = datetime.now(timezone.utc)
             if outcome == "approve":
                 fields = {"status": "approved", "approved_by": checker, "approved_at": now, "decision_note": note}

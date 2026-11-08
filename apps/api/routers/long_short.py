@@ -44,6 +44,7 @@ from services import rebalance_proposals as RP
 from services.authz import require_permission, require_super_admin
 from services.custody.trading import ShortSaleNotDeclared, _decimal
 from services.database import get_pool
+from services import sod  # S30 — the ONE maker-checker rule
 
 router = APIRouter(tags=["long-short"])
 
@@ -180,7 +181,7 @@ def _panel_actions(panel: dict, perms: dict, user_id: str) -> list[str]:
             out.append("record_margin_agreement")
         elif ma["status"] == "approved":
             out.append("remove_margin_agreement")
-    if perms["can_approve"] is True and ma and ma["status"] == "pending_approval" and ma["maker_id"] != user_id:
+    if perms["can_approve"] is True and ma and ma["status"] == "pending_approval" and sod.may_check_display(user_id, [ma["maker_id"]]):
         out += ["approve_margin_agreement", "reject_margin_agreement"]
     return out
 

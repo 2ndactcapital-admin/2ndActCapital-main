@@ -56,6 +56,7 @@ from services.authz import require_permission
 from services.custody.trading import _decimal
 from services.database import get_pool
 from services.execution import VIEW as VIEW_EXECUTION
+from services import sod  # S30 — the ONE maker-checker rule
 
 router = APIRouter(tags=["blocks"])
 
@@ -333,7 +334,7 @@ async def policies(request: Request):
     actions = {}
     for r in rows:
         acts = []
-        if r["status"] == "draft" and perms["can_approve"] is True and r["maker_id"] != str(principal.user_id) \
+        if r["status"] == "draft" and perms["can_approve"] is True and sod.may_check_display(principal.user_id, [r["maker_id"]]) \
                 and any(t["subject_id"] == r["id"] for t in tasks):
             acts += ["approve", "reject"]
         actions[r["id"]] = acts
@@ -491,7 +492,7 @@ async def get_block(request: Request, block_id: str):
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
     open_task = next((t for t in d["tasks"] if t["status"] == "open"), None)
-    is_maker = str(principal.user_id) in set(d["maker_ids"])
+    is_maker = not sod.may_check_display(principal.user_id, d["maker_ids"])
     can_decide = bool(open_task) and HT.can_decide(open_task, user_id=principal.user_id,
                                                    permissions=principal.permissions,
                                                    is_super_admin=principal.is_super_admin) and not is_maker

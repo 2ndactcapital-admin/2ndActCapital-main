@@ -48,6 +48,7 @@ from services import rebalance_proposals as RP
 from services.authz import require_permission
 from services.custody.trading import _decimal
 from services.database import get_pool
+from services import sod  # S30 — the ONE maker-checker rule
 
 router = APIRouter(tags=["proposals"])
 
@@ -255,7 +256,7 @@ async def account_model(request: Request, account_id: str):
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
     pending = links["pending"]
-    can_decide = bool(pending) and perms["can_approve"] and pending["maker_id"] != principal.user_id
+    can_decide = bool(pending) and perms["can_approve"] and sod.may_check_display(principal.user_id, [pending["maker_id"]])
     actions = []
     if perms["can_write"] and not AM.is_closed(acct) and not pending:
         actions += ["change_settings", "change_model", "end"] if links["active"] else ["join"]
@@ -321,7 +322,7 @@ async def get_proposal(request: Request, proposal_id: str):
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
     open_task = next((t for t in d["tasks"] if t["status"] == "open"), None)
-    is_maker = d["maker_id"] is not None and d["maker_id"] == principal.user_id
+    is_maker = d["maker_id"] is not None and not sod.may_check_display(principal.user_id, [d["maker_id"]])
     can_decide = bool(open_task) and HT.can_decide(open_task, user_id=principal.user_id,
                                                    permissions=principal.permissions,
                                                    is_super_admin=principal.is_super_admin) and not is_maker

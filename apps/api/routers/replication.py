@@ -49,6 +49,7 @@ from services import disclosures as DL
 from services.authz import require_permission
 from services.database import get_pool
 from services.securities_global import SecuritiesGlobalError
+from services import sod  # S30 — the ONE maker-checker rule
 
 router = APIRouter(tags=["replication"])
 
@@ -372,7 +373,7 @@ async def get_entry(request: Request, entry_id: str, snapshot_id: str | None = Q
             "ORDER BY fetched_at DESC", fund_id)]
         actions = await T.actions_of(conn, entry["id"])
         vocab = await _vocab(conn, perms)
-    is_maker = bool(draft) and str(principal.user_id) in {str(m) for m in draft["maker_ids"] or []}
+    is_maker = bool(draft) and not sod.may_check_display(principal.user_id, draft["maker_ids"] or [])
     fields = []
     for reg in registry:
         v = values.get(reg["field_key"]) or {}

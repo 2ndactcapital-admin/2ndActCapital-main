@@ -35,6 +35,7 @@ import asyncpg
 from services import authority as AU
 from services import held_away as HA
 from services import human_tasks as HT
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -159,7 +160,7 @@ def _decidability(principal, bt: BulkType, maker_id, task_status: str | None, *,
     if not holds(principal, bt.approve):
         return {"actions": [], "blocked": "permission", "blocked_reason": BLOCK_LABELS["permission"].format(
             perm=bt.approve)}
-    if str(maker_id) == str(principal.user_id):
+    if not sod.may_check_display(principal.user_id, [maker_id]):
         return {"actions": [], "blocked": "maker", "blocked_reason": BLOCK_LABELS["maker"]}
     if task_status != "open":
         return {"actions": [], "blocked": "not_pending",

@@ -65,6 +65,7 @@ from decimal import ROUND_HALF_EVEN, Decimal, localcontext
 from services import human_tasks as HT
 from services import rebalance_engine as E
 from services import rep10_common as C
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -575,7 +576,7 @@ def actions_for(s: dict, *, can_write: bool, can_approve: bool, user_id) -> list
     a = []
     if s["status"] == "draft" and can_write:
         a += ["edit", "submit", "discard"]
-    if s["status"] == "pending_approval" and can_approve and str(user_id) not in (s["maker_id"], s.get("submitted_by")):
+    if s["status"] == "pending_approval" and can_approve and sod.may_check_display(user_id, [s["maker_id"], s.get("submitted_by")]):
         a += ["approve", "reject"]
     if s["status"] == "approved" and can_write:
         a.append("archive")
@@ -701,9 +702,11 @@ async def decide(pool, *, org_id, actor_id, set_id, outcome: str, note: str | No
         s = await load_set(conn, org_id, set_id)
     if s["status"] != "pending_approval":
         raise C.Rep10Conflict(f"the tilt set is {STATUS_LABELS[s['status']].lower()}, not awaiting approval")
-    if str(actor["id"]) in (str(s["maker_id"]), str(s["submitted_by"])):
-        raise C.MakerCheckerViolation(f"maker-checker: you made this tilt set, so a different holder of {APPROVE} "
-                                      f"must {outcome} it")
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.TILT_SET, checker_id=actor["id"],
+                       maker_ids=[s["maker_id"], s["submitted_by"]], item_id=s["id"], site="tilts.decide",
+                       refuse=lambda d: C.MakerCheckerViolation(f"maker-checker: you made this tilt set, so a different holder of {APPROVE} "
+                                                              f"must {outcome} it"))
     await C.complete(pool, org_id=org_id, task_id=s["approval_task_id"], actor_id=actor["id"], outcome=outcome,
                      note=note)
     async with pool.acquire() as conn:
@@ -719,8 +722,9 @@ async def _apply(pool, task: dict, outcome: str, actor_id, note) -> dict | None:
             if s is None or s["status"] != "pending_approval":
                 return None
             checker = uuid.UUID(str(actor_id))
-            if checker in (s["maker_id"], s["submitted_by"]):
-                raise C.MakerCheckerViolation("maker-checker: the maker of a tilt set cannot approve it")
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.TILT_SET, checker_id=checker,
+                           maker_ids=[s["maker_id"], s["submitted_by"]], item_id=s["id"], site="tilts._apply",
+                           refuse=lambda d: C.MakerCheckerViolation("maker-checker: the maker of a tilt set cannot approve it"))
             if outcome == "approve":
                 prev = await conn.fetchrow(f"SELECT id FROM {T_SET} WHERE account_id = $1 AND status = 'approved' "
                                            "AND system_to IS NULL FOR UPDATE", s["account_id"])

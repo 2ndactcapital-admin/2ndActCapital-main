@@ -30,6 +30,7 @@ from decimal import Decimal
 
 from services.security_data import writes as W
 from services.security_data.types import MEMBER_DISPLAY, RETENTION, SecurityDataError, SecurityDataNotFound
+from services import sod  # S30 — the ONE maker-checker rule
 
 T_UP = "portfolio.data_uploads"
 UPLOAD_TYPES = ("eod_price", "corporate_action", "index_level", "factor_score")   # rep10: factor_score
@@ -354,9 +355,10 @@ async def decide(pool, *, org_id, actor_id, upload_id, approve: bool, note: str 
                 raise SecurityDataNotFound("upload not found")
             if row["status"] != "pending_approval":
                 raise SecurityDataError(f"the upload is already {row['status']}")
-            if str(row["uploaded_by"]) == str(actor_id):
-                raise UploadMakerChecker("maker-checker: the person who uploaded a file cannot approve or reject it "
-                                         "— another admin must")
+            await sod.enforce(conn, org_id=org_id, item_type=sod.DATA_UPLOAD, checker_id=actor_id,
+                           maker_ids=[row["uploaded_by"]], item_id=row["id"], site="security_data.uploads.decide",
+                           record=sod.RECORD_ALL, refuse=lambda d: UploadMakerChecker("maker-checker: the person who uploaded a file cannot approve or reject it "
+                                                             "— another admin must"))
             lic = json.loads(row["licence"]) if isinstance(row["licence"], str) else row["licence"]
             staged = json.loads(row["staged_rows"]) if isinstance(row["staged_rows"], str) else row["staged_rows"]
             written = 0

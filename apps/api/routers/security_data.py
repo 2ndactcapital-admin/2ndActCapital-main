@@ -37,6 +37,7 @@ from services.security_data import admin as A
 from services.security_data import layer as L
 from services.security_data import uploads as UP
 from services.security_data.types import SecurityDataError, SecurityDataNotFound
+from services import sod  # S30 — the ONE maker-checker rule
 
 router = APIRouter(tags=["security-data"])
 
@@ -249,7 +250,7 @@ async def uploads(request: Request):
         rows = await UP.list_uploads(conn, org_id)
     for r in rows:
         r["can_decide"] = bool(r["status"] == "pending_approval" and _perms(principal)["can_approve"]
-                               and str(r["uploaded_by"]) != str(principal.user_id))
+                               and sod.may_check_display(principal.user_id, [r["uploaded_by"]]))
     return _envelope(principal, {"uploads": rows})
 
 

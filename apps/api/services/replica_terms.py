@@ -78,6 +78,7 @@ from services import replica_holdings as H
 from services.note_extraction import proxy
 from services.note_extraction import schema as NS
 from services.note_extraction.quote_match import TextIndex
+from services import sod  # S30 — the ONE maker-checker rule
 
 T_ENTRY = "portfolio.replica_securities"
 T_VER = "portfolio.replica_terms_versions"
@@ -1008,8 +1009,9 @@ async def _apply_terms_decision(pool, *, org_id, version_id, approve: bool, acto
         draft = dict(row)
         entry_id = draft["replica_security_id"]
         entry = await load_entry(conn, org_id, entry_id)
-        if str(actor_id) in {str(m) for m in draft["maker_ids"] or []}:
-            raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+        await sod.enforce(conn, org_id=org_id, item_type=sod.REPLICA_TERMS_VERSION, checker_id=actor_id,
+                       maker_ids=list(draft["maker_ids"] or []), item_id=draft["id"], site="replica_terms._apply_terms_decision",
+                       record=sod.RECORD_ALL, refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
         await _archive(conn, T_VER, draft["id"])
         prior = None
         if approve:
@@ -1093,8 +1095,9 @@ async def decide(pool, *, org_id, actor_id, entry_id, version_id, approve: bool,
     async with pool.acquire() as conn:
         entry = await load_entry(conn, org_id, entry_id)
         draft = await _version_for_edit(conn, entry_id, version_id)
-        if str(actor_id) in {str(m) for m in draft["maker_ids"] or []}:
-            raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+        await sod.gate(conn, org_id=org_id, item_type=sod.REPLICA_TERMS_VERSION, checker_id=actor_id,
+                       maker_ids=list(draft["maker_ids"] or []), item_id=draft["id"], site="replica_terms.decide",
+                       refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
     task = await ensure_approval_task(pool, org_id=org_id, entry=entry, version=draft, actor_id=actor_id)
     if task is None:
         raise ReplicaConflict("the approval task for this draft could not be opened")

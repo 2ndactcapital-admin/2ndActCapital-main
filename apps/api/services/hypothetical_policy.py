@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from services import human_tasks as HT
 from services import rep10_common as C
+from services import sod  # S30 — the ONE maker-checker rule
 
 T_POL = "public.hypothetical_performance_policies"
 MANAGE = "manage_hypothetical_policy"
@@ -153,9 +154,11 @@ async def decide(pool, *, org_id, actor_id, policy_id, outcome: str, note: str |
         raise C.Rep10NotFound("policy not found")
     if row["status"] != "draft":
         raise C.Rep10Conflict(f"the policy version is {row['status']}, not awaiting approval")
-    if actor["id"] == row["maker_id"]:
-        raise C.MakerCheckerViolation(f"maker-checker: you wrote this policy version, so a different holder of "
-                                      f"{MANAGE} must {outcome} it")
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.HYPOTHETICAL_POLICY, checker_id=actor["id"],
+                       maker_ids=[row["maker_id"]], item_id=row["id"], site="hypothetical_policy.decide",
+                       refuse=lambda d: C.MakerCheckerViolation(f"maker-checker: you wrote this policy version, so a different holder of "
+                                                              f"{MANAGE} must {outcome} it"))
     await C.complete(pool, org_id=org_id, task_id=row["approval_task_id"], actor_id=actor["id"], outcome=outcome,
                      note=note)
     async with pool.acquire() as conn:
@@ -172,8 +175,9 @@ async def _apply(pool, task: dict, outcome: str, actor_id, note) -> dict | None:
             if row is None or row["status"] != "draft":
                 return policy_out(dict(row)) if row else None
             checker = uuid.UUID(str(actor_id))
-            if checker == row["maker_id"]:
-                raise C.MakerCheckerViolation("maker-checker: the writer of a policy version cannot approve it")
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.HYPOTHETICAL_POLICY, checker_id=checker,
+                           maker_ids=[row["maker_id"]], item_id=row["id"], site="hypothetical_policy._apply",
+                           refuse=lambda d: C.MakerCheckerViolation("maker-checker: the writer of a policy version cannot approve it"))
             status = "approved" if outcome == "approve" else "rejected"
             if status == "approved":
                 prev = await conn.fetchrow(f"SELECT id FROM {T_POL} WHERE org_id = $1::uuid AND status = 'approved' "

@@ -65,6 +65,7 @@ from services import block_allocation as BA
 from services import execution as X
 from services import execution_routers as RT
 from services import human_tasks as HT
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -580,9 +581,11 @@ async def _decide_change(pool, *, table: str, subject: str, org_id, actor_id, ro
         raise BlockNotFound(f"{subject.replace('_', ' ')} not found")
     if row["status"] != "draft":
         raise BlockConflict(f"the {subject.replace('_', ' ')} is {row['status']}, not awaiting approval")
-    if actor["id"] == row["maker_id"]:
-        raise MakerCheckerViolation(f"maker-checker: you asked for this {subject.replace('_', ' ')}, so a different "
-                                    f"holder of {APPROVE} must {outcome} it")
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.ALLOCATION_POLICY if table == T_POL else sod.ALLOCATION_CORRECTION, checker_id=actor["id"],
+                       maker_ids=[row["maker_id"]], item_id=row["id"], site="blocks._decide_change",
+                       refuse=lambda d: MakerCheckerViolation(f"maker-checker: you asked for this {subject.replace('_', ' ')}, so a different "
+                                                            f"holder of {APPROVE} must {outcome} it"))
     try:
         done = await HT.complete_task(pool, org_id=org_id, task_id=row["approval_task_id"], actor_id=actor["id"],
                                       outcome=outcome, note=note)
@@ -612,8 +615,9 @@ async def _apply_policy(pool, task: dict, outcome: str, actor_id, note) -> dict 
             if row is None or row["status"] != "draft":
                 return policy_out(dict(row)) if row else None
             checker = uuid.UUID(str(actor_id))
-            if checker == row["maker_id"]:
-                raise MakerCheckerViolation("maker-checker: the person who wrote a policy version cannot approve it")
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.ALLOCATION_POLICY, checker_id=checker,
+                           maker_ids=[row["maker_id"]], item_id=row["id"], site="blocks._apply_policy",
+                           refuse=lambda d: MakerCheckerViolation("maker-checker: the person who wrote a policy version cannot approve it"))
             status = "approved" if outcome == "approve" else "rejected"
             if status == "approved":
                 prev = await conn.fetchrow(f"SELECT id FROM {T_POL} WHERE org_id = $1::uuid AND status = 'approved' "
@@ -998,8 +1002,9 @@ async def _apply_block_outcome(pool, org_id, task: dict, outcome: str, actor_id,
                 return dict(row) if row else None
             row = dict(row)
             if outcome == "approve":
-                if uuid.UUID(str(actor_id)) in row["maker_ids"]:
-                    raise MakerCheckerViolation("maker-checker: a maker of this block cannot approve it")
+                await sod.gate(conn, org_id=task["org_id"], item_type=sod.TRADE_BLOCK, checker_id=actor_id,
+                               maker_ids=list(row["maker_ids"] or []), item_id=row["id"], site="blocks._apply_block_outcome",
+                               refuse=lambda d: MakerCheckerViolation("maker-checker: a maker of this block cannot approve it"))
                 new = await _update(conn, T_BLK, row["id"], {"status": "approved",
                                                               "approved_by": uuid.UUID(str(actor_id)),
                                                               "approved_at": datetime.now(timezone.utc)})
@@ -1052,9 +1057,11 @@ async def decide(pool, *, org_id, block_id, actor_id, outcome: str, note: str | 
         actor = await _human(conn, actor_id, org_id)
         row = await load(conn, org_id, block_id)
     _need(row, ("pending_approval",), "approve or reject")
-    if actor["id"] in row["maker_ids"]:
-        raise MakerCheckerViolation("maker-checker: you built or submitted this block, so a different holder of "
-                                    f"{APPROVE} must {outcome} it")
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.TRADE_BLOCK, checker_id=actor["id"],
+                       maker_ids=list(row["maker_ids"] or []), item_id=row["id"], site="blocks.decide",
+                       refuse=lambda d: MakerCheckerViolation("maker-checker: you built or submitted this block, so a different holder of "
+                                                            f"{APPROVE} must {outcome} it"))
     try:
         done = await HT.complete_task(pool, org_id=org_id, task_id=row["approval_task_id"], actor_id=actor["id"],
                                       outcome=outcome, note=note)
@@ -1543,8 +1550,9 @@ async def _apply_correction(pool, task: dict, outcome: str, actor_id, note) -> d
             if row is None or row["status"] != "draft":
                 return correction_out(dict(row)) if row else None
             checker = uuid.UUID(str(actor_id))
-            if checker == row["maker_id"]:
-                raise MakerCheckerViolation("maker-checker: the person who asked for a correction cannot approve it")
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.ALLOCATION_CORRECTION, checker_id=checker,
+                           maker_ids=[row["maker_id"]], item_id=row["id"], site="blocks._apply_correction",
+                           refuse=lambda d: MakerCheckerViolation("maker-checker: the person who asked for a correction cannot approve it"))
             status = "approved" if outcome == "approve" else "rejected"
             await _archive(conn, T_CORR, row["id"])
             new = dict(await conn.fetchrow(
@@ -1947,9 +1955,9 @@ def actions_for(d: dict, *, can_write: bool, can_approve: bool, user_id, task_op
                 acts.append("correct")
         elif s == "settled":
             acts += ["close", "charge"]
-    if can_approve and s == "pending_approval" and task_open and str(user_id) not in makers:
+    if can_approve and s == "pending_approval" and task_open and sod.may_check_display(user_id, makers):
         acts += ["approve", "reject"]
-    if can_approve and any(c["status"] == "draft" and c["maker_id"] != str(user_id)
+    if can_approve and any(c["status"] == "draft" and sod.may_check_display(user_id, [c["maker_id"]])
                            for c in d.get("corrections") or []):
         acts.append("decide_correction")
     if s != "cancelled":

@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from services import human_tasks as HT
 from services.tax_profiles import (APPROVE, MakerCheckerViolation, TaxConflict, TaxError, TaxNotFound, _audit,
                                    _iso, _update, _uuid)
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -154,8 +155,9 @@ async def _set_outcome(pool, org_id, task: dict, outcome: str, actor_id, note) -
                 return dict(row) if row else None
             row = dict(row)
             checker = uuid.UUID(str(actor_id))
-            if checker == row["maker_id"]:
-                raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.SUBSTITUTION_SET, checker_id=checker,
+                           maker_ids=[row["maker_id"]], item_id=row["id"], site="substitutions._set_outcome",
+                           refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
             now = datetime.now(timezone.utc)
             if outcome == "approve":
                 prior = await conn.fetchrow(
@@ -186,8 +188,9 @@ async def _deny_outcome(pool, org_id, task: dict, outcome: str, actor_id, note) 
                 return dict(row) if row else None
             row = dict(row)
             checker = uuid.UUID(str(actor_id))
-            if checker == row["maker_id"]:
-                raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.SUBSTITUTION_DENIAL, checker_id=checker,
+                           maker_ids=[row["maker_id"]], item_id=row["id"], site="substitutions._deny_outcome",
+                           refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
             now = datetime.now(timezone.utc)
             new = await _update(conn, T_DENY, row["id"], {
                 "status": "active" if outcome == "approve" else "rejected", "checker_id": checker, "decided_at": now,
@@ -223,8 +226,10 @@ async def decide(pool, *, org_id, actor_id, kind: str, row_id, outcome: str, not
         raise TaxNotFound(f"{kind} not found")
     if row["status"] != "pending_approval":
         raise TaxConflict(f"this {kind} is {row['status'].replace('_', ' ')}, not awaiting approval")
-    if row[maker_col] is not None and actor["id"] == row[maker_col]:
-        raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.SUBSTITUTION_SET if table == T_SET else sod.SUBSTITUTION_DENIAL, checker_id=actor["id"],
+                       maker_ids=[row[maker_col]], item_id=row["id"], site="substitutions.decide",
+                       refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
     try:
         done = await HT.complete_task(pool, org_id=org_id, task_id=row["approval_task_id"], actor_id=actor["id"],
                                       outcome=outcome, note=note)
@@ -250,8 +255,9 @@ async def retire_set(pool, *, org_id, actor_id, set_id, reason: str) -> dict:
                 raise TaxNotFound("set not found")
             if row["status"] != "approved" or row["valid_to"] is not None:
                 raise TaxConflict("only the approved, current version of a set is retired")
-            if actor["id"] == row["maker_id"]:
-                raise MakerCheckerViolation("Maker-checker: a set is retired by someone other than its maker")
+            await sod.enforce(conn, org_id=org_id, item_type=sod.SUBSTITUTION_SET, checker_id=actor["id"],
+                           maker_ids=[row["maker_id"]], item_id=row["id"], site="substitutions.retire_set",
+                           record=sod.RECORD_ALL, refuse=lambda d: MakerCheckerViolation("Maker-checker: a set is retired by someone other than its maker"))
             now = datetime.now(timezone.utc)
             new = await _update(conn, T_SET, row["id"], {"status": "retired", "valid_to": now,
                                                          "decision_note": reason.strip()[:2000]})
@@ -313,8 +319,9 @@ async def retire_denial(pool, *, org_id, actor_id, denial_id, reason: str) -> di
                 raise TaxNotFound("denial not found")
             if row["status"] != "active":
                 raise TaxConflict("only an active denial is retired")
-            if row["maker_id"] is not None and actor["id"] == row["maker_id"]:
-                raise MakerCheckerViolation("Maker-checker: a denial is retired by someone other than its maker")
+            await sod.enforce(conn, org_id=org_id, item_type=sod.SUBSTITUTION_DENIAL, checker_id=actor["id"],
+                           maker_ids=[row["maker_id"]], item_id=row["id"], site="substitutions.retire_denial",
+                           record=sod.RECORD_ALL, refuse=lambda d: MakerCheckerViolation("Maker-checker: a denial is retired by someone other than its maker"))
             now = datetime.now(timezone.utc)
             new = await _update(conn, T_DENY, row["id"], {"status": "retired", "checker_id": actor["id"],
                                                           "decided_at": now, "retire_reason": reason.strip()[:2000]})
@@ -470,18 +477,18 @@ async def list_denials(conn, org_id, *, include_closed: bool = True) -> list[dic
 
 def set_actions(row: dict, *, can_approve: bool, user_id) -> list[str]:
     acts = []
-    if can_approve and row["status"] == "pending_approval" and row["maker_id"] != str(user_id):
+    if can_approve and row["status"] == "pending_approval" and sod.may_check_display(user_id, [row["maker_id"]]):
         acts += ["approve", "reject"]
-    if can_approve and row["status"] == "approved" and row["current"] and row["maker_id"] != str(user_id):
+    if can_approve and row["status"] == "approved" and row["current"] and sod.may_check_display(user_id, [row["maker_id"]]):
         acts.append("retire")
     return acts
 
 
 def denial_actions(row: dict, *, can_approve: bool, user_id) -> list[str]:
     acts = []
-    if can_approve and row["status"] == "pending_approval" and row["maker_id"] != str(user_id):
+    if can_approve and row["status"] == "pending_approval" and sod.may_check_display(user_id, [row["maker_id"]]):
         acts += ["approve", "reject"]
-    if can_approve and row["status"] == "active" and row["maker_id"] != str(user_id):
+    if can_approve and row["status"] == "active" and sod.may_check_display(user_id, [row["maker_id"]]):
         acts.append("retire")
     return acts
 

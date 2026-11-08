@@ -1637,6 +1637,10 @@ async def create_workflow_trigger(request: Request, body: TriggerCreate):
             detail=f"Only the '{EVENT_DOCUMENT_CONFIRMED}' event type is "
                    "supported for event triggers in this phase",
         )
+    # S30 (Task 8): a trigger NAMES its maker — its owner (created_by) is the maker of every run it fires, and a
+    # Tier-1 step of that run is checked against it (services.sod). No owner, no trigger.
+    if not actor_id:
+        raise HTTPException(status_code=403, detail="A trigger needs a named owner: sign in as a person to configure one")
     pool = await get_pool()
     async with pool.acquire() as conn:
         # The definition must exist in the caller's own org — never trust a

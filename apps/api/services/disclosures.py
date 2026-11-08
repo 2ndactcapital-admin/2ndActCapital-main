@@ -62,6 +62,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 from services import storage
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -576,9 +577,10 @@ async def publish(pool, *, org_id, actor_id, is_super_admin: bool, version_id) -
                 raise DisclosureNotFound("disclosure version not found")
             if row["status"] != "draft":
                 raise DisclosureConflict(f"the version is {row['status']}, not a draft")
-            if str(row["drafted_by"]) == str(actor_id):
-                raise MakerCheckerViolation("maker-checker: you uploaded this version, so a different person must "
-                                            "publish it")
+            await sod.enforce(conn, org_id=row["org_id"] or org_id, item_type=sod.DISCLOSURE_VERSION, checker_id=actor_id,
+                           maker_ids=[row["drafted_by"]], item_id=row["id"], site="disclosures.publish",
+                           record=sod.RECORD_ALL, refuse=lambda d: MakerCheckerViolation("maker-checker: you uploaded this version, so a different person must "
+                                                                "publish it"))
             ts = await conn.fetchval("SELECT clock_timestamp()")
             await _archive(conn, row, ts)
             new = await conn.fetchrow(

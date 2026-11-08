@@ -1,5 +1,5 @@
 {
- "app_route_count": 968,
+ "app_route_count": 972,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -17443,6 +17443,96 @@
    "name": "wt_platform_retire",
    "note": "",
    "path": "/api/v1/admin/platform/workflow-templates/versions/{version_id}/retire",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(manage_org_settings|manage_compliance|view_audit_log)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_compliance",
+     "manage_org_settings",
+     "view_audit_log"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.sod",
+   "name": "sod_overview",
+   "note": "",
+   "path": "/api/v1/admin/sod",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(manage_org_settings|manage_compliance|view_audit_log)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_compliance",
+     "manage_org_settings",
+     "view_audit_log"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.sod",
+   "name": "sod_report",
+   "note": "",
+   "path": "/api/v1/admin/sod/reports/{name}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.sod",
+   "name": "sod_draft_rule",
+   "note": "",
+   "path": "/api/v1/admin/sod/rules",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.sod",
+   "name": "sod_decide_rule",
+   "note": "",
+   "path": "/api/v1/admin/sod/rules/{rule_id}/decide",
    "public": false,
    "write": true
   },
