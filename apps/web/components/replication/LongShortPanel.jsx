@@ -132,6 +132,7 @@ export function LongShortProposalView({ envelope, onAcknowledge, onExecute }) {
   const [ticked, setTicked] = useState([]);
   if (!d || typeof d !== "object") return null;
   const disc = d.disclosures || {};
+  const lib = d.disclosure_library && typeof d.disclosure_library === "object" ? d.disclosure_library : null;
   const toggle = (k) => setTicked(ticked.includes(k) ? ticked.filter((x) => x !== k) : [...ticked, k]);
   return (
     <div className="space-y-4">
@@ -159,7 +160,14 @@ export function LongShortProposalView({ envelope, onAcknowledge, onExecute }) {
       </section>
       <section className={card}>
         <h2 className="font-serif text-xl text-navy">Disclosures</h2>
-        <ul className="mt-2 list-disc pl-5 text-sm">{(disc.risks || []).map((r) => <li key={r.key}>{r.text}</li>)}</ul>
+        {lib?.source === "library" ? (
+          <p className="mt-1 text-xs text-text-muted">{lib.title} — version {lib.version_no} ({lib.why})
+            {lib.file_href ? <> · <a className="text-navy underline" href={lib.file_href}>full text</a></> : null}</p>
+        ) : null}
+        {lib?.required === true && lib?.current !== true && lib?.acknowledged ? (
+          <p className="mt-1 text-sm text-[#9B2335]">A newer version was published since the acknowledgement — read it and acknowledge again.</p>
+        ) : null}
+        <ul className="mt-2 list-disc pl-5 text-sm">{(Array.isArray(lib?.risks) && lib.risks.length ? lib.risks : (disc.risks || [])).map((r) => <li key={r.key}>{r.text}</li>)}</ul>
         <p className="mt-2 text-sm">{disc.borrow_estimate?.text}</p>
         <p className="mt-1 text-sm">Margin requirement — initial: {d.margin?.initial?.text}; maintenance: {d.margin?.maintenance?.text}</p>
         <p className="mt-2 text-sm italic">{d.member_summary}</p>

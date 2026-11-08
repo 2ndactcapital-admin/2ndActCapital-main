@@ -833,8 +833,14 @@ async def y_build(conn):
                      fetch="fetchrow")
     v = await scoped(conn, ORG_A, "SELECT * FROM portfolio.model_versions WHERE id = $1::uuid AND system_to IS NULL", v1,
                      fetch="fetchrow")
+    # DISCLOSURES1: the disclosure text is the library's replica.fund_affiliation in force for the org (the built-in
+    # text when none is) — read through the same resolver the build used, under the fixture org's context
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.current_org_id', $1, true), set_config('app.is_super_admin', "
+                           "'false', true)", str(ORG_A))
+        want_disc = await T.disclosure_for_org(conn, ORG_A, TICKER["F"])
     check(m["name"] == f"Holdings of {TICKER['F']}" and m["source"] == "fund_replica"
-          and m["replica_security_id"] == ENTRY["F"] and m["disclosure"] == T.disclosure_for(TICKER["F"]),
+          and m["replica_security_id"] == ENTRY["F"] and m["disclosure"] == want_disc,
           "named 'Holdings of ZZRFF', source fund_replica, replica_security_id set, rep1's disclosure stored",
           f"{m['name']} {m['source']}")
     check(v["status"] == "draft" and v["origin"] == "fund_build" and list(v["maker_ids"]) == [U_ADMIN1]

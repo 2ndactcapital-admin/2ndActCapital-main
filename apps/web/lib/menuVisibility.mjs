@@ -87,6 +87,8 @@ export const GATE_VIEW_PROPOSALS = { perm: "view_proposals", strict: true };
 // REP6 — Portfolio → Tax. GET /tax/overview requires view_tax (Super Admin
 // first); STRICT so no envelope hides the tab.
 export const GATE_VIEW_TAX = { perm: "view_tax", strict: true };
+// DISCLOSURES1 — the disclosure library (org admins hold view_disclosures by default)
+export const GATE_VIEW_DISCLOSURES = { perm: "view_disclosures", strict: true };
 // REP2 — Billing & Custody → Custodian capabilities. GET /custodians/capabilities
 // is require_staff_or_permission(manage_org_settings): Super Admin, a
 // STAFF_ROLE_NAMES role (/users/me `is_staff`), or an org admin (Joe,
@@ -321,6 +323,8 @@ export const MENU_ITEMS = [
   tab("org_admin", "settings", 6, "/admin/executing-accounts", "Executing accounts", GATE_VIEW_BLOCKS, true),
   // REP10 — the firm's hypothetical-performance policy (who may see a backtest; its disclosure)
   tab("org_admin", "settings", 7, "/admin/hypothetical-policy", "Hypothetical-performance policy", GATE_VIEW_REPLICATION, true),
+  // DISCLOSURES1 — one disclosure library: keys, versions (files in R2), overrides, maker-checker publish
+  tab("org_admin", "settings", 8, "/admin/disclosures", "Disclosures", GATE_VIEW_DISCLOSURES, true),
   // PERMS1 — /users/me now carries the workflow keys (the Principal unions role,
   // profile and permission-set grants), so each tab gates on the SAME key its
   // API checks: library author_workflows; Run Console view_workflow_runs;

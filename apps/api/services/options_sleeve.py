@@ -876,7 +876,7 @@ async def build(pool, *, org_id, actor_id, entry_id, underlying_global_security_
             async with conn.transaction():
                 model, r1 = await M.create_fund_model(
                     conn, org_id=org_id, actor_id=actor["id"], name=T.display_name_for(entry["ticker"]),
-                    replica_security_id=entry["id"], disclosure=T.disclosure_for(entry["ticker"]),
+                    replica_security_id=entry["id"], disclosure=await T.disclosure_for_org(conn, org_id, entry["ticker"]),
                     description=f"{KIND_LABELS[kind]}: core sleeve + options sleeve (manual execution only)")
                 refs.append(r1)
                 version = await M._create_version(

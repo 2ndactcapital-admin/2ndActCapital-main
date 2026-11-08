@@ -186,7 +186,7 @@ async def _note_visibility(pool, principal, org_id, x: dict) -> None:
 
     staff = bool(principal.is_super_admin or principal.is_internal or ORG_ADMIN in principal.permissions)
     async with pool.acquire() as conn:
-        gate = HP.gate(await HP.current(conn, org_id))
+        gate = await HP.gate_for(conn, org_id)
     x["notes"] = NR.member_filter(x.get("notes") or [], staff=staff, gate=gate)
     x["notes_gate"] = gate
 

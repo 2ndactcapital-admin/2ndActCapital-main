@@ -386,7 +386,7 @@ async def backtests(request: Request, model_id: UUID | None = Query(default=None
     pool = await get_pool()
     try:
         async with pool.acquire() as conn:
-            gate = HP.gate(await HP.current(conn, org_id))
+            gate = await HP.gate_for(conn, org_id)
             rows = [BT.backtest_out(r, gate) for r in await BT.list_backtests(conn, org_id, model_id=model_id)]
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
@@ -432,7 +432,7 @@ async def backtest_detail(request: Request, backtest_id: str):
     pool = await get_pool()
     try:
         async with pool.acquire() as conn:
-            gate = HP.gate(await HP.current(conn, org_id))
+            gate = await HP.gate_for(conn, org_id)
             out = BT.backtest_out(await BT.load(conn, org_id, backtest_id), gate)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
@@ -447,7 +447,7 @@ async def backtest_pdf(request: Request, backtest_id: str):
     pool = await get_pool()
     try:
         async with pool.acquire() as conn:
-            gate = HP.gate(await HP.current(conn, org_id))
+            gate = await HP.gate_for(conn, org_id)
             b = BT.backtest_out(await BT.load(conn, org_id, backtest_id), gate)
             org = await conn.fetchval("SELECT name FROM organizations WHERE id = $1::uuid", str(org_id))
             mname = await conn.fetchval("SELECT name FROM portfolio.models WHERE id = $1::uuid", b["model_id"])
@@ -485,13 +485,14 @@ async def policy_list(request: Request):
         async with pool.acquire() as conn:
             rows = await HP.list_policies(conn, org_id)
             cur = await HP.current(conn, org_id)
+            cur_gate = await HP.gate_for(conn, org_id, cur, loaded=True)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
     for r in rows:
         r["actions"] = (["approve", "reject"] if r["status"] == "draft" and perms["can_manage_policy"] is True
                         and r["maker_id"] != str(principal.user_id) else [])
     pending = any(r["status"] == "draft" for r in rows)
-    return {"rows": rows, "current": HP.policy_out(cur), "gate": HP.gate(cur), "permissions": perms,
+    return {"rows": rows, "current": HP.policy_out(cur), "gate": cur_gate, "permissions": perms,
             "vocabularies": _vocab(perms),
             "actions": ["request"] if perms["can_manage_policy"] is True and not pending else []}
 

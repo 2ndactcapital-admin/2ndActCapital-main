@@ -29,6 +29,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, ConfigDict, Field
 
+from services import disclosures as DL
 from services import security_master_jobs as J
 from services import security_master_load as M
 from services import security_master_summary as SUM
@@ -125,9 +126,10 @@ async def master_jobs(request: Request):
     async with pool.acquire() as conn:
         async with platform_scope(conn):
             jobs = await J.job_rows(conn, J.platform_org())
+            notice = await DL.resolve_safe(conn, "prices.internal_use_notice", org_id=principal.org_id)
     ordered = [jobs[k] for k in J.JOBS if k in jobs]
     return _envelope(principal, {"jobs": ordered, "missing": [k for k in J.JOBS if k not in jobs],
-                                 "price_gap_note": J.PRICE_GAP_NOTE,
+                                 "price_gap_note": notice["text"], "price_gap_disclosure": DL.public(notice),
                                  "actions": ["switch_schedule", "run_now"] if principal.is_super_admin else []})
 
 

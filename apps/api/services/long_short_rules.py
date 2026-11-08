@@ -860,8 +860,10 @@ def te_pure(final: dict[str, Decimal], model: dict[str, Decimal], history: dict[
 
 # ── Disclosures and the member summary ─────────────────────────────────────
 def disclosures(*, borrow_total: Decimal, rebate_total: Decimal, margin: dict, gross_long: Decimal,
-                gross_short: Decimal) -> dict:
-    return {"risks": [{"key": k, "text": t} for k, t in RISKS],
+                gross_short: Decimal, risks=None) -> dict:
+    """``risks`` — DISCLOSURES1: the (key, text) items of the library's ``long_short.risks`` version in force for the
+    account; None → the built-in six (RISKS, the library's exact fallback)."""
+    return {"risks": [{"key": k, "text": t} for k, t in (risks or RISKS)],
             "borrow_estimate": {"text": f"Estimated borrow cost ${borrow_total} a year (short rebate ${rebate_total})"
                                         " — an estimate from entered rates; the lender can recall shares or change "
                                         "the rate at any time.",

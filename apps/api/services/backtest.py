@@ -433,7 +433,8 @@ async def run(pool, *, org_id, actor_id, model_id, fund_security_id, window_pres
                 str(actor["id"]))
             await C.audit(conn, org_id, actor["id"], "backtest_run", "backtest", row["id"],
                           {"status": status, "model_id": str(model["id"]), "fund_security_id": fund})
-        return backtest_out(dict(row), HP.gate(policy))
+            gate = await HP.gate_for(conn, org_id, policy, household_id=hh, loaded=True)
+        return backtest_out(dict(row), gate)
 
 
 def backtest_out(r: dict, gate: dict) -> dict:
@@ -468,7 +469,7 @@ async def member_view(pool, conn, org_id, user_id) -> dict:
     from services.document_embedding import visible_entity_ids
 
     policy = await HP.current(conn, org_id)
-    gate = HP.gate(policy)
+    gate = await HP.gate_for(conn, org_id, policy, loaded=True)
     if not gate["members_allowed"]:
         return {"rows": [], "policy": {"members_allowed": False}, "label": C.HYPOTHETICAL,
                 "note": "No backtests are shown to members under the firm's hypothetical-performance policy."}

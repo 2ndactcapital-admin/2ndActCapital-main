@@ -38,6 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from routers.entities import get_org_id
 from services import human_tasks as HT
+from services import disclosures as DL
 from services import long_short as LS
 from services import rebalance_proposals as RP
 from services.authz import require_permission, require_super_admin
@@ -208,9 +209,10 @@ async def tax_estimate(request: Request, account_id: str):
     try:
         async with pool.acquire() as conn:
             est = await LS.tax_estimate(conn, org_id, account_id)
+            note = await DL.resolve_safe(conn, "tax.estimate_label", org_id=org_id, account_id=account_id)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
-    return {"tax_estimate": est, "permissions": {"can_read": True, "is_super_admin": principal.is_super_admin,
+    return {"tax_estimate": est, "estimate_disclosure": DL.public(note), "permissions": {"can_read": True, "is_super_admin": principal.is_super_admin,
                                                  "read_permission": VIEW_TAX}}
 
 
@@ -240,11 +242,21 @@ async def proposal_details(request: Request, proposal_id: str):
             if d is None:
                 raise LS.LongShortNotFound("not a long/short proposal")
             why = await LS.approval_refusal(conn, org_id, p) if p["status"] == "pending_approval" else None
+            ds = await LS.disclosure_state(conn, org_id, p)      # DISCLOSURES1 — the version in force NOW
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
+    res = ds["resolved"]
+    d["acknowledgement_items"] = ds["items"]
+    d["disclosure_library"] = {"key": LS.RISKS_KEY, "source": res.get("source"), "why": res.get("why"),
+                               "version_id": res.get("version_id"), "version_no": res.get("version_no"),
+                               "content_sha256": res.get("content_sha256"), "title": res.get("title"),
+                               "file_href": res.get("file_href"), "required": ds["required"],
+                               "acknowledged": ds["acknowledged"], "current": ds["current"],
+                               "risks": res.get("items")}
     is_maker = p["maker_id"] is not None and str(p["maker_id"]) == principal.user_id
+    needs_ack = d["acknowledged_by"] is None or (ds["required"] and not ds["current"])
     actions = []
-    if perms["can_write"] is True and is_maker and p["status"] == "draft" and d["acknowledged_by"] is None:
+    if perms["can_write"] is True and is_maker and p["status"] == "draft" and needs_ack:
         actions.append("acknowledge")
     if perms["can_write"] is True and p["status"] == "approved" and not (RP._loads(p["execution"]) or {}).get(
             "instruction_ids"):

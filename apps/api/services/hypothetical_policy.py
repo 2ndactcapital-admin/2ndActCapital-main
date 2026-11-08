@@ -56,6 +56,34 @@ def policy_out(r: dict | None) -> dict | None:
             "created_at": C.iso(r["created_at"]), "in_effect": r["status"] == "approved" and r["valid_to"] is None}
 
 
+LIBRARY_KEY = "hypothetical.performance"
+
+
+async def library_disclosure(conn, org_id, household_id=None) -> dict | None:
+    """DISCLOSURES1 — an ORG-or-lower published library version of hypothetical.performance, or None. A platform
+    default never replaces a firm's approved policy text (the firm's own words, approved by a second person)."""
+    from services import disclosures as DL
+
+    res = await DL.resolve_safe(conn, LIBRARY_KEY, org_id=org_id, household_id=household_id)
+    return res if res["source"] == "library" and res["scope"] != "platform" else None
+
+
+async def gate_for(conn, org_id, policy: dict | None = None, *, household_id=None, loaded: bool = False) -> dict:
+    """:func:`gate` with the disclosure text through the library (the Marketing Rule gate itself is unchanged):
+    no approved policy → staff only, NO_POLICY; an approved policy → the org's (or household's) library version when
+    one is in force, else the policy's own approved disclosure_text."""
+    if not loaded and policy is None:
+        policy = await current(conn, org_id)
+    g = gate(policy)
+    if policy is None:
+        return {**g, "disclosure_source": "policy_gate"}
+    lib = await library_disclosure(conn, org_id, household_id)
+    if lib is None:
+        return {**g, "disclosure_source": "policy"}
+    return {**g, "disclosure": lib["text"], "disclosure_source": "library", "disclosure_version_id": lib["version_id"],
+            "disclosure_version_no": lib["version_no"], "disclosure_file_href": lib["file_href"]}
+
+
 def gate(policy: dict | None) -> dict:
     """What every backtest carries: the audience, whether members may see it, and the disclosure text."""
     if policy is None:

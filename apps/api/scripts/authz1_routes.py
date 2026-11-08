@@ -112,11 +112,17 @@ OPEN_READS = {
     "/api/v1/market/views": "OWN ROWS: the caller's saved views",
     "/api/v1/replication/member/backtests": "OWN ROWS: backtests of the member's own family (BT.member_view)",
     "/api/v1/human-tasks/mine": "OWN ROWS: tasks the caller's own permissions make them eligible for",
+    "/api/v1/disclosures/mine": "OWN ROWS: published member-audience disclosures in force for the caller's own "
+                                "households / accounts (DISCLOSURES1, DL.member_disclosures)",
+    "/api/v1/disclosures/versions/{version_id}/file": "DISCLOSURES1: view_disclosures → any version the org can see "
+                                                      "(RLS); anyone else → only a version in their own /mine set "
+                                                      "(else 404)",
 }
 
 # Per-route note where the module's SELF_SCOPED reason does not fit.
 SELF_SCOPED_ROUTES = {
     ("PUT", "/api/v1/users/me/contact-email"): "own row only (USERMGMT1 contact email; reachable while pending, never used for linking)",
+    ("POST", "/api/v1/disclosures/acknowledgements"): "own row only (DISCLOSURES1: the caller acknowledges the version IN FORCE; a member only one in their own /mine set)",
 }
 
 

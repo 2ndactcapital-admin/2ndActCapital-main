@@ -284,6 +284,11 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("approve_blocks", "blocks", "approve"),
     # rep10 — the firm's hypothetical-performance policy (who may see a backtest; its disclosure); maker-checker.
     ("manage_hypothetical_policy", "hypothetical_policy", "manage"),
+    # DISCLOSURES1 — the disclosure library: read it; manage the org's (and its households' / accounts') versions.
+    # Publishing is maker-checker (a second holder). Platform defaults are Super Admin only. Kept in step with
+    # docs/disclosures1_part1.sql §0 (the grant to every EXISTING org_admin role).
+    ("view_disclosures", "disclosures", "view"),
+    ("manage_disclosures", "disclosures", "manage"),
     # PERMS1 — the org admin's baseline READS (the ones support staff already hold by role), the workflow keys its
     # "Org Admin" profile carried (now on the role too), and Joe's decisions of 2026-11-04: org admins create deals
     # (DEAL-01, manage_deals) and households (REP-01, manage_members). No approve_* is added here. Kept in step with

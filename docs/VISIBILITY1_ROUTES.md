@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 874 · guarded 199 · sql-scope 43 · body-check 4 · legacy-rule 2
+Routes: 885 · guarded 201 · sql-scope 43 · body-check 4 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -344,6 +344,17 @@ Routes: 874 · guarded 199 · sql-scope 43 · body-check 4 · legacy-rule 2
 | POST | `/api/v1/direct-assets/{asset_id}/end` | portentry | scrub |
 | GET | `/api/v1/direct-assets/{asset_id}/history` | portentry | scrub |
 | POST | `/api/v1/direct-assets/{asset_id}/valuations` | portentry | scrub |
+| GET | `/api/v1/disclosures` | disclosures | scrub |
+| GET | `/api/v1/disclosures/accounts/{account_id}` | disclosures | guard:account_id, scrub |
+| POST | `/api/v1/disclosures/acknowledgements` | disclosures | scrub |
+| GET | `/api/v1/disclosures/households/{household_id}` | disclosures | guard:household_id, scrub |
+| GET | `/api/v1/disclosures/keys/{key}` | disclosures | scrub |
+| POST | `/api/v1/disclosures/keys/{key}/versions` | disclosures | scrub |
+| GET | `/api/v1/disclosures/mine` | disclosures | scrub |
+| GET | `/api/v1/disclosures/resolve` | disclosures | scrub |
+| GET | `/api/v1/disclosures/versions/{version_id}/file` | disclosures | scrub |
+| POST | `/api/v1/disclosures/versions/{version_id}/publish` | disclosures | scrub |
+| POST | `/api/v1/disclosures/versions/{version_id}/retire` | disclosures | scrub |
 | POST | `/api/v1/document-drops/{drop_id}/analyze-vdr` | vdr | scrub |
 | GET | `/api/v1/document-link-proposals` | document_links | scrub |
 | POST | `/api/v1/document-link-proposals/{proposal_id}/approve` | document_links | scrub |

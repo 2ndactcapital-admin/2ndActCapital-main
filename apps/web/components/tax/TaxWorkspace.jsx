@@ -60,6 +60,9 @@ export default function TaxWorkspace({ initialEnvelope, initialView = "harvest" 
         {!env && view !== "gifts" ? <p className="text-sm text-text-muted">Loading…</p> : null}
         {view === "gifts" ? <CharitableGifts /> : null}
         {env && view === "harvest" ? <HarvestDashboard envelope={env} onReload={() => load("harvest")} /> : null}
+        {/* DISCLOSURES1 — tax.estimate_label from the disclosure library (the server's text; the built-in label offline) */}
+        {env && view === "harvest" && env.estimate_disclosure?.source === "library" && env.estimate_disclosure?.text
+          ? <p className="mt-4 text-xs text-text-muted">{env.estimate_disclosure.text}</p> : null}
         {env && view === "substitutions" ? <Substitutions envelope={env} onReload={() => load("substitutions")} /> : null}
         {env && view === "profiles" ? <Profiles envelope={env} subjects={subjects || []} onReload={() => load("profiles")} /> : null}
         {env && view === "declared" ? <DeclaredTrades envelope={env} subjects={subjects || []} onReload={() => load("declared")} /> : null}
