@@ -97,6 +97,8 @@ MONEY_MOVEMENT = "money_movement"
 ROLE_GRANT = "role_grant"
 SOD_RULE = "sod_rule"
 SOD_PLATFORM_RULE = "sod_platform_rule"
+WORKFLOW_AUTONOMY_SETTING = "workflow_autonomy_setting"   # S29B: an org's autonomy switch / limit loosened
+WORKFLOW_AUTONOMY_OPTIN = "workflow_autonomy_optin"       # S29B: a workflow version signed off to run unattended
 
 ITEM_TYPES = (
     AGENT_PROPOSAL, WORKFLOW_STEP, WORKFLOW_USER_TASK, HUMAN_TASK, ACCOUNT_MODEL_LINK, AUTHORITY_CHANGE,
@@ -105,7 +107,7 @@ ITEM_TYPES = (
     MODEL_VERSION, NOTE_REPLICA, OPTION_PACKAGE, MARGIN_AGREEMENT, HELD_AWAY_IMPORT, PORTFOLIO_IMPORT,
     HYPOTHETICAL_POLICY, SUBSTITUTION_SET, SUBSTITUTION_DENIAL, TAX_PROFILE, LOSS_CARRYFORWARD,
     REPLICA_TERMS_VERSION, WORKFLOW_TEMPLATE_VERSION, DISCLOSURE_VERSION, DATA_UPLOAD, FEE_RUN, CARRY_RUN,
-    MONEY_MOVEMENT, ROLE_GRANT, SOD_RULE, SOD_PLATFORM_RULE,
+    MONEY_MOVEMENT, ROLE_GRANT, SOD_RULE, SOD_PLATFORM_RULE, WORKFLOW_AUTONOMY_SETTING, WORKFLOW_AUTONOMY_OPTIN,
 )
 
 # services.human_tasks kinds → the item type their task decides (a kind not listed is the generic HUMAN_TASK)
@@ -246,7 +248,10 @@ class Context:
         chosen = (org or plat or [None])[0]
         if chosen is None:
             return {"self_approval": "never", "enforce_floor": True, "rule": None, "source": "built-in"}
-        return {"self_approval": chosen["self_approval"], "enforce_floor": bool(chosen["enforce_floor"]),
+        # S29B (Task 0): an organization can only TIGHTEN the floor. When the platform policy enforces it (role grants
+        # from S29B on), an org policy row that says otherwise is ignored for enforce_floor — never relaxed by an org.
+        enforce = bool(chosen["enforce_floor"]) or any(bool(p["enforce_floor"]) for p in plat)
+        return {"self_approval": chosen["self_approval"], "enforce_floor": enforce,
                 "rule": chosen, "source": "org" if chosen["org_id"] else "platform"}
 
     def floor_rule(self) -> dict | None:
@@ -558,6 +563,16 @@ async def record_refusal(d: Decision, *, site: str | None = None) -> str | None:
         pool = await get_pool()
         async with pool.acquire() as c:
             did = await c.fetchval(INSERT_DECISION_SQL, *_decision_args(d, site))
+            # S29B Task 0: every refusal is in the audit log too (the decision row is the append-only record; the audit
+            # row puts it beside every other security event). Same connection, same commit.
+            rule = d.rule or {}
+            await c.execute(
+                "INSERT INTO audit_log (org_id, user_id, action, resource_type, resource_id, payload) "
+                "VALUES ($1::uuid, $2::uuid, 'sod.refused', 'sod_decisions', $3::uuid, $4::jsonb)",
+                d.org_id, d.checker_id, did,
+                json.dumps({"item_type": d.item_type, "item_id": d.item_id, "site": site or d.site,
+                            "maker_ids": d.maker_ids, "rule_key": rule.get("rule_key"), "reason": d.reason},
+                           default=str))
         d.decision_id = did
         return did
     except Exception:  # noqa: BLE001

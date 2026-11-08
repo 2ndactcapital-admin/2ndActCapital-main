@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+S29B (2026-11-08, WORKFLOW MANAGER WAVE 4 — scheduled / event-triggered workflows run WRITE steps unattended under S30: verb autonomy classes (never / eligible / eligible_with_cap), org switch + per-version opt-in (both OFF, maker-checker), shadow period, delegate execution with idempotency, limits, two kill switches, event de-dup + rate limit, Admin → Workflows → Autonomy; Task 0: the self-grant floor ON everywhere; money movement excluded until counsel (cash stage C); schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 S30 (2026-11-08, SEGREGATION OF DUTIES — one duty model + one maker-checker rule (services.sod) on every approval site; persons not logins; platform floors + versioned org rules; governed self-approval; self-grant floor + conflict report; verbs declare duties, a trigger names its maker; Admin → Segregation of duties; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 SECMASTER2 (2026-11-07, SEC mutual-fund share classes into the master (dry run: 22,789 new / 4,609 matched; 10 Olivo funds would relink, none relinked), the FinanceDatabase attributes load fixed (etfs/ASE.csv is not published) + US mutual-fund categories, US / international / EM / cap fund categories with REFINE proposals, the load summary with every count linked to its list; schema APPLIED, job seeded OFF; verify WRITTEN, not yet run): see the top entry.
 VISIBILITY1 (2026-11-07, team-based staff visibility — org admins see every family, staff their assigned / team / reports' families, an unassigned family only its owner; one shared helper on every route, Team panel, preview and an audited org switch that is OFF everywhere; verify WRITTEN, not yet run): see the top entry.
@@ -342,6 +343,39 @@ This file starts with the email item below.
 
 ---
 
+
+## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. S29B — WORKFLOW MANAGER WAVE 4: unattended write steps under S30 (classes, switches OFF, shadow, delegate + idempotency, limits, kill switches, events) + Task 0 self-grant floor ON everywhere; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
+
+Branch s29b-work. The rules are in docs/WORKFLOW_AUTONOMY.md, the discovery (verb table, engine path, triggers, what was reused) in docs/S29B_DISCOVERY.md. **Money movement is excluded until counsel (cash stage C).**
+
+- **Task 0, the self-grant floor ON.** Platform `policy:role_grant` v2 sets `enforce_floor = true`; v1 is retired and kept, and the change is audited (`sod.platform_rule_versioned`). An org cannot relax it: `draft_rule` refuses with 403, and `Context.policy()` ORs the platform value into any org policy row. Every refusal on every site now also writes `audit_log` `sod.refused` (`sod.record_refusal`). verify_s30's three role-grant expectations are updated.
+  - **[FIND]** Joe's three active Super Admin rows (`06fe93ed`, `f46eb620`, `be8165db`) are not linked, so to the floor they are three persons. Merge them in People & Access, or one of them can still grant another a role. The three 2nd Act org-admin rows likewise.
+- **Schema.** `docs/s29b_part1.sql`, APPLIED and idempotent (`_apply_s29b.py --all`: SCHEMA OK). Snapshot refreshed.
+  - `workflow_autonomy_settings`: versioned, maker-checker CHECKs, content guard, RLS every op.
+  - Columns on `workflow_runs`: `autonomy_mode` and the `shadow_review_*` set.
+  - Columns on `workflow_run_steps`: `autonomy_mode`, `delegate_for`, `idempotency_key` (unique), `autonomy_claimed_at`.
+  - `domain_event_deliveries`: `workflow_version_id`, `STARTING` / `RATE_LIMITED`, the per-(event, version) unique claim.
+  - Two SoD item types + their platform rules: `workflow_autonomy_setting`, `workflow_autonomy_optin`.
+- **One rule.** `services/workflow_autonomy.py`, with `decide_step` as the one per-step decision. The engine hook is `workflow_engine._run_service_step`, called from `_drive` after the unchanged Tier-1 check.
+- **Classes on the verb** (`AssistantAction.autonomy_class`). 3 `never`, 23 `eligible`, 0 `eligible_with_cap`.
+  - **[FIND]** 10 platform-job write verbs already ran unattended before S29B. They keep their own Super Admin switch in the platform org; anywhere else they fall under every S29B gate, and the kill switches stop them.
+- **Routes** (`routers/workflow_autonomy.py`, 6): GET overview; POST settings / versions / decide / shadow-review / platform-kill-switch. AUTHZ1_ROUTES and VISIBILITY1_ROUTES regenerated (`--check` CURRENT).
+- **Changed routes.**
+  - Trigger create / activate refuses a non-Tier-1 `never` write step (422).
+  - Event triggers accept `workflow_autonomy.TRIGGER_EVENT_TYPES`.
+  - The run console carries the autonomy markers.
+- **Web.**
+  - The `/admin/workflows/autonomy` page (Workflows → Autonomy tab, strict gate).
+  - `components/admin/WorkflowAutonomy.jsx`, `WorkflowAutonomyNotes.jsx` (run console), `lib/workflowAutonomy.mjs` (fails closed).
+  - The `/api/workflow-autonomy` proxy.
+  - `tests/s29b` (8). `node --test tests/`: 664 tests, 663 pass, 0 fail, 1 skipped.
+- **Digest.** `workflow_scheduler.run_scheduler_tick` writes the daily unattended-writes digest to-do per org admin. A narrowed tick digests only the orgs it names.
+- **Verify.** `apps/api/scripts/verify_s29b.py` WRITTEN, NOT RUN; added to scripts/regression_set.txt. Its regression is verify_tiergating.py: once, flat, after teardown, VERIFY_NESTED=1, 2700 s.
+- **Not done / next.**
+  - No `eligible_with_cap` verb exists yet.
+  - `chancery_workflow_bridge` (document_confirmed) starts runs without the event de-dup / rate limit. Per-step rules still apply.
+  - Autonomy is OFF on every real org, by design.
+  - Onboarding as a workflow template on the engine is the next sprint.
 
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. S30 — SEGREGATION OF DUTIES: one duty model and ONE maker-checker rule (services.sod) every approval site calls; persons not logins; platform floors + org rules (versioned, maker-checker); governed self-approval with a compliance to-do; conflicting-role warnings + self-grant floor; workflow verbs declare duties, a trigger names its maker; Admin → Segregation of duties; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
 

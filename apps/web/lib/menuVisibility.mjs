@@ -128,6 +128,11 @@ export const GATE_WORKFLOW_TRIGGERS_READ = { anyOf: ["view_workflow_runs", "conf
 // S30 — Admin → Segregation of duties: GET /admin/sod is any(manage_org_settings | manage_compliance | view_audit_log);
 // STRICT, so a lost envelope hides the tab. Editing is decided by the page from the server's envelope.
 export const GATE_SOD_READ = { anyOf: ["manage_org_settings", "manage_compliance", "view_audit_log"], strict: true };
+// S29B — Admin → Workflows → Autonomy: GET /admin/workflow-autonomy is any(manage_org_settings | author_workflows |
+// view_workflow_runs); STRICT, so a lost envelope hides the tab. Every control is decided by the page's envelope.
+export const GATE_WORKFLOW_AUTONOMY_READ = {
+  anyOf: ["manage_org_settings", "author_workflows", "view_workflow_runs"], strict: true,
+};
 export const GATE_WORKFLOW_TEMPLATES_READ = {
   anyOf: ["author_workflows", "view_workflow_runs", "configure_workflow_triggers"], strict: true,
 };
@@ -346,6 +351,7 @@ export const MENU_ITEMS = [
   tab("org_admin", "workflows", 2, "/admin/workflows/runs", "Runs", GATE_VIEW_WORKFLOW_RUNS, true),
   tab("org_admin", "workflows", 3, "/admin/workflows/triggers", "Triggers", GATE_WORKFLOW_TRIGGERS_READ, true),
   tab("org_admin", "workflows", 4, "/admin/workflows/templates", "Templates", GATE_WORKFLOW_TEMPLATES_READ, true),
+  tab("org_admin", "workflows", 5, "/admin/workflows/autonomy", "Autonomy", GATE_WORKFLOW_AUTONOMY_READ, true),
   // BUGFIX2 — firm-level screens: never a member (view_portfolio is a MEMBER grant).
   // STAFFROLES1 — an internal role holding view_portfolio, staff as before.
   tab("org_admin", "billing", 1, "/admin/billing-groups", "Billing Groups", GATE_FIRM_PORTFOLIO, true),

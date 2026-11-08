@@ -1,5 +1,5 @@
 {
- "app_route_count": 972,
+ "app_route_count": 978,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -17533,6 +17533,135 @@
    "name": "sod_decide_rule",
    "note": "",
    "path": "/api/v1/admin/sod/rules/{rule_id}/decide",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(manage_org_settings|author_workflows|view_workflow_runs)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "author_workflows",
+     "manage_org_settings",
+     "view_workflow_runs"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.workflow_autonomy",
+   "name": "autonomy_overview",
+   "note": "",
+   "path": "/api/v1/admin/workflow-autonomy",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_autonomy",
+   "name": "autonomy_change_setting",
+   "note": "",
+   "path": "/api/v1/admin/workflow-autonomy/settings",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz author_workflows",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "author_workflows"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_autonomy",
+   "name": "autonomy_version_state",
+   "note": "",
+   "path": "/api/v1/admin/workflow-autonomy/versions/{version_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(manage_org_settings|author_workflows)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "author_workflows",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_autonomy",
+   "name": "autonomy_decide",
+   "note": "",
+   "path": "/api/v1/admin/workflow-autonomy/settings/{setting_id}/decide",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(configure_workflow_triggers|author_workflows)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "author_workflows",
+     "configure_workflow_triggers"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_autonomy",
+   "name": "autonomy_shadow_review",
+   "note": "",
+   "path": "/api/v1/admin/workflow-autonomy/runs/{run_id}/shadow-review",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_autonomy",
+   "name": "autonomy_platform_kill_switch",
+   "note": "",
+   "path": "/api/v1/admin/workflow-autonomy/platform-kill-switch",
    "public": false,
    "write": true
   },
