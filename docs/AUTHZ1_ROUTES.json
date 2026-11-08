@@ -1,5 +1,5 @@
 {
- "app_route_count": 892,
+ "app_route_count": 930,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -15860,6 +15860,838 @@
    "name": "acknowledge_route",
    "note": "own row only (DISCLOSURES1: the caller acknowledges the version IN FORCE; a member only one in their own /mine set)",
    "path": "/api/v1/disclosures/acknowledgements",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.section351",
+   "name": "s351_candidates",
+   "note": "",
+   "path": "/api/v1/section351/candidates",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.section351",
+   "name": "s351_profiles",
+   "note": "",
+   "path": "/api/v1/section351/sponsor-profiles",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.section351",
+   "name": "s351_thresholds",
+   "note": "",
+   "path": "/api/v1/section351/thresholds",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.section351",
+   "name": "s351_account_test",
+   "note": "",
+   "path": "/api/v1/section351/accounts/{account_id}/test",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.section351",
+   "name": "s351_plans",
+   "note": "",
+   "path": "/api/v1/section351/plans",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.section351",
+   "name": "s351_plan",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.section351",
+   "name": "s351_instruction_sheet",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/instruction-sheet",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.section351",
+   "name": "s351_basis_file",
+   "note": "",
+   "path": "/api/v1/section351/basis-records/{record_id}/file/{kind}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_fixup",
+   "note": "",
+   "path": "/api/v1/section351/accounts/{account_id}/fixup",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_create_plan",
+   "note": "",
+   "path": "/api/v1/section351/plans",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.section351",
+   "name": "s351_update_plan",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_add_account",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/accounts",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_retest",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/retest",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_ready",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/ready",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_reopen",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/reopen",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_submit",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/submit",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_cancel",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/cancel",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_export_basis",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/basis-record",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_route",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/route",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_remove_account",
+   "note": "",
+   "path": "/api/v1/section351/plan-accounts/{plan_account_id}/remove",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_us_person",
+   "note": "",
+   "path": "/api/v1/section351/plan-accounts/{plan_account_id}/us-person",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_sponsor_review",
+   "note": "",
+   "path": "/api/v1/section351/plan-accounts/{plan_account_id}/sponsor-review",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_consent",
+   "note": "",
+   "path": "/api/v1/section351/plan-accounts/{plan_account_id}/consent",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_tax_adviser",
+   "note": "",
+   "path": "/api/v1/section351/plan-accounts/{plan_account_id}/tax-adviser",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_boot",
+   "note": "",
+   "path": "/api/v1/section351/plan-accounts/{plan_account_id}/boot",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_acknowledge",
+   "note": "",
+   "path": "/api/v1/section351/plan-accounts/{plan_account_id}/acknowledge",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_confirm",
+   "note": "",
+   "path": "/api/v1/section351/plan-accounts/{plan_account_id}/confirm",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_delivered",
+   "note": "",
+   "path": "/api/v1/section351/basis-records/{record_id}/delivered",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.section351",
+   "name": "s351_update_step",
+   "note": "",
+   "path": "/api/v1/section351/steps/{step_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_step_done",
+   "note": "",
+   "path": "/api/v1/section351/steps/{step_id}/done",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_add_class",
+   "note": "",
+   "path": "/api/v1/section351/asset-classes",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_retire_class",
+   "note": "",
+   "path": "/api/v1/section351/asset-classes/{class_id}/retire",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_approve",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_reject",
+   "note": "",
+   "path": "/api/v1/section351/plans/{plan_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_create_profile",
+   "note": "",
+   "path": "/api/v1/section351/sponsor-profiles",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_profile_version",
+   "note": "",
+   "path": "/api/v1/section351/sponsor-profiles/{profile_key}/versions",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.section351",
+   "name": "s351_save_thresholds",
+   "note": "",
+   "path": "/api/v1/section351/thresholds",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.section351",
+   "name": "s351_add_platform_class",
+   "note": "",
+   "path": "/api/v1/section351/asset-classes/platform",
    "public": false,
    "write": true
   },
