@@ -342,6 +342,37 @@ This file starts with the email item below.
 ---
 
 
+## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. REP14 — Replication Studio phase 4: the SECTION 351 EXIT (planning side, manual-first): candidates, the 25 % / 50 % test with fund look-through, the fix-up proposal, the pool's control test, the carryover basis record, consents + tracker, in-kind transfer instructions; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
+
+Branch rep14-work. Full description, rules with citations and the operator flow: docs/REPLICATION_STUDIO.md, "rep14". Task 1 findings: docs/REP14_DISCOVERY.md.
+
+**What was built**
+- **Schema.** `docs/rep14_part1.sql`, APPLIED (`_apply_rep14.py --all`: SCHEMA OK). Writes NO rows. Eight new org tables (platform + org for asset classes), RLS on every operation with NULLIF, delete only on the fixture-teardown path:
+  - `section351_sponsor_profiles` (the third-party sponsor + its eligibility rules; every edit a NEW VERSION, a plan records the version row it used) and `section351_settings` (the "run dry" thresholds, versioned).
+  - `section351_asset_classes` — government / restricted / illiquid / derivative / crypto / commodity / grantor trust / partnership classes the master does not carry (source + as-of).
+  - `section351_plans` (system axis, maker-checker CHECK), `section351_plan_accounts` (owner type, U.S.-person confirmation, the test at the valuation date, written consent, tax-adviser confirmation, boot), `section351_basis_records` (CSV + PDF versions with hashes), `section351_tracker_steps`, `section351_transfers` (the new instruction kind "in-kind transfer out", one per lot).
+- **Services.** `services/section351_rules.py` (pure, Decimal, deterministic: the 25 / 50 test, look-through, control, carryover per lot, the water-fill fix-up planner, run-dry) and `services/section351.py`.
+- **Hooks.** Human-task kinds `section351_plan_approval` (maker-checker; the precheck re-runs every gate) and `section351_project_step` (the eight tracker steps). The disclosure library's `section351.exit`, acknowledged per plan account by version (subject type `section351_plan`). The fix-up is a normal rep5 proposal (trigger manual, lot method 'specific'). No existing table or rule changed.
+- **Routes and UI.** 38 routes (`routers/section351.py`); AUTHZ1_ROUTES and VISIBILITY1_ROUTES regenerated (`--check` CURRENT). Web: Portfolio → Replication → Section 351 (candidates, thresholds, sponsor profiles, plans, plan detail with gates / basis records / tracker timeline / transfers), the `/api/section351` proxy, `lib/section351.mjs` (fails closed), `tests/replication/rep14.test.mjs`.
+
+**Findings (live data, 2026-11-08)**
+- **0 accounts are eligible today.** Of 34 open accounts none follows a replica model; 26 are held-away; 9 are average cost only for at least one holding; **all 55 live open lots have no acquisition date** (the basis record needs it — new reason `lot_dates`).
+- **0 fund holdings snapshots are stored** (rep1's fetchers were blocked), so any fund held today fails closed "holdings needed".
+- **No government flag exists in the master** (rep14's asset-class table fills it) and controlled groups cannot be grouped (CIK only).
+- `section351.exit` exists only as an unpublished platform DRAFT with no fallback text — **no plan can be ready until counsel reviews it and a second Super Admin publishes it**.
+- rep6 states benefit decay only as a note; rep14 estimates it next to year 1 from the loss bank.
+- No custodian declares `in_kind_transfers` (altruist / manual 'unknown'): the adapter route refuses, the manual instruction sheet is always offered.
+
+**Not run:** verify_rep14.py, the verify_rep13.py regression, npm build, the full node suite (WSL memory).
+
+**Open for counsel:** the default disclosure text; fees (not modelled); each reading in the REPLICATION_STUDIO rep14 table (look-through clause, government securities in the denominator, per-transferor testing, controlled groups, per-lot share split, asset-by-asset boot); refusing retirement / tax-exempt accounts (our rule).
+
+**Operator steps**
+1. Run verify_rep14.py (it runs its node test file, npm build and the verify_rep13.py regression).
+2. Add the merge sha to `_verify_self.SPRINT_MERGES`.
+3. Refresh the schema snapshot.
+4. Redeploy the API.
+
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. DISCLOSURES1 — one disclosure library for the whole platform: keys, versions (each a FILE in R2 + its summary), platform → org → household → account overrides, maker-checker publish, acknowledgements by version; today's hard-coded disclosures moved in; schema APPLIED; defaults written (loader --dry-run only); verify WRITTEN, not yet run (2026-11-08)
 
 Branch disclosures1-work (base 42c5c57). Task 1 findings: docs/DISCLOSURES1_DISCOVERY.md. The library, the

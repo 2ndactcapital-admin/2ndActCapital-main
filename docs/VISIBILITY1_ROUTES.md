@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 885 · guarded 201 · sql-scope 43 · body-check 4 · legacy-rule 2
+Routes: 923 · guarded 203 · sql-scope 43 · body-check 4 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -771,6 +771,44 @@ Routes: 885 · guarded 201 · sql-scope 43 · body-check 4 · legacy-rule 2
 | POST | `/api/v1/replication/tilts/sets/{set_id}/lines` | replication_rep10 | scrub |
 | POST | `/api/v1/replication/tilts/sets/{set_id}/reject` | replication_rep10 | scrub |
 | POST | `/api/v1/replication/tilts/sets/{set_id}/submit` | replication_rep10 | scrub |
+| POST | `/api/v1/section351/accounts/{account_id}/fixup` | section351 | guard:account_id, scrub |
+| GET | `/api/v1/section351/accounts/{account_id}/test` | section351 | guard:account_id, scrub |
+| POST | `/api/v1/section351/asset-classes` | section351 | scrub |
+| POST | `/api/v1/section351/asset-classes/platform` | section351 | scrub |
+| POST | `/api/v1/section351/asset-classes/{class_id}/retire` | section351 | scrub |
+| POST | `/api/v1/section351/basis-records/{record_id}/delivered` | section351 | scrub |
+| GET | `/api/v1/section351/basis-records/{record_id}/file/{kind}` | section351 | scrub |
+| GET | `/api/v1/section351/candidates` | section351 | scrub |
+| POST | `/api/v1/section351/plan-accounts/{plan_account_id}/acknowledge` | section351 | scrub |
+| POST | `/api/v1/section351/plan-accounts/{plan_account_id}/boot` | section351 | scrub |
+| POST | `/api/v1/section351/plan-accounts/{plan_account_id}/confirm` | section351 | scrub |
+| POST | `/api/v1/section351/plan-accounts/{plan_account_id}/consent` | section351 | scrub |
+| POST | `/api/v1/section351/plan-accounts/{plan_account_id}/remove` | section351 | scrub |
+| POST | `/api/v1/section351/plan-accounts/{plan_account_id}/sponsor-review` | section351 | scrub |
+| POST | `/api/v1/section351/plan-accounts/{plan_account_id}/tax-adviser` | section351 | scrub |
+| POST | `/api/v1/section351/plan-accounts/{plan_account_id}/us-person` | section351 | scrub |
+| GET | `/api/v1/section351/plans` | section351 | scrub |
+| POST | `/api/v1/section351/plans` | section351 | scrub |
+| GET | `/api/v1/section351/plans/{plan_id}` | section351 | scrub |
+| PATCH | `/api/v1/section351/plans/{plan_id}` | section351 | scrub |
+| POST | `/api/v1/section351/plans/{plan_id}/accounts` | section351 | scrub |
+| POST | `/api/v1/section351/plans/{plan_id}/approve` | section351 | scrub |
+| POST | `/api/v1/section351/plans/{plan_id}/basis-record` | section351 | scrub |
+| POST | `/api/v1/section351/plans/{plan_id}/cancel` | section351 | scrub |
+| GET | `/api/v1/section351/plans/{plan_id}/instruction-sheet` | section351 | scrub |
+| POST | `/api/v1/section351/plans/{plan_id}/ready` | section351 | scrub |
+| POST | `/api/v1/section351/plans/{plan_id}/reject` | section351 | scrub |
+| POST | `/api/v1/section351/plans/{plan_id}/reopen` | section351 | scrub |
+| POST | `/api/v1/section351/plans/{plan_id}/retest` | section351 | scrub |
+| POST | `/api/v1/section351/plans/{plan_id}/route` | section351 | scrub |
+| POST | `/api/v1/section351/plans/{plan_id}/submit` | section351 | scrub |
+| GET | `/api/v1/section351/sponsor-profiles` | section351 | scrub |
+| POST | `/api/v1/section351/sponsor-profiles` | section351 | scrub |
+| POST | `/api/v1/section351/sponsor-profiles/{profile_key}/versions` | section351 | scrub |
+| PATCH | `/api/v1/section351/steps/{step_id}` | section351 | scrub |
+| POST | `/api/v1/section351/steps/{step_id}/done` | section351 | scrub |
+| GET | `/api/v1/section351/thresholds` | section351 | scrub |
+| PUT | `/api/v1/section351/thresholds` | section351 | scrub |
 | GET | `/api/v1/securities/search` | portfolio_securities | scrub |
 | GET | `/api/v1/security-data/lookup` | security_data | scrub |
 | GET | `/api/v1/security-data/quality` | security_data | scrub |

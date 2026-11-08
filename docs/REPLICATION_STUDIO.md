@@ -2240,3 +2240,109 @@ negative quantity, each opening fill a lot. No custodian feeds short positions y
 2. Add rep13's merge sha to `_verify_self.SPRINT_MERGES` when merged.
 3. Refresh `docs/schema_snapshot.sql` (refresh-schema).
 4. Redeploy the API and the scheduler cron service. The sweeps now skip long/short accounts.
+
+## rep14 — the Section 351 exit (planning side, manual-first, 2026-11-08)
+
+When harvesting has run dry, appreciated replica accounts can be pooled into a NEW ETF without a taxable sale. rep14
+builds the planning side end to end: who is a candidate, whether each account passes the diversification test (and
+a fix-up proposal if not), the pool's control test, the lot-level carryover basis record, consents and the project
+tracker, and the in-kind transfer instructions. **Nothing executes automatically**: no trade, no sale, no transfer
+leaves the system; every transfer is a printed instruction a person sends, and a person records the custodian's
+confirmation. Task 1 findings: `docs/REP14_DISCOVERY.md`. Schema: `docs/rep14_part1.sql` (APPLIED, writes no rows).
+Code: `services/section351_rules.py` (pure), `services/section351.py`, `routers/section351.py` (38 routes).
+
+### Roles (Joe, 2026-11-07 — Alpha Architect / ETF Architect's 351 Education Center, Cambria's 351 program)
+
+- **Sponsor.** A third-party ETF sponsor runs the new fund; 2nd Act is not an ETF issuer. A plan names its sponsor
+  from a **sponsor profile** (`public.section351_sponsor_profiles`: name, adviser / distributor, contact, launch
+  windows, and the eligibility rules below), edited by an org admin (`manage_org_settings`). **Every edit is a new
+  version** (valid axis: the live version is closed, never changed); a plan records the exact version row and its
+  number. The target ETF and the sponsor's trust are recorded as text (an open question until the sponsor is
+  chosen).
+- **2nd Act** is the members' adviser: it identifies candidates, runs the tests, collects consents and basis
+  records, and instructs the custodian. The sponsor runs the fund and its own final compliance review.
+
+### The rules and their citations (every result labelled "estimate — confirm with counsel")
+
+| Rule | Citation | rep14's reading (flagged for counsel) |
+|---|---|---|
+| Investment-company exception: tax-free only if EACH transferor's contribution is already diversified | IRC §351(e)(1); Treas. Reg. §1.351-1(c)(1), (c)(6)(i) applying §368(a)(2)(F)(ii) | Tested per account (one account = one transferor's contribution); two accounts of one person in one plan are tested separately |
+| ≤ 25 % of contributed value in any one issuer; ≤ 50 % in five or fewer issuers | §368(a)(2)(F)(ii) | Compared EXACTLY — 25.00 % / 50.00 % pass, 25.01 % / 50.01 % fail |
+| Government securities | Treas. Reg. §1.351-1(c)(6)(i) | In the total (denominator), never an issuer (numerator) — identified by `section351_asset_classes` 'government' (the master has no such field) |
+| Cash and cash items | §368(a)(2)(F)(iv) | Excluded from the total; the sponsor's default cash rule keeps cash in the account |
+| Fund (RIC) stock looked through to its assets | §368(a)(2)(F) (RIC / REIT look-through — clause to confirm) | A name held directly AND inside an ETF is one issuer (summed); weights normalised to the snapshot's total; holdings as-of shown; no holdings → FAILS CLOSED "holdings needed"; an unresolved constituent → fails closed |
+| Share classes / controlled groups are one issuer | §368(a)(2)(F)(ii) (§1563(a) controlled group) | Share classes grouped by SEC CIK; controlled groups NOT grouped (no data) — open item |
+| Control: transferors own ≥ 80 % of the ETF right after | §351(a), §368(c) | Contributors' share = Σ(contributed − cash to them) ÷ (that + non-contributor seed); 80.00 % passes, 79.99 % fails |
+| Carryover basis and tacked holding period | §358(a)(1) (shares), §362(a) / §1223(2) (fund), §1223(1) (holding period) | Per lot: the ETF shares split by each lot's FMV share; each slice keeps the lot's basis and acquisition date (Rev. Rul. 85-164 split holding periods) |
+| Boot is taxable | §351(b) | Cash to a member is allocated to lots by FMV and recognises gain up to each lot's gain (Rev. Rul. 68-55); no loss recognised; the plan receives ETF shares only by default, any cash leg shown as taxable |
+
+### Eligibility (sponsor-profile defaults — editable per profile)
+
+- **Owners:** U.S. persons only (confirmed by the adviser per account, with source and date); individual, joint
+  (an individual registration with two or more `account_owners`), trust and S-corp accounts eligible;
+  partnerships / LLCs "needs sponsor review" (ready only after the sponsor's recorded acceptance); C-corps and
+  non-U.S. persons refused. rep14 also refuses retirement / tax-exempt accounts (no gain to defer — **our rule**).
+- **Assets excluded and listed:** restricted or illiquid securities, derivatives (option legs; rep13 shorts are
+  never lots), crypto (`asset_type 'digital_asset'`), physical commodities, commodity pools, grantor trusts,
+  partnership interests; holdings not in the security master. Cash per the sponsor's rule.
+- **Accounts:** a replica account (an active model link) with lot-level data for every holding — each lot with its
+  basis AND acquisition date (average cost is not enough) — not held-away, authority **managed** (rep7b's word).
+  Today **no live account qualifies** (all 55 live open lots lack an acquisition date; no account follows a model).
+
+### "Harvesting has run dry" (thresholds per org, versioned — `public.section351_settings`)
+
+Run dry when ALL three hold: harvestable loss remaining ≤ 2 % of the account; unrealised gain ≥ 25 % of the
+account; the model link ≥ 3 years old (unknown → not met). Each check is shown next to its threshold. Benefit decay
+is shown next to year 1: losses harvested in the link's first tax year vs this year (rep6 loss bank), an estimate.
+
+### The fix-up proposal
+
+A failing account gets an optional proposal that makes it pass with the least estimated tax: greedy, deterministic —
+while the test fails, sell from the binding issuer (the largest when over 25 %, else the five largest) the lot that
+costs least tax per dollar raised (rep6 `tax_per_dollar` at the profile's combined rates; no profile → least gain
+per dollar, tax "not estimated"), only the whole shares that step needs, the proceeds into the account's model names
+outside the binding set. It is a NORMAL rep5 proposal (trigger manual, a person is the maker, lot method 'specific'
+with the picked lots) and goes through rep5's maker-checker. The stored trades are compared with the plan and the
+test is re-run on the proposal's own trades; the tax cost shown is the ENGINE's (the proposal's ST / LT gains at the
+profile's rates).
+
+### Operator flow
+
+1. Org admin: a sponsor profile (and, if wanted, the run-dry thresholds). Super Admin / adviser: classify the
+   government and other special securities the master does not mark (`section351_asset_classes`).
+2. Disclosure library: counsel reviews `section351.exit`; a person uploads the draft, a second Super Admin publishes
+   it (until then no plan can be ready — the disclosure is never text in code).
+3. Replication → Section 351 → Candidates: pick run-dry accounts. Test each at a valuation date; run the fix-up if
+   one fails (approve it through rep5, execute, then re-test).
+4. Create the plan (valuation date, target ETF, sponsor, seed capital): its eight-step tracker opens as human tasks
+   (counsel engaged → sponsor / trust selected → custodian confirms in-kind transfer → valuation date set → consents →
+   basis record delivered → transfer → confirmation), due dates over ~8 months, editable.
+5. Per account: U.S.-person confirmation, the member's written consent (a vault document, date, signer), the
+   member's tax adviser's confirmation (recorded, never inferred), acknowledge the in-force `section351.exit`
+   version, any cash leg (boot — taxable).
+6. Mark ready (every account re-tested; every gate shown when refused) → export the basis record (CSV + PDF in the
+   vault, a new version each time, totals reconcile to the plan to the cent) → submit → a different person approves
+   (the precheck re-runs every gate: a newly published disclosure needs re-acknowledgement).
+7. Approval issues one **in-kind transfer out** instruction per lot (`public.section351_transfers`). The adapter
+   route refuses unless the custodian declares `in_kind_transfers` (none does; the manual route is always offered):
+   print the instruction sheet, send it, mark it sent.
+8. When the custodian confirms: record the received date, the ETF (from the master) and the shares. The lots close
+   BY TRANSFER (`realized_gain_loss` NULL — nothing realised; the loss bank and realized YTD never see it), the
+   position is restated to what is left, and the ETF position gets one lot per contributed lot with its carryover
+   basis and tacked acquisition date.
+
+### Open for counsel (shown on the screens; never decided in code)
+
+1. The default `section351.exit` disclosure text (`docs/disclosures/defaults/section351.exit.md`).
+2. Fees: the sponsor's and any adviser fee on the new ETF are not modelled.
+3. Each reading in the table above — especially the look-through clause, government securities in the denominator,
+   per-transferor testing, controlled groups, the per-lot share split and asset-by-asset boot.
+4. Refusing retirement / tax-exempt accounts (our rule).
+
+### rep14 operator steps
+
+1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep14.py` (it runs its node test file,
+   `npm run build` and the verify_rep13.py regression itself).
+2. Add rep14's merge sha to `_verify_self.SPRINT_MERGES` when merged.
+3. Refresh `docs/schema_snapshot.sql`.
+4. Redeploy the API.

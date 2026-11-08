@@ -290,6 +290,8 @@ export const MENU_ITEMS = [
   tab("main", "portfolio", 20, "/portfolio/households", "Households", GATE_HOUSEHOLDS, false),
   // BULKAPPROVE1 — pending maker-checker items (authority & custody, held-away entries), decided many at once
   tab("main", "portfolio", 21, "/portfolio/approvals", "Approvals", GATE_APPROVALS, false),
+  // REP14 — the Section 351 exit planning (API view_proposals; the replication area layout adds view_replication)
+  tab("main", "portfolio", 22, "/portfolio/replication/section351", "Section 351", GATE_VIEW_PROPOSALS, false),
   { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
