@@ -34,6 +34,8 @@ the workflow tables).
 
 --self-checks-only: git / route / static self-checks only (no Doppler, database, npm). --cleanup-only: the teardown and
 the leftover check only. With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
+--sections a,b,… (S29B FIX 1): the seed, then only the named fixture sections (FIXTURE_SECTIONS names, plus 'real' /
+'routes'), then the full teardown and pre-test-count checks; no front end and no nested regression.
 """
 
 from __future__ import annotations
@@ -345,7 +347,8 @@ def fixture_scope(table: str) -> str:
         "public.organizations": f"id = ANY({orgs})",
         "public.user_roles": f"user_id = ANY({users})",
         "public.role_permissions": f"role_id IN (SELECT id FROM public.roles WHERE {by_org})",
-        "public.user_permission_sets": f"user_id = ANY({users})",
+        "public.user_permission_sets": f"user_id = ANY({users}) OR granted_by = ANY({users}) OR permission_set_id IN "
+                                       f"(SELECT id FROM public.permission_sets WHERE {by_org})",
         "public.user_identities": f"org_id = ANY({orgs}) OR user_id = ANY({users})",
         "public.sod_rules": f"org_id = ANY({orgs}) OR drafted_by = ANY({users}) OR checker_id = ANY({users})",
         "public.sod_decisions": f"org_id = ANY({orgs}) OR checker_id = ANY({users})",
@@ -416,7 +419,10 @@ TEARDOWN_PLAN_SQL = {
                                           "checker_id = ANY($2::uuid[])", 2),
     "public.user_person_links": ("user_id = ANY($1::uuid[]) OR person_user_id = ANY($1::uuid[])", 1),
     "public.user_roles": ("user_id = ANY($1::uuid[])", 1),
-    "public.user_permission_sets": ("user_id = ANY($1::uuid[])", 1),
+    # S29B FIX 1 — no org_id on this table, so the shared org sweep never reaches it: by fixture user (holder or
+    # grantor) and by fixture permission set (the sets live in the fixture orgs)
+    "public.user_permission_sets": ("user_id = ANY($2::uuid[]) OR granted_by = ANY($2::uuid[]) OR permission_set_id IN "
+                                    "(SELECT id FROM public.permission_sets WHERE org_id = ANY($1::uuid[]))", 2),
     "public.audit_log": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", 2),
     "public.member_todos": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", 2),
 }
@@ -847,9 +853,11 @@ async def seed(conn) -> None:
             await conn.execute("INSERT INTO profile_permissions (org_id, profile_id, permission_key) "
                                "VALUES ($1, $2, 'view_audit_log')", ORG_A, pr)
         # the actors HOLD the 'held' set and profile (a bundle edit by a holder is a self-grant)
+        # S29B FIX 1 — the live table is (user_id, permission_set_id, granted_at, granted_by): no org_id (the org is the
+        # permission set's). granted_by is a fixture user (U_A2 — another person, as a real grant would be).
         for uid in (U_A1, U_SA1):
-            await conn.execute("INSERT INTO user_permission_sets (user_id, permission_set_id, org_id) VALUES ($1, $2, "
-                               "$3)", uid, PSET, ORG_A)
+            await conn.execute("INSERT INTO user_permission_sets (user_id, permission_set_id, granted_by) VALUES ($1, "
+                               "$2, $3)", uid, PSET, U_A2)
             await conn.execute("UPDATE users SET profile_id = $2 WHERE id = $1", uid, PROFILE)
         for name, (d, v, _t, steps) in WF.items():
             xml = _bpmn(name, steps)
@@ -1555,6 +1563,16 @@ async def cleanup_only(conn) -> int:
     return 0 if _n_fail == 0 else 1
 
 
+FIXTURE_SECTIONS = (
+    ("floor", y_floor), ("eligibility", y_eligibility), ("switches + shadow", y_switches_shadow),
+    ("execution", y_execution), ("kill switches", y_kill), ("tier 1", y_tier1), ("events", y_events),
+    ("visibility", y_visibility), ("isolation", y_isolation),
+)
+#: --sections floor,eligibility,… (comma-separated FIXTURE_SECTIONS names, plus 'real' / 'routes'); None = full run
+ONLY = (set(x.strip() for x in sys.argv[sys.argv.index("--sections") + 1].split(","))
+        if "--sections" in sys.argv else None)
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1580,7 +1598,19 @@ async def main_async() -> int:
         await run("schema", y_schema, conn)
         if S.get("schema_ok"):
             await run("seed", seed, conn)
-        if S.get("seeded"):
+        if ONLY is not None:
+            # S29B FIX 1 — one-off: the seed, then ONLY the named fixture sections (in their normal order), then the
+            # same teardown + leftover + pre-test-count checks below. No front end, no nested regression.
+            if not S.get("seeded"):
+                check(False, "seed completed", "the requested sections were skipped")
+            else:
+                for name, fn in FIXTURE_SECTIONS:
+                    if name in ONLY:
+                        await run(name, fn, conn)
+            for name, fn in (("real", y_real), ("routes", y_routes)):
+                if name in ONLY:
+                    await run(name, fn, conn)
+        elif S.get("seeded"):
             await run("floor", y_floor, conn)
             await run("eligibility", y_eligibility, conn)
             await run("switches + shadow", y_switches_shadow, conn)
@@ -1595,9 +1625,10 @@ async def main_async() -> int:
             await run("isolation", y_isolation, conn)
         else:
             check(False, "seed completed", "every fixture-scoped section skipped")
-        await run("real", y_real, conn)
-        await run("routes", y_routes, conn)
-        await run("front end", y_front_end, conn)
+        if ONLY is None:
+            await run("real", y_real, conn)
+            await run("routes", y_routes, conn)
+            await run("front end", y_front_end, conn)
         check(NETWORK_CALLS == [] and MODEL_CALLS == [], "no network call and no model call during the whole run",
               f"{NETWORK_CALLS[:3]} {MODEL_CALLS[:3]}")
     finally:
@@ -1627,7 +1658,7 @@ async def main_async() -> int:
         await close_conn(conn)
         if S.get("no_teardown"):
             print(total_line())
-    if os.environ.get("VERIFY_NESTED") == "1":
+    if os.environ.get("VERIFY_NESTED") == "1" or ONLY is not None:
         print("[SKIP] nested run")
     else:
         try:
