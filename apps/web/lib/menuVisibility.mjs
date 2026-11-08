@@ -292,6 +292,8 @@ export const MENU_ITEMS = [
   tab("main", "portfolio", 21, "/portfolio/approvals", "Approvals", GATE_APPROVALS, false),
   // REP14 — the Section 351 exit planning (API view_proposals; the replication area layout adds view_replication)
   tab("main", "portfolio", 22, "/portfolio/replication/section351", "Section 351", GATE_VIEW_PROPOSALS, false),
+  // REP15 — platform-published models a firm subscribes to (API view_models; the replication layout adds view_replication)
+  tab("main", "portfolio", 23, "/portfolio/replication/catalog", "Model catalog", GATE_VIEW_MODELS, false),
   { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
@@ -357,6 +359,8 @@ export const MENU_ITEMS = [
   tab("platform", "controls", 4, "/admin/security-data/master", "Security master", GATE_SUPER_ADMIN, true),
   // PORTENTRY1 — the one-time position import for integrated accounts awaiting their custodian feed
   tab("platform", "controls", 5, "/admin/integrated-import", "Integrated import", GATE_SUPER_ADMIN, true),
+  // REP15 — the platform as a sub-adviser: provider record, publishing gate (OFF), subscribers (Super Admin)
+  tab("platform", "controls", 6, "/admin/model-provider", "Published models", GATE_SUPER_ADMIN, true),
   tab("platform", "ai_models", 1, "/admin/model-catalog", "Model Catalog", GATE_SUPER_ADMIN, true),
   // modelresearch.structural — STRICT: fails closed on a lost envelope. Its
   // gate is manage_org_settings, so an org admin sees the AI Models group too.

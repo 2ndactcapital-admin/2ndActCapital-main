@@ -92,7 +92,12 @@ RESERVED_PREFIX = "holdings of"
 R2_PREFIX = "models/uploads"
 
 SOURCE_LABELS = {"upload": "Uploaded file", "library_copy": "Library copy", "library_subscription": "Library subscription",
-                 "fund_replica": "Replicated fund", "composite": "Composite (sleeves)"}
+                 "fund_replica": "Replicated fund", "composite": "Composite (sleeves)",
+                 # rep15 — written only by services.model_provider (create_model refuses both)
+                 "provided": "Provided by a sub-adviser", "provided_copy": "Copy of a provided model"}
+PROVIDED_SOURCES = ("provided", "provided_copy")
+PROVIDED_READ_ONLY = ("a provided model is read-only — its versions come only from the provider (copy it into your "
+                      "registry to change it)")
 MODEL_STATUS_LABELS = {"draft": "Draft", "active": "Active", "retired": "Retired"}
 VERSION_STATUS_LABELS = {"draft": "Draft", "submitted": "Awaiting approval", "approved": "Approved",
                          "superseded": "Superseded", "rejected": "Rejected", "abandoned": "Abandoned"}
@@ -249,10 +254,30 @@ def check_name(name: str, source: str, kind: str = "long_only") -> str:
         if not n.lower().startswith(RESERVED_PREFIX + " "):
             raise ModelError('a long/short model is named "Holdings of …" (e.g. "Holdings of <sub-adviser> 130/30")')
         return n
+    if source in PROVIDED_SOURCES:  # rep15 — a provided model and its copies keep "Holdings of …" (the CHECK agrees)
+        if not n.lower().startswith(RESERVED_PREFIX + " "):
+            raise ModelError('a provided model (and a copy of one) is named "Holdings of …"')
+        return n
     if source != "fund_replica" and n.lower().startswith(RESERVED_PREFIX):
         raise ModelError("names beginning \"Holdings of\" are reserved for models built from a fund or a 13F filer "
                          "— choose another name")
     return n
+
+
+def refuse_provided(model: dict) -> None:
+    """rep15: a provided (mirror) model is never edited, re-drafted, re-sleeved or renamed by its tenant (the
+    trigger portfolio.provided_model_guard refuses it in the database too)."""
+    if model.get("source") == "provided":
+        raise ModelConflict(PROVIDED_READ_ONLY)
+
+
+async def provided_guard(conn, org_id, model: dict) -> None:
+    """rep15: a provided model's version is submitted / approved only while the gate is open and the subscription
+    is active (services.model_provider.assert_adoptable)."""
+    if model.get("source") == "provided":
+        from services import model_provider as PM
+
+        await PM.assert_adoptable(conn, org_id, model)
 
 
 async def _archive(conn, table: str, row_id) -> str:
@@ -568,6 +593,8 @@ async def create_model(conn, *, org_id, actor_id, name: str, source: str, descri
         raise ModelError(f"unknown model source {source!r}")
     if source == "fund_replica":
         raise ModelError("fund-replica models are created from the Replication registry (rep4), not here")
+    if source in PROVIDED_SOURCES:
+        raise ModelError("provided models come from a subscription to the model catalog (rep15), not here")
     if long_short is not None and source != "upload":
         raise ModelError("a long/short model is an uploaded model (a sub-adviser's target weights)")
     n = check_name(name, source, "long_short" if long_short else "long_only")
@@ -633,6 +660,7 @@ async def update_model(pool, *, org_id, actor_id, model_id, changes: dict) -> di
     async with pool.acquire() as conn:
         await HT.assert_human(conn, actor_id, org_id)
         model = await load_model(conn, org_id, model_id, lock=True)
+        refuse_provided(model)
         fields: dict[str, Any] = {}
         if "name" in changes:
             fields["name"] = check_name(changes["name"], model["source"])
@@ -776,6 +804,7 @@ async def set_sleeves(pool, *, org_id, actor_id, model_id, version_id, sleeves: 
         await HT.assert_human(conn, actor_id, org_id)
         tol = await tolerance_pct(conn, org_id)
         model = await load_model(conn, org_id, model_id)
+        refuse_provided(model)
         version = await load_version(conn, org_id, model_id, version_id, lock=True)
         _need_draft(version)
         before = await sleeves_of(conn, version["id"])
@@ -814,6 +843,7 @@ async def new_draft(pool, *, org_id, actor_id, model_id) -> dict:
     async with pool.acquire() as conn:
         await HT.assert_human(conn, actor_id, org_id)
         model = await load_model(conn, org_id, model_id)
+        refuse_provided(model)
         live = await live_approved(conn, model["id"])
         if live is None:
             raise ModelConflict("there is no approved version to start from — upload a file or edit the open draft")
@@ -884,6 +914,7 @@ async def edit_positions(pool, *, org_id, actor_id, model_id, version_id, change
         await HT.assert_human(conn, actor_id, org_id)
         tol = await tolerance_pct(conn, org_id)
         model = await load_model(conn, org_id, model_id)
+        refuse_provided(model)
         version = await load_version(conn, org_id, model_id, version_id, lock=True)
         _need_draft(version)
         current = {p["row_num"]: p for p in await positions_of(conn, version["id"])}
@@ -954,6 +985,7 @@ async def submit(pool, *, org_id, actor_id, model_id, version_id) -> dict:
         actor = await HT.assert_human(conn, actor_id, org_id)
         tol = await tolerance_pct(conn, org_id)
         model = await load_model(conn, org_id, model_id)
+        await provided_guard(conn, org_id, model)          # rep15 — adoption needs the gate + an active subscription
         version = await load_version(conn, org_id, model_id, version_id)
         _need_draft(version)
         totals = _loads(version["totals"]) or {}
@@ -1110,7 +1142,9 @@ async def decide(pool, *, org_id, actor_id, model_id, version_id, outcome: str, 
     await sync_task_outcome(pool, org_id=org_id, model_id=model_id, version_id=version_id)
     async with pool.acquire() as conn:
         actor = await HT.assert_human(conn, actor_id, org_id)
-        await load_model(conn, org_id, model_id)
+        dm = await load_model(conn, org_id, model_id)
+        if outcome == "approve":
+            await provided_guard(conn, org_id, dm)          # rep15
         v = await load_version(conn, org_id, model_id, version_id)
         if v["status"] != "submitted":
             if v["status"] == "approved":
@@ -1388,9 +1422,15 @@ async def publish_entry(pool, *, org_id, actor_id, is_super_admin: bool, is_org_
         model_org = str(org_id)
     async with pool.acquire() as conn:
         await HT.assert_human(conn, actor_id, model_org if shelf == "platform" else org_id)
+        if shelf == "platform":     # rep15 — the platform shelf reaches every org: the same gate for real orgs
+            from services import model_provider as PM
+
+            why = await PM.platform_shelf_refusal(conn, org_id=org_id, actor_id=actor_id, publishing=True)
+            if why:
+                raise ModelConflict(why)
         model = await load_model(conn, model_org, model_id)
-        if model["source"] == "library_subscription" or model["source"] == "library_copy":
-            raise ModelError("a model loaded from the library cannot be republished")
+        if model["source"] in ("library_subscription", "library_copy") or model["source"] in PROVIDED_SOURCES:
+            raise ModelError("a model loaded from the library or a provider cannot be republished")
         if model.get("kind") == "long_short":      # rep13 — platform-published models are rep15
             raise ModelError(f"{model['name']} is a long/short model — it is not published to the library (a "
                              "sub-adviser's weights stay with the org that holds the agreement)")
@@ -1461,6 +1501,12 @@ async def _load_from_library(pool, *, org_id, actor_id, entry_id, name: str | No
     async with pool.acquire() as conn:
         await HT.assert_human(conn, actor_id, org_id)
         entry = await _entry(conn, org_id, entry_id)
+        if entry["shelf"] == "platform":     # rep15 — a REAL org loads from the platform shelf only behind the gate
+            from services import model_provider as PM
+
+            why = await PM.platform_shelf_refusal(conn, org_id=org_id, actor_id=actor_id, publishing=False)
+            if why:
+                raise ModelConflict(why)
         if entry["requires_agreement"] and not await has_agreement(conn, org_id, entry["id"]):
             raise ModelConflict("this library entry requires an agreement on file — an org admin must confirm it "
                                 "before the model can be copied or subscribed to")
@@ -2049,7 +2095,13 @@ def model_out(m: dict) -> dict:
             "kind_label": "Long/short" if m.get("kind") == "long_short" else "Long only",
             "gross_long": _num(m.get("gross_long")), "gross_short": _num(m.get("gross_short")),
             "signal_source": m.get("signal_source"), "signal_as_of": _iso(m.get("signal_as_of")),
-            "short_exclusions": _loads(m.get("short_exclusions")) or []}
+            "short_exclusions": _loads(m.get("short_exclusions")) or [],
+            # rep15 — a provided model is read-only to its tenant and names its sub-adviser
+            "read_only": m.get("source") == "provided",
+            "provided_by": m.get("provider_name") if m.get("source") == "provided" else None,
+            "provided_by_label": f"Provided by {m.get('provider_name')}" if m.get("source") == "provided" else None,
+            "provided_subscription_id": str(m["provided_subscription_id"]) if m.get("provided_subscription_id")
+            else None}
 
 
 def position_out(p: dict) -> dict:

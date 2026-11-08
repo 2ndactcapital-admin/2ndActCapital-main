@@ -342,6 +342,34 @@ This file starts with the email item below.
 ---
 
 
+## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. REP15 — Replication Studio phase 4 ENDS: PLATFORM-PUBLISHED MODELS AND TENANT SUBSCRIPTIONS behind a regulatory gate that is OFF; provider record, catalog publishing (maker-checker), subscriptions (cross-org maker-checker, agreement by version), read-only mirrors + adoption, cross-org isolation, the model-provider fee to the GL; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
+
+Branch rep15-work. Full description and the operator flow: docs/REPLICATION_STUDIO.md, "rep15". Task 1 findings: docs/REP15_DISCOVERY.md.
+
+**What was built**
+- **Schema.** `docs/rep15_part1.sql`, APPLIED (`_apply_rep15.py --all`: SCHEMA OK). Writes NO rows — the real platform org's gate is OFF (no row). Nine new `portfolio` tables, RLS on every operation, delete only on the fixture path: `model_providers`, `model_publishing_gates`, `catalog_models`, `catalog_versions` (immutable once published), `provider_subscriptions`, `provider_fee_accruals` (valid axis, the formula a CHECK), `provider_fee_invoices` + `_lines` (append-only), `model_provider_events`. SECURITY DEFINER: `model_publishing_open`, `model_provider_complete`, `model_provider_org_allowed`, `provider_tenant_allowed`, `catalog_visible`, `catalog_model_provider`, `provider_subscription_status`, `provider_model_usage` (THE asset definition). Triggers back the gate in the database. rep3 learns sources `provided` / `provided_copy` (trigger-checked references, not FKs — the FKs would have formed table cycles no teardown can order); `fn_guard_posted_lines` gets the narrow fixture-teardown path (`ledger.teardown`, is_test orgs only); `disclosure_ack_subject_chk` adds `model_subscription`.
+- **Service / routes / UI.** `services/model_provider.py`; `routers/model_provider.py` (28 routes; AUTHZ1_ROUTES and VISIBILITY1_ROUTES regenerated, `--check` CURRENT). Hooks: rep3 (read-only mirror, adoption guard on submit / approve, platform-shelf gate for real orgs), rep5 (a provided model joins only while the gate is open and the subscription active), rep5 proposal detail (`provider_notice`), disclosures (three keys, `NO_PLATFORM_DEFAULT`, the member-notice fallback + default file). Human-task kinds: `catalog_version_publish`, `provided_subscription_approval`, `provided_version_available`, `provided_model_move_account`. Web: Replication → Model catalog, Platform → Published models, the `/api/model-catalog` and `/api/model-provider` proxies, `lib/modelProvider.mjs` (fails closed), `tests/replication/rep15.test.mjs` 12/12.
+
+**Findings**
+- rep3's platform library shelf was an ungated "publish to every tenant" path (0 live entries) — now gated for real orgs.
+- The Hollisworks platform org has no general ledger; the spec says the fee is owed to 2nd Act → `ledger_org_id` on the provider record (provider org by default), an operator decision.
+- The defaults loader demanded a default for every key — the ADV and the agreement must never be text in code (`NO_PLATFORM_DEFAULT`).
+- Publishing a long/short model is refused (not built: rep13's short book is outside the version's positions).
+- A multi-day fee proof needs links older than a verify run: verify_rep15 proves the period formula end to end on a 3-day period (one accrued day) and the 30-day identity on a synthetic series.
+
+**Not run:** verify_rep15.py, the verify_rep13.py regression, npm build, the full node suite (WSL memory). Ran: `_apply_rep15.py --all` (SCHEMA OK), `authz1_routes.py --check` and `visibility1_routes.py --check` (CURRENT), rep15's node tests (12/12) plus the nav / member-isolation / bulkapprove / disclosures1 / rep3 / rep14 node tests (76/76).
+
+**Operator / Joe items:** the registered adviser entity decision (legal name, SEC / CRD, effective date); the ADV Part 2A (library, provider-org scope); the sub-advisory agreement text (library, platform default + any tenant version — counsel); the fee bps per model; which org's books carry the revenue; counsel review + load of the member-notice default; Hollisworks Super Admins acting as users of the Hollisworks org; wiring the daily accrual to the nightly tick once the gate opens.
+
+**Operator steps**
+1. Run verify_rep15.py (it runs its node test file, npm build and the verify_rep13.py regression).
+2. Add the merge sha to `_verify_self.SPRINT_MERGES`.
+3. Refresh the schema snapshot.
+4. Redeploy the API.
+
+---
+
+
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. REP14 — Replication Studio phase 4: the SECTION 351 EXIT (planning side, manual-first): candidates, the 25 % / 50 % test with fund look-through, the fix-up proposal, the pool's control test, the carryover basis record, consents + tracker, in-kind transfer instructions; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
 
 Branch rep14-work. Full description, rules with citations and the operator flow: docs/REPLICATION_STUDIO.md, "rep14". Task 1 findings: docs/REP14_DISCOVERY.md.

@@ -1,5 +1,5 @@
 {
- "app_route_count": 930,
+ "app_route_count": 958,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -16692,6 +16692,550 @@
    "name": "s351_add_platform_class",
    "note": "",
    "path": "/api/v1/section351/asset-classes/platform",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_catalog",
+   "note": "",
+   "path": "/api/v1/model-catalog",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_subscriptions",
+   "note": "",
+   "path": "/api/v1/model-catalog/subscriptions",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_tenant_fees",
+   "note": "",
+   "path": "/api/v1/model-catalog/fees",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_acknowledge",
+   "note": "",
+   "path": "/api/v1/model-catalog/{catalog_model_id}/acknowledge",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_subscribe",
+   "note": "",
+   "path": "/api/v1/model-catalog/{catalog_model_id}/subscribe",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_tenant_end",
+   "note": "",
+   "path": "/api/v1/model-catalog/subscriptions/{subscription_id}/end",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_adopt",
+   "note": "",
+   "path": "/api/v1/model-catalog/subscriptions/{subscription_id}/adopt",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_refresh",
+   "note": "",
+   "path": "/api/v1/model-catalog/subscriptions/{subscription_id}/refresh",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_copy",
+   "note": "",
+   "path": "/api/v1/model-catalog/subscriptions/{subscription_id}/copy",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_subscribers",
+   "note": "",
+   "path": "/api/v1/model-provider/subscribers",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_provider_state",
+   "note": "",
+   "path": "/api/v1/model-provider",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_save_provider",
+   "note": "",
+   "path": "/api/v1/model-provider/provider",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_gate_open",
+   "note": "",
+   "path": "/api/v1/model-provider/gate/open",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_gate_close",
+   "note": "",
+   "path": "/api/v1/model-provider/gate/close",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_publishing",
+   "note": "",
+   "path": "/api/v1/model-provider/publishing",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_publishable",
+   "note": "",
+   "path": "/api/v1/model-provider/models/{model_id}/publishable",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_withdraw",
+   "note": "",
+   "path": "/api/v1/model-provider/catalog-models/{catalog_model_id}/withdraw",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_request_publish",
+   "note": "",
+   "path": "/api/v1/model-provider/catalog-models/{catalog_model_id}/publish",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_decide_publish",
+   "note": "",
+   "path": "/api/v1/model-provider/catalog-versions/{catalog_version_id}/decide",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_retire",
+   "note": "",
+   "path": "/api/v1/model-provider/catalog-versions/{catalog_version_id}/retire",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_decide_subscription",
+   "note": "",
+   "path": "/api/v1/model-provider/subscriptions/{subscription_id}/decide",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_suspend",
+   "note": "",
+   "path": "/api/v1/model-provider/subscriptions/{subscription_id}/suspend",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_resume",
+   "note": "",
+   "path": "/api/v1/model-provider/subscriptions/{subscription_id}/resume",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_provider_end",
+   "note": "",
+   "path": "/api/v1/model-provider/subscriptions/{subscription_id}/end",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_accrue",
+   "note": "",
+   "path": "/api/v1/model-provider/fees/accrue",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_invoices",
+   "note": "",
+   "path": "/api/v1/model-provider/fees/invoices",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_invoice",
+   "note": "",
+   "path": "/api/v1/model-provider/fees/invoices",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.model_provider",
+   "name": "mp_correct",
+   "note": "",
+   "path": "/api/v1/model-provider/fees/invoices/{invoice_id}/correct",
    "public": false,
    "write": true
   },

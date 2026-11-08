@@ -1927,6 +1927,9 @@ async def detail(conn, org_id, proposal_id) -> dict:
     from services import authority as AU
 
     out["account_authority"] = AU.authority_out(account)                     # rep7b
+    from services import model_provider as PM
+
+    out["provider_notice"] = await PM.proposal_notice(conn, org_id, p)       # rep15 — provided by a sub-adviser
     return out
 
 
