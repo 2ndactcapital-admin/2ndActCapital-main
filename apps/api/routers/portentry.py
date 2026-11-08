@@ -57,6 +57,7 @@ from services.authz import (
     require_super_admin,
 )
 from services.database import get_pool
+from services import sod  # S30 — the ONE maker-checker rule
 
 router = APIRouter(tags=["portentry"])
 WRITE = "manage_members"
@@ -520,7 +521,7 @@ async def get_integrated(request: Request, import_id: UUID):
             imp = II.import_out(await II.get_import(conn, get_org_id(request), import_id))
         except Exception as exc:  # noqa: BLE001
             _raise(exc)
-    imp["actions"] = (["approve", "reject"] if imp["status"] == "draft" and imp["entered_by"] != str(p.user_id)
+    imp["actions"] = (["approve", "reject"] if imp["status"] == "draft" and sod.may_check_display(p.user_id, [imp["entered_by"]])
                       else [])
     # BUGFIX4 — the maker of a draft sees WHO entered it (and that their sign-ins are one person), not a bare refusal
     from services.maker_names import entered_by_note

@@ -41,6 +41,7 @@ from routers.entities import get_org_id
 from services import disclosures as DL
 from services.authz import require_active, require_permission, require_super_admin
 from services.database import get_pool
+from services import sod  # S30 — the ONE maker-checker rule
 
 router = APIRouter(tags=["disclosures"])
 
@@ -116,7 +117,7 @@ def _version_actions(v: dict, principal) -> list[str]:
     if v["scope"] == "platform" and not principal.is_super_admin:
         return []
     out = []
-    if v["status"] == "draft" and v["drafted_by"] != str(principal.user_id):
+    if v["status"] == "draft" and sod.may_check_display(principal.user_id, [v["drafted_by"]]):
         out.append("publish")
     if v["status"] in ("draft", "published"):
         out.append("retire")

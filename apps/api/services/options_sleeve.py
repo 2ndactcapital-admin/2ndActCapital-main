@@ -60,6 +60,7 @@ import asyncpg
 from services import human_tasks as HT
 from services import models as M
 from services import replica_terms as T
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -1036,8 +1037,9 @@ async def _apply_decision(pool, org_id, task: dict, outcome: str, actor_id, note
             if row is None or row["status"] != "draft":
                 return dict(row) if row else None
             p = dict(row)
-            if str(actor_id) in {str(m) for m in p["maker_ids"] or []}:
-                raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+            await sod.gate(conn, org_id=org_id, item_type=sod.OPTION_PACKAGE, checker_id=actor_id,
+                           maker_ids=list(p["maker_ids"] or []), item_id=p["id"], site="options_sleeve._apply_decision",
+                           refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
             now = datetime.now(timezone.utc)
             if outcome == "approve":
                 if p["rolled_from_id"]:
@@ -1084,8 +1086,10 @@ async def decide_package(pool, *, org_id, actor_id, package_id, outcome: str, no
         p = await load_package(conn, org_id, package_id)
     if p["status"] != "draft" or not p["approval_task_id"]:
         raise OptionsConflict(f"package #{p['package_no']} is not awaiting approval")
-    if str(actor["id"]) in {str(m) for m in p["maker_ids"] or []}:
-        raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.OPTION_PACKAGE, checker_id=actor["id"],
+                       maker_ids=list(p["maker_ids"] or []), item_id=p["id"], site="options_sleeve.decide_package",
+                       refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
     try:
         await HT.complete_task(pool, org_id=org_id, task_id=p["approval_task_id"], actor_id=actor["id"],
                                outcome=outcome, note=note)
@@ -1345,7 +1349,7 @@ def actions_for(p: dict, *, can_manage: bool, can_approve: bool, user_id, task_o
         out.append("price")
         if not p.get("approval_task_id") and not needs:
             out.append("submit")
-    if p["status"] == "draft" and task_open and can_approve is True and str(user_id) not in makers:
+    if p["status"] == "draft" and task_open and can_approve is True and sod.may_check_display(user_id, makers):
         out += ["approve", "reject"]
     return out
 

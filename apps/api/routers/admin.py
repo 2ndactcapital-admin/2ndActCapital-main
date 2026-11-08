@@ -61,7 +61,7 @@ from services.rbac import (
     require_permission,
 )
 from services.users import ensure_user
-from services import authz, user_admin
+from services import authz, sod_admin, user_admin
 
 router = APIRouter(tags=["admin"])
 
@@ -98,6 +98,9 @@ class AdminUser(BaseModel):
     # profile selector alongside the untouched role dropdown.
     profile_id: UUID | None = None
     profile_name: str | None = None
+    # S30 — segregation-of-duties warnings returned by a role grant: a combination that lets this person both make
+    # and check the same item type, with the rules that still stop them per item (never a block by itself).
+    sod_warnings: list[dict] | None = None
     # Multi-tenant Sprint 2 added invite columns to `users`, but this list never
     # selected them, so an invited (pending) account was indistinguishable from
     # an enrolled one — the screen hardcoded every row as "Active". Surfacing it
@@ -589,6 +592,13 @@ async def assign_role(request: Request, user_id: UUID, body: RoleAssignRequest):
             # someone who holds it, is a Super Admin's act: an org admin holding manage_members can no longer
             # promote anyone (themselves included) to platform staff.
             await _forbid_super_grant(conn, request, target_id=user_id, role_name=role["name"])
+            # S30 — granting YOURSELF a role is a floor conflict (services.sod: persons, not logins; Super Admin
+            # included) once the org's enforce_floor is on for role grants; the decision is recorded.
+            try:
+                sod_decision = await sod_admin.check_role_grant(conn, org_id=org_id, actor_id=actor_id,
+                                                                target_user_id=user_id, what="role")
+            except sod_admin.SoDAdminRefused as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
 
             await conn.execute("DELETE FROM user_roles WHERE user_id = $1", user_id)
             await conn.execute(
@@ -607,6 +617,8 @@ async def assign_role(request: Request, user_id: UUID, body: RoleAssignRequest):
             from services.rbac import sync_role_string
 
             await sync_role_string(conn, user_id)
+            sod_warnings = sod_admin.grant_warnings(
+                sod_decision, await sod_admin.person_conflicts(conn, org_id=org_id, user_id=user_id))
 
         await write_audit_log(
             conn,
@@ -625,6 +637,7 @@ async def assign_role(request: Request, user_id: UUID, body: RoleAssignRequest):
         full_name=target["full_name"],
         role=role["name"],
         role_id=role["id"],
+        sod_warnings=sod_warnings,
     )
 
 
@@ -1047,6 +1060,13 @@ async def link_pending_login(request: Request, user_id: UUID, body: LinkPendingR
                 )
                 linked_as = "operator"
             await _close_pending_todos(conn, target_org, pending["id"])
+            # S30 — the retired row IS this person: services.sod compares people, not login rows, so an item the
+            # retired sign-in made can never be checked by the person it was linked to.
+            await conn.execute(
+                "INSERT INTO user_person_links (user_id, person_user_id, org_id, linked_via) "
+                "VALUES ($1, $2, $3::uuid, 'operator') ON CONFLICT (user_id) DO NOTHING",
+                pending["id"], target["id"], target_org,
+            )
         for record_id, new in (
             (pending["id"], {"status": "retired", "linked_to": str(target["id"]),
                              "linked_as": linked_as, "actor": str(actor_id)}),

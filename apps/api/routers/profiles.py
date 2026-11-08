@@ -457,6 +457,14 @@ async def assign_permission_set(request: Request, set_id: UUID, body: UserAssign
         keys = [r["permission_key"] for r in await conn.fetch(
             "SELECT permission_key FROM permission_set_permissions WHERE permission_set_id = $1", set_id)]
         await _refuse_staff_only_for_member(conn, org_id, body.user_id, keys, "permission set")
+        # S30 — granting YOURSELF a permission set is the same floor as a role (services.sod_admin)
+        from services import sod_admin
+
+        try:
+            sod_decision = await sod_admin.check_role_grant(conn, org_id=org_id, actor_id=actor_id,
+                                                            target_user_id=body.user_id, what="permission set")
+        except sod_admin.SoDAdminRefused as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         await conn.execute(
             """
             INSERT INTO user_permission_sets (user_id, permission_set_id, granted_by)
@@ -465,7 +473,9 @@ async def assign_permission_set(request: Request, set_id: UUID, body: UserAssign
             """,
             body.user_id, set_id, actor_id,
         )
-    return {"ok": True}
+        warnings = sod_admin.grant_warnings(
+            sod_decision, await sod_admin.person_conflicts(conn, org_id=org_id, user_id=body.user_id))
+    return {"ok": True, "sod_warnings": warnings}
 
 
 @router.delete("/admin/permission-sets/{set_id}/users/{user_id}", status_code=200)

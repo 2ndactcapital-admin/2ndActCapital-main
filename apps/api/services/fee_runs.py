@@ -85,6 +85,7 @@ from services.fee_run_inputs import (
     snapshot_hash,
 )
 from services.fee_schedules import resolve_assignment_for_account
+from services import sod  # S30 — the ONE maker-checker rule
 
 T_RUNS = "public.fee_runs"
 T_LINES = "public.fee_run_lines"
@@ -743,7 +744,10 @@ async def approve(
             f"without a proposal is a single-party approval wearing two hats",
             run_id=run_id, gate=gate,
         )
-    if str(proposal["proposed_by"]) == str(approved_by):
+    _d = await sod.can_check(conn, org_id=org_id, item_type=sod.FEE_RUN, checker_id=approved_by,
+                             maker_ids=[proposal["proposed_by"]], item_id=run_id, site="fee_runs.approve")
+    if _d.refused:
+        await sod.record_refusal(_d, site="fee_runs.approve")
         raise MakerCheckerError(
             f"user {approved_by} proposed the {gate} approval of fee_run "
             f"{run_id} and cannot also approve it",

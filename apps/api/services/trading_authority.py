@@ -33,6 +33,7 @@ cannot approve their own proposal.
 """
 import json
 from decimal import Decimal
+from services import sod  # S30 — the ONE maker-checker rule
 
 INQUIRY = "inquiry"
 LIMITED = "limited"
@@ -129,7 +130,9 @@ def assert_maker_checker(proposed_by, approved_by) -> None:
     Applies regardless of the approver's role, permission set, or tier — a
     'full'-authority user still cannot approve their own proposal.
     """
-    if str(proposed_by) == str(approved_by):
+    # S30 — the same rule as services.sod, without its one read (login ids); approve_money_movement itself now
+    # decides through sod.enforce (persons). Kept for callers that hold no connection.
+    if not sod.may_check_display(approved_by, [proposed_by]):
         raise MakerCheckerError(
             "approver must differ from proposer (maker-checker): a user cannot "
             "approve their own money-movement proposal"
@@ -197,8 +200,12 @@ async def approve_money_movement(pool, org_id, activity_id, approver_id) -> dict
                 f"activity {activity_id} is {row['status']!r}, not 'proposed'"
             )
 
-        # Maker-checker first — independent of any tier the approver may hold.
-        assert_maker_checker(row["proposed_by"], approver_id)
+        # Maker-checker first — independent of any tier the approver may hold. S30: the ONE rule (services.sod).
+        await sod.enforce(conn, org_id=org_id, item_type=sod.MONEY_MOVEMENT, checker_id=approver_id,
+                          maker_ids=[row["proposed_by"]], item_id=activity_id, site="trading_authority.approve_money_movement",
+                          refuse=lambda d: MakerCheckerError(
+                              "approver must differ from proposer (maker-checker): a user cannot "
+                              "approve their own money-movement proposal"))
 
         # The checker must themselves be authorized (>= limited) for the entity.
         approver_tier = await conn.fetchval(

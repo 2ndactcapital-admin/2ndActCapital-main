@@ -45,6 +45,7 @@ from decimal import Decimal
 from typing import Any
 
 from services import human_tasks as HT
+from services import sod  # S30 — the ONE maker-checker rule
 
 T_INS = "public.execution_instructions"
 T_LOT = "public.execution_instruction_lots"
@@ -405,8 +406,9 @@ async def _verify_upstream(conn, org_id, acct: dict, trade_list, upstream: dict)
         raise ExecutionError("only an approved proposal made by a person carries its approval to instructions")
     if str(p["maker_id"]) != str(upstream.get("maker_id")) or str(p["checker_id"]) != str(upstream.get("checker_id")):
         raise ExecutionError("the upstream maker / checker do not match the proposal's")
-    if p["maker_id"] == p["checker_id"]:
-        raise MakerCheckerViolation("maker-checker: the proposal's maker cannot be its checker")
+    await sod.gate(conn, org_id=org_id, item_type=sod.REBALANCE_PROPOSAL, checker_id=p["checker_id"],
+                   maker_ids=[p["maker_id"]], item_id=p["id"], site="execution._verify_upstream",
+                   refuse=lambda d: MakerCheckerViolation("maker-checker: the proposal's maker cannot be its checker"))
     task = await HT.get_task(conn, org_id, p["approval_task_id"]) if p["approval_task_id"] else None
     if not task or task["status"] != "completed" or task["outcome"] != "approve" \
             or task["completed_by"] != str(p["checker_id"]):
@@ -620,8 +622,9 @@ async def _apply_outcome(pool, org_id, task: dict, outcome: str, actor_id, note)
                 return dict(row) if row else None
             row = dict(row)
             if outcome == "approve":
-                if uuid.UUID(str(actor_id)) in row["maker_ids"]:
-                    raise MakerCheckerViolation("maker-checker: a maker of this instruction cannot approve it")
+                await sod.gate(conn, org_id=task["org_id"], item_type=sod.EXECUTION_INSTRUCTION, checker_id=actor_id,
+                               maker_ids=list(row["maker_ids"] or []), item_id=row["id"], site="execution._apply_outcome",
+                               refuse=lambda d: MakerCheckerViolation("maker-checker: a maker of this instruction cannot approve it"))
                 new = await _update(conn, row["id"], {"status": "approved", "approved_by": uuid.UUID(str(actor_id)),
                                                       "approved_at": datetime.now(timezone.utc)})
                 ref = await _event(conn, org_id=org_id, instruction_id=row["id"], action="approve",
@@ -699,10 +702,12 @@ async def decide(pool, *, org_id, instruction_id, actor_id, outcome: str, note: 
         actor = await _human(conn, actor_id, org_id)
         row = await load(conn, org_id, instruction_id)
     _need(row, ("pending_approval",), "approve or reject")
-    if actor["id"] in row["maker_ids"]:
-        raise MakerCheckerViolation(
-            "maker-checker: you made, edited or submitted this instruction, so a different holder of "
-            f"{APPROVE} must {outcome} it")
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.EXECUTION_INSTRUCTION, checker_id=actor["id"],
+                       maker_ids=list(row["maker_ids"] or []), item_id=row["id"], site="execution.decide",
+                       refuse=lambda d: MakerCheckerViolation(
+                                   "maker-checker: you made, edited or submitted this instruction, so a different holder of "
+                                   f"{APPROVE} must {outcome} it"))
     try:
         done = await HT.complete_task(pool, org_id=org_id, task_id=row["approval_task_id"], actor_id=actor["id"],
                                       outcome=outcome, note=note)
@@ -1175,7 +1180,7 @@ def actions_for(row: dict, *, can_write: bool, can_approve: bool, user_id, task_
             acts += ["reconcile"]
         elif s == "reconciled":
             acts += ["close"]
-    if can_approve and s == "pending_approval" and task_open and str(user_id) not in makers:
+    if can_approve and s == "pending_approval" and task_open and sod.may_check_display(user_id, makers):
         acts += ["approve", "reject"]
     if row.get("approval_refused"):
         # rep7b — the account's authority refuses it (e.g. a pre-rep7 draft on a read-only held-away account)

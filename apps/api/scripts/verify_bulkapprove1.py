@@ -316,13 +316,18 @@ HELD_ROWS = [{"asset_kind": "private", "name": NAME + "Vineyard", "quantity": "1
 HELD_TOTAL = "902500.50"
 
 #: whole-table exact pre-test counts (tables only this script's fixtures should change during the run)
-COUNTED = ("public.users", "public.organizations", "public.roles", "public.user_roles", "public.role_permissions",
-           "public.entities", "public.households", "public.accounts", "public.household_authority",
+#: S30: the identity / role tables moved to FIXTURE_IDS — a real sign-in or role change during the run writes them
+#: (a whole-table count of a live table is frozen against live state, docs/VERIFY_RULES.md rule 6).
+COUNTED = ("public.entities", "public.households", "public.accounts", "public.household_authority",
            "public.account_authority_settings", "public.held_away_sources", "public.held_away_imports",
            "public.held_away_records", "portfolio.assets", "portfolio.positions", "portfolio.tax_lots")
 #: written by REAL activity during any run (sign-ins, HollisMuse mid-pass): counted under the fixture orgs only, by
 #: name — public.audit_log, public.domain_events, public.member_todos, public.workflow_runs, public.workflow_run_steps
 FIXTURE_SCOPED = ("public.audit_log", "public.domain_events", "public.member_todos", "public.workflow_runs")
+#: S30: counted by THIS script's fixture ids (orgs / users), never the whole table — audit_log by fixture org OR
+#: fixture user (exactly what the teardown deletes), the identity / role tables by their fixture keys.
+FIXTURE_IDS = ("public.audit_log", "public.users", "public.organizations", "public.roles", "public.user_roles",
+               "public.role_permissions")
 REAL_FINGERPRINTED = ("public.household_authority", "public.account_authority_settings", "public.held_away_imports",
                       "public.held_away_records", "public.held_away_sources", "public.accounts", "public.households",
                       "portfolio.positions")
@@ -384,11 +389,29 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
         return await getattr(conn, fetch)(sql, *args)
 
 
+def fixture_pred(table: str) -> str:
+    """S30 — the fixture-row predicate of a FIXTURE_IDS table ($1 = fixture orgs, $2 = fixture users)."""
+    return {
+        "public.audit_log": "org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])",
+        "public.users": "org_id = ANY($1::uuid[]) OR id = ANY($2::uuid[])",
+        "public.organizations": "id = ANY($1::uuid[]) AND cardinality($2::uuid[]) >= 0",
+        "public.roles": "org_id = ANY($1::uuid[]) AND cardinality($2::uuid[]) >= 0",
+        "public.user_roles": "user_id = ANY($2::uuid[]) AND cardinality($1::uuid[]) >= 0",
+        "public.role_permissions": "role_id IN (SELECT id FROM public.roles WHERE org_id = ANY($1::uuid[])) "
+                                   "AND cardinality($2::uuid[]) >= 0",
+    }[table]
+
+
 async def counts(conn) -> dict:
     out = {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
     for t in FIXTURE_SCOPED:
+        if t in FIXTURE_IDS:
+            continue
         out[t] = int(await platform(conn, f"SELECT count(*) FROM {t} WHERE org_id = ANY($1::uuid[])", FIXTURE_ORGS,
                                     fetch="fetchval"))
+    for t in FIXTURE_IDS:
+        out[t] = int(await platform(conn, f"SELECT count(*) FROM {t} WHERE {fixture_pred(t)}", FIXTURE_ORGS,
+                                    list(USERS), fetch="fetchval"))
     return out
 
 
@@ -615,6 +638,25 @@ async def y_fixtures(conn):
     u = await platform(conn, "SELECT count(*) FROM users WHERE id = ANY($1::uuid[]) AND is_test", list(USERS),
                        fetch="fetchval")
     check(bool(o == 2 and u == len(USERS)), "both fixture orgs and every fixture user are is_test = true", f"{o}/{u}")
+    # S30 — every fixture role is a user_roles grant the APP decides as meant (services.authz Principal: Super Admin
+    # first, then the role's own permissions); a grant the app does not honour would fake every gate below.
+    from services import authz as _AZ
+
+    bad = []
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        for uid, (org, _nm, rname, perms) in USERS.items():
+            names = [r["name"] for r in await conn.fetch(
+                "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 "
+                "AND r.org_id = $2", uid, org)]
+            pr = await _AZ.load_principal(conn, uid)
+            have = set(getattr(pr, "permissions", ()) or ())
+            keys = FULL | NO_APPROVE | HA_ONLY
+            if not (names == [rname] and pr is not None and pr.admitted and not pr.is_super_admin
+                    and (have & keys) == set(perms)):
+                bad.append((str(uid), names, sorted(have & keys)))
+    check(not bad, "every fixture role is a user_roles grant the app decides as meant (its permissions, exactly; "
+          "nobody Super Admin)", f"{bad}")
 
 
 # ═══ The real app, token stubbed by bearer string ═══════════════════════════════════════════════════════════════
@@ -1333,4 +1375,15 @@ async def main_async() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main_async()))
+    try:
+        rc = asyncio.run(main_async())
+    except BaseException as exc:  # noqa: BLE001 — S30: TOTAL on every exit path, the traceback printed
+        if isinstance(exc, SystemExit) and exc.code in (0, None):
+            raise
+        import traceback as _tb
+
+        _tb.print_exc()
+        check(False, "the verify crashed", f"{type(exc).__name__}: {exc}")
+        print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+        rc = 1
+    sys.exit(rc)

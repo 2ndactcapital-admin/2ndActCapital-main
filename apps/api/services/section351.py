@@ -46,6 +46,7 @@ from decimal import Decimal, localcontext
 from services import human_tasks as HT
 from services import rep10_common as C
 from services import section351_rules as R
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -1309,9 +1310,11 @@ async def decide(pool, *, org_id, actor_id, plan_id, outcome: str, note: str | N
         p = await load_plan(conn, org_id, plan_id)
     if p["status"] != "pending_approval":
         raise Section351Conflict(f"the plan is {PLAN_STATUS_LABELS[p['status']].lower()}, not awaiting approval")
-    if str(actor["id"]) in (str(p["maker_id"]), _s(p["submitted_by"])):
-        raise MakerCheckerViolation(f"maker-checker: you made or submitted this plan, so a different holder of "
-                                    f"{APPROVE} must {outcome} it")
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.SECTION351_PLAN, checker_id=actor["id"],
+                       maker_ids=[p["maker_id"], p["submitted_by"]], item_id=p["id"], site="section351.decide",
+                       refuse=lambda d: MakerCheckerViolation(f"maker-checker: you made or submitted this plan, so a different holder of "
+                                                            f"{APPROVE} must {outcome} it"))
     try:
         await C.complete(pool, org_id=org_id, task_id=p["approval_task_id"], actor_id=actor["id"], outcome=outcome,
                          note=note)
@@ -1344,8 +1347,9 @@ async def _apply(pool, task: dict, outcome: str, actor_id, note) -> dict | None:
             if p is None or p["status"] != "pending_approval":
                 return None
             checker = uuid.UUID(str(actor_id))
-            if checker in (p["maker_id"], p["submitted_by"]):
-                raise MakerCheckerViolation("maker-checker: the maker of a plan cannot approve it")
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.SECTION351_PLAN, checker_id=checker,
+                           maker_ids=[p["maker_id"], p["submitted_by"]], item_id=p["id"], site="section351._apply",
+                           refuse=lambda d: MakerCheckerViolation("maker-checker: the maker of a plan cannot approve it"))
             now = _now()
             if outcome != "approve":
                 row = await _update(conn, T_PLAN, p["id"], {"status": "draft", "decision_note": note,
@@ -2053,7 +2057,7 @@ def plan_actions(d: dict, *, can_write: bool, can_approve: bool, user_id) -> lis
         if s == "approved":
             out.append("cancel")
     me = str(user_id)
-    if s == "pending_approval" and can_approve and me not in (p["maker_id"], p.get("submitted_by")):
+    if s == "pending_approval" and can_approve and sod.may_check_display(me, [p["maker_id"], p.get("submitted_by")]):
         out += ["approve", "reject"]
     return out
 

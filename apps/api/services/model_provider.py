@@ -78,6 +78,7 @@ from services import disclosures as DL
 from services import human_tasks as HT
 from services import models as M
 from services.database import reset_rls_context, set_rls_context
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -690,9 +691,10 @@ async def _publish_precheck(pool, task, outcome, actor_id) -> None:
                                  "WHERE id = $1::uuid AND system_to IS NULL", task["subject_id"])
         if cv is None:
             raise HT.HumanTaskConflict("the catalog version behind this task is missing")
-        if str(cv["requested_by"]) == str(actor_id) or uuid.UUID(str(actor_id)) in (cv["version_maker_ids"] or []):
-            raise HT.MakerCheckerError("maker-checker: you requested this publication or made the model version — "
-                                       "a different Super Admin publishes it")
+        await sod.gate(conn, org_id=task["org_id"], item_type=sod.PROVIDER_CATALOG_VERSION, checker_id=actor_id,
+                       maker_ids=[cv["requested_by"], *(cv["version_maker_ids"] or [])], item_id=cv["id"], site="model_provider._publish_precheck",
+                       refuse=lambda d: HT.MakerCheckerError("maker-checker: you requested this publication or made the model version — "
+                                                                  "a different Super Admin publishes it"))
         await _assert_super_admin(conn, actor_id)
         if outcome == "approve" and not await is_open(conn, cv["provider_org_id"]):
             raise HT.HumanTaskConflict(GATE_REFUSAL)
@@ -733,9 +735,10 @@ async def decide_publish(pool, *, provider_org, actor_id, catalog_version_id, ou
         if cv["status"] != "pending":
             raise ProviderConflict(f"catalog version {cv['catalog_version_no']} is {cv['status']} — a published "
                                    "version is never changed")
-        if str(cv["requested_by"]) == str(actor_id) or uuid.UUID(str(actor_id)) in (cv["version_maker_ids"] or []):
-            raise MakerCheckerViolation("maker-checker: you requested this publication or made the model version — a "
-                                        "different Super Admin publishes it")
+        await sod.gate(conn, org_id=provider_org, item_type=sod.PROVIDER_CATALOG_VERSION, checker_id=actor_id,
+                       maker_ids=[cv["requested_by"], *(cv["version_maker_ids"] or [])], item_id=cv["id"], site="model_provider.decide_publish",
+                       refuse=lambda d: MakerCheckerViolation("maker-checker: you requested this publication or made the model version — a "
+                                                                "different Super Admin publishes it"))
         if outcome == "approve":
             await require_open(conn, provider_org)
     try:
@@ -964,8 +967,9 @@ async def _sub_precheck(pool, task, outcome, actor_id) -> None:
         if sub is None:
             raise HT.HumanTaskConflict("the subscription behind this task is missing")
         await _assert_super_admin(conn, actor_id)
-        if str(sub["requested_by"]) == str(actor_id):
-            raise HT.MakerCheckerError("maker-checker: you requested this subscription — a different person approves it")
+        await sod.gate(conn, org_id=task["org_id"], item_type=sod.PROVIDER_SUBSCRIPTION, checker_id=actor_id,
+                       maker_ids=[sub["requested_by"]], item_id=sub["id"], site="model_provider._sub_precheck",
+                       refuse=lambda d: HT.MakerCheckerError("maker-checker: you requested this subscription — a different person approves it"))
         if outcome == "approve":
             if not await is_open(conn, sub["provider_org_id"]):
                 raise HT.HumanTaskConflict(GATE_REFUSAL)
@@ -1027,9 +1031,9 @@ async def decide_subscription(pool, *, provider_org, actor_id, subscription_id, 
         sub = await subscription_row(conn, subscription_id, provider_org=provider_org)
         if sub["status"] != "requested":
             raise ProviderConflict(f"this subscription is {sub['status']}, not awaiting approval")
-        if str(sub["requested_by"]) == str(actor_id):
-            raise MakerCheckerViolation("maker-checker: you requested this subscription — a different person approves "
-                                        "it")
+        await sod.gate(conn, org_id=provider_org, item_type=sod.PROVIDER_SUBSCRIPTION, checker_id=actor_id,
+                       maker_ids=[sub["requested_by"]], item_id=sub["id"], site="model_provider.decide_subscription",
+                       refuse=lambda d: MakerCheckerViolation("maker-checker: you requested this subscription — a different person approves it"))
         if outcome == "approve":
             await require_open(conn, provider_org)
     try:

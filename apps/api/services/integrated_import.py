@@ -40,6 +40,7 @@ from decimal import Decimal, InvalidOperation
 
 from services import human_tasks as HT
 from services.portfolio_assets import TABLE_POSITIONS, _OrgWrite
+from services import sod  # S30 — the ONE maker-checker rule
 
 T_IMP = "portfolio.provisional_imports"
 T_PROV = "portfolio.provisional_positions"
@@ -243,8 +244,9 @@ async def _apply(pool, org_id, task: dict, outcome: str, actor_id, note) -> dict
             if imp is None or imp["status"] != "draft":
                 return import_out(dict(imp)) if imp else None
             imp = dict(imp)
-            if str(imp["entered_by"]) == str(actor_id):
-                raise PermissionError("maker-checker: the person who uploaded an import never approves it")
+            await sod.gate(c, org_id=task["org_id"], item_type=sod.PORTFOLIO_IMPORT, checker_id=actor_id,
+                           maker_ids=[imp["entered_by"]], item_id=imp["id"], site="integrated_import._apply",
+                           refuse=lambda d: PermissionError("maker-checker: the person who uploaded an import never approves it"))
             if outcome != "approve":
                 return import_out(await _decide(c, imp, "rejected", actor_id, note))
             preview = json.loads(imp["preview"]) if isinstance(imp["preview"], str) else imp["preview"]
@@ -297,13 +299,17 @@ async def decide(pool, *, org_id, actor_id, import_id, outcome: str, note: str |
         imp = await get_import(conn, org_id, import_id)
     if imp["status"] != "draft":
         raise ImportError_(f"this import is {imp['status']}, not a draft")
-    if str(imp["entered_by"]) == str(actor_id):
-        from services.maker_names import maker_refusal  # BUGFIX4 — names who entered it (and the shared sign-ins)
+    async with pool.acquire() as conn:
+        # S30 — the ONE rule (services.sod); the refusal names who entered it and the shared sign-ins (BUGFIX4)
+        d = await sod.can_check(conn, org_id=org_id, item_type=sod.PORTFOLIO_IMPORT, checker_id=actor_id,
+                                maker_ids=[imp["entered_by"]], item_id=imp["id"], site="integrated_import.decide")
+        if d.refused:
+            from services.maker_names import maker_refusal
 
-        async with pool.acquire() as conn:
+            await sod.record_refusal(d, site="integrated_import.decide")
             who = await maker_refusal(conn, maker_id=imp["entered_by"], checker_id=actor_id, approver="Super Admin",
                                       item="import")
-        raise PermissionError(f"maker-checker: {who}")
+            raise PermissionError(f"maker-checker: {who}")
     done = await HT.complete_task(pool, org_id=org_id, task_id=imp["approval_task_id"], actor_id=actor_id,
                                   outcome=outcome, note=note)
     return done.get("subject_result") or {}

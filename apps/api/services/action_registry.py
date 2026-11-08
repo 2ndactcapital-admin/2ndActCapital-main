@@ -55,6 +55,10 @@ class AssistantAction:
     # ``required_permission`` against the member who started the run — a workflow
     # must never become a permission bypass.
     workflow_invocable: bool = False
+    # S30 (Task 8): the action's DUTY — 'read', 'propose', 'approve' or 'write' (services.sod.VERB_DUTY_KINDS).
+    # Declared here or in services.sod.VERB_DUTIES (filled in at register()); a WRITE verb with no duty is refused
+    # at workflow validation (services.workflow_nl_generator._validate) — S29b's autonomous writes rely on it.
+    duty: str | None = None
 
 
 class ActionRegistry:
@@ -62,6 +66,10 @@ class ActionRegistry:
         self._actions: dict[str, AssistantAction] = {}
 
     def register(self, action: AssistantAction) -> None:
+        if action.duty is None:
+            from services.sod import verb_duty
+
+            action.duty = verb_duty(action)
         self._actions[action.key] = action
 
     def get(self, key: str) -> AssistantAction | None:

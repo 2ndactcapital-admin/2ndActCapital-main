@@ -56,6 +56,7 @@ from decimal import Decimal
 from typing import Any
 
 from services import human_tasks as HT
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -709,8 +710,9 @@ async def _apply_outcome(pool, org_id, task: dict, outcome: str, actor_id, note)
         now = datetime.now(timezone.utc)
         checker = uuid.UUID(str(actor_id))
         if outcome == "approve":
-            if checker == row["maker_id"]:
-                raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+            await sod.gate(conn, org_id=org_id, item_type=sod.ACCOUNT_MODEL_LINK, checker_id=checker,
+                           maker_ids=[row["maker_id"]], item_id=row["id"], site="account_models._apply_outcome",
+                           refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
             account = await load_account(conn, org_id, row["account_id"])
             if is_closed(account):
                 raise AccountModelConflict("the account has closed since this change was requested — reject it")
@@ -799,8 +801,10 @@ async def decide(pool, *, org_id, actor_id, link_id, outcome: str, note: str | N
         row = await link_row(conn, org_id, link_id)
     if row["status"] != "pending":
         raise AccountModelConflict(f"this change is {LINK_STATUS_LABELS[row['status']].lower()}, not awaiting approval")
-    if actor["id"] == row["maker_id"]:
-        raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.ACCOUNT_MODEL_LINK, checker_id=actor["id"],
+                       maker_ids=[row["maker_id"]], item_id=row["id"], site="account_models.decide",
+                       refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
     try:
         done = await HT.complete_task(pool, org_id=org_id, task_id=row["approval_task_id"], actor_id=actor["id"],
                                       outcome=outcome, note=note)

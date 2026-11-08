@@ -95,6 +95,7 @@ import asyncpg
 
 from services import human_tasks as HT
 from services import options_sleeve as OS
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -1526,8 +1527,9 @@ async def _apply(pool, task: dict, outcome: str, actor_id, note) -> dict | None:
             if r is None or r["status"] != "pending_approval":
                 return replica_out(dict(r)) if r else None
             checker = uuid.UUID(str(actor_id))
-            if checker in set(r["maker_ids"] or []):
-                raise MakerCheckerViolation("maker-checker: a maker of this replica cannot decide it")
+            await sod.gate(conn, org_id=task["org_id"], item_type=sod.NOTE_REPLICA, checker_id=checker,
+                           maker_ids=list(r["maker_ids"] or []), item_id=r["id"], site="note_replication._apply",
+                           refuse=lambda d: MakerCheckerViolation("maker-checker: a maker of this replica cannot decide it"))
             now = datetime.now(timezone.utc)
             if outcome == "approve":
                 prev = await conn.fetchrow(f"SELECT id FROM {T_REP} WHERE org_id = $1::uuid AND global_security_id = "
@@ -1564,9 +1566,11 @@ async def decide(pool, *, org_id, actor_id, replica_id, outcome: str, note: str 
         r = await load_replica(conn, org_id, replica_id)
     if r["status"] != "pending_approval":
         raise NoteConflict(f"the replica is {r['status']}, not awaiting approval")
-    if str(actor["id"]) in {str(m) for m in r["maker_ids"] or []}:
-        raise MakerCheckerViolation(f"maker-checker: you made or priced this replica, so a different holder of "
-                                    f"{APPROVE} must {outcome} it")
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.NOTE_REPLICA, checker_id=actor["id"],
+                       maker_ids=list(r["maker_ids"] or []), item_id=r["id"], site="note_replication.decide",
+                       refuse=lambda d: MakerCheckerViolation(f"maker-checker: you made or priced this replica, so a different holder of "
+                                                            f"{APPROVE} must {outcome} it"))
     from services import rep10_common as C
 
     try:
@@ -1601,7 +1605,7 @@ def actions_for(r: dict, *, can_manage: bool, can_approve: bool, user_id, needs_
         out += ["price"] + (["submit"] if not needs_ else []) + ["archive"]
     if r["status"] == "approved" and can_manage:
         out += ["price", "archive"]
-    if r["status"] == "pending_approval" and can_approve and str(user_id) not in makers:
+    if r["status"] == "pending_approval" and can_approve and sod.may_check_display(user_id, makers):
         out += ["approve", "reject"]
     return out
 

@@ -103,6 +103,7 @@ from services import human_tasks as HT
 from services import lot_method as LM
 from services import rebalance_engine as E
 from services import wash_sale as WS
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -1143,8 +1144,9 @@ async def _apply_outcome(pool, org_id, task: dict, outcome: str, actor_id, note)
                     return dict(row) if row else None
                 row = dict(row)
                 checker = uuid.UUID(str(actor_id))
-                if row["maker_id"] is not None and checker == row["maker_id"]:
-                    raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+                await sod.gate(conn, org_id=org_id, item_type=sod.REBALANCE_PROPOSAL, checker_id=checker,
+                               maker_ids=[row["maker_id"]], item_id=row["id"], site="rebalance_proposals._apply_outcome",
+                               refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
                 now = datetime.now(timezone.utc)
                 status = "approved" if outcome == "approve" else "rejected"
                 new = await _update(conn, row["id"], {"status": status, "checker_id": checker, "decided_at": now,
@@ -1200,8 +1202,10 @@ async def decide(pool, *, org_id, actor_id, proposal_id, outcome: str, note: str
         p = await load(conn, org_id, proposal_id)
     if p["status"] != "pending_approval":
         raise ProposalConflict(f"the proposal is {STATUS_LABELS[p['status']].lower()}, not awaiting approval")
-    if p["maker_id"] is not None and actor["id"] == p["maker_id"]:
-        raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.REBALANCE_PROPOSAL, checker_id=actor["id"],
+                       maker_ids=[p["maker_id"]], item_id=p["id"], site="rebalance_proposals.decide",
+                       refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
     if await _expire_if_due(pool, org_id, p):
         raise ProposalConflict("the proposal has expired — generate a new one on the current valuation")
     try:
@@ -1957,7 +1961,7 @@ def actions_for(p: dict, *, can_write: bool, can_approve: bool, user_id, task_op
         acts.append("refresh_execution")
         if not (p.get("execution") or {}).get("instruction_ids"):
             acts.append("execute")
-    if can_approve and s == "pending_approval" and task_open and p["maker_id"] != str(user_id):
+    if can_approve and s == "pending_approval" and task_open and sod.may_check_display(user_id, [p["maker_id"]]):
         acts += ["approve", "reject"]
     if can_write and s in ("draft", "pending_approval") and lot_method_overridable(p):     # lotmethod
         acts.append("override_lot_method")

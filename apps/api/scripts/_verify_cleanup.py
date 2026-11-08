@@ -259,7 +259,9 @@ async def cleanup(op, *, orgs, users=(), user_sub_like=None, plan=None, gucs=(),
     log: list[str] = []
     rows_total = 0
     async with op.transaction():
-        for g in gucs:
+        # S30 — sod_decisions is append-only and org-scoped: every fixture approval a verify makes is recorded there,
+        # so its documented teardown GUC is always set (the deletes stay keyed by this script's fixture ids).
+        for g in dict.fromkeys(("sod.teardown", *gucs)):
             await q.execute("SELECT set_config($1, 'fixture', true)", g)
         await _load_fks(q)
         org_tables = await _org_tables(q)

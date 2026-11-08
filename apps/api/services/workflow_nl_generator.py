@@ -252,6 +252,14 @@ def _validate(xml: str | None, valid_action_keys: set[str], valid_profile_ids: s
             errors.append(f"serviceTask '{s['step_key']}' is missing an actionRegistryKey")
         if key and (key not in valid_action_keys or REGISTRY.get(key) is None):
             errors.append(f"unknown actionRegistryKey '{key}' on element '{s['step_key']}'")
+        elif key and s["step_type"] == "service":
+            # S30 (Task 8): every verb a workflow can reach declares its duty; a WRITE verb without one is refused
+            from services.sod import verb_duty
+
+            act = REGISTRY.get(key)
+            if act is not None and act.access_type == "write" and verb_duty(act) is None:
+                errors.append(f"actionRegistryKey '{key}' on element '{s['step_key']}' is a write verb with no "
+                              "declared duty (services.sod.VERB_DUTIES) — refused")
         prof = s["assigned_role_profile_id"]
         if prof and prof not in valid_profile_ids:
             errors.append(f"unknown assignedRoleProfileId '{prof}' on element '{s['step_key']}'")

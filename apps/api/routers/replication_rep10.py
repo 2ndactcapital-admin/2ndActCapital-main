@@ -53,6 +53,7 @@ from services import tilts as TL
 from services.authz import require_active, require_permission
 from services.custody.trading import _decimal
 from services.database import get_pool
+from services import sod  # S30 — the ONE maker-checker rule
 
 _log = logging.getLogger(__name__)
 
@@ -490,7 +491,7 @@ async def policy_list(request: Request):
         _raise(exc)
     for r in rows:
         r["actions"] = (["approve", "reject"] if r["status"] == "draft" and perms["can_manage_policy"] is True
-                        and r["maker_id"] != str(principal.user_id) else [])
+                        and sod.may_check_display(principal.user_id, [r["maker_id"]]) else [])
     pending = any(r["status"] == "draft" for r in rows)
     return {"rows": rows, "current": HP.policy_out(cur), "gate": cur_gate, "permissions": perms,
             "vocabularies": _vocab(perms),

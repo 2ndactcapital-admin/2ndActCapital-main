@@ -42,6 +42,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from services import human_tasks as HT
+from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
 
@@ -395,8 +396,9 @@ async def _apply_outcome(pool, table: str, org_id, task: dict, outcome: str, act
                 return dict(row) if row else None
             row = dict(row)
             checker = uuid.UUID(str(actor_id))
-            if checker == row["entered_by"]:
-                raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+            await sod.gate(conn, org_id=org_id, item_type=sod.TAX_PROFILE if table == T_PROFILE else sod.LOSS_CARRYFORWARD, checker_id=checker,
+                           maker_ids=[row["entered_by"]], item_id=row["id"], site="tax_profiles._apply_outcome",
+                           refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
             now = datetime.now(timezone.utc)
             kind = "profile" if table == T_PROFILE else "carryforward"
             if outcome == "approve":
@@ -454,8 +456,10 @@ async def decide(pool, *, org_id, actor_id, kind: str, row_id, outcome: str, not
             task = None
     if row["status"] != "pending_approval":
         raise TaxConflict(f"this {kind} is {STATUS_LABELS[row['status']].lower()}, not awaiting approval")
-    if actor["id"] == row["entered_by"]:
-        raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+    async with pool.acquire() as conn:
+        await sod.gate(conn, org_id=org_id, item_type=sod.TAX_PROFILE if table == T_PROFILE else sod.LOSS_CARRYFORWARD, checker_id=actor["id"],
+                       maker_ids=[row["entered_by"]], item_id=row["id"], site="tax_profiles.decide",
+                       refuse=lambda d: MakerCheckerViolation(MAKER_CHECKER_RULE))
     if task and task["status"] == "completed" and task["outcome"] in ("approve", "reject"):
         await _apply_outcome(pool, table, org_id, task, task["outcome"], task["completed_by"], task["note"])
         raise TaxConflict("this was already decided — reload")
@@ -522,7 +526,7 @@ async def list_carryforwards(conn, org_id, *, subject_type=None, subject_id=None
 
 def actions_for(row: dict, *, can_approve: bool, user_id) -> list[str]:
     """The SERVER's list of actions on one profile / carryforward."""
-    if can_approve and row["status"] == "pending_approval" and row["entered_by"] != str(user_id):
+    if can_approve and row["status"] == "pending_approval" and sod.may_check_display(user_id, [row["entered_by"]]):
         return ["approve", "reject"]
     return []
 

@@ -281,6 +281,18 @@ async def resolve_identity(conn, request: Request) -> tuple[str | None, str]:
                             "UPDATE users SET status = $2, updated_at = now() WHERE id = $1",
                             by_sub["id"], STATUS_RETIRED,
                         )
+                        # S30 — record that the retired row IS the target person (services.sod compares people).
+                        # Belt and braces: services.sod also derives this live (a retired row whose sub is another
+                        # user's linked identity), so a failure here never blocks a sign-in.
+                        try:
+                            async with conn.transaction():
+                                await conn.execute(
+                                    "INSERT INTO user_person_links (user_id, person_user_id, org_id, linked_via) "
+                                    "VALUES ($1, $2, $3::uuid, 'duplicate_merge') ON CONFLICT (user_id) DO NOTHING",
+                                    by_sub["id"], target, str(org_id),
+                                )
+                        except Exception:  # noqa: BLE001
+                            pass
                     await touch_last_login(conn, target)
                     return str(target), "merged"
             real = email or ((profile or {}).get("email") or "").strip() or None
