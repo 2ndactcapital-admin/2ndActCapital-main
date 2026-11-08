@@ -3844,6 +3844,77 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY section351_transfers_pkey: (id)
 
+-- ===== sod_decisions =====
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   item_type                                text NOT NULL
+--   item_id                                  text
+--   household_id                             uuid
+--   site                                     text NOT NULL
+--   checker_id                               uuid
+--   checker_person                           uuid
+--   maker_ids                                ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   maker_persons                            ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   outcome                                  text NOT NULL
+--   rule_id                                  uuid
+--   rule_key                                 text
+--   reason                                   text NOT NULL
+--   disclosure                               text
+--   warnings                                 jsonb NOT NULL DEFAULT '[]'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY sod_decisions_pkey: (id)
+
+-- ===== sod_duties =====
+--   duty_key                                 text NOT NULL
+--   label                                    text NOT NULL
+--   description                              text NOT NULL
+--   kind                                     text NOT NULL
+--   permissions                              ARRAY NOT NULL DEFAULT '{}'::text[]
+--   sort_order                               integer NOT NULL DEFAULT 100
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY sod_duties_pkey: (duty_key)
+
+-- ===== sod_item_types =====
+--   item_type                                text NOT NULL
+--   label                                    text NOT NULL
+--   description                              text NOT NULL
+--   maker_duty                               text NOT NULL
+--   checker_duty                             text NOT NULL
+--   floor_class                              text
+--   self_approval_capable                    boolean NOT NULL DEFAULT false
+--   pre_s30_rule                             text NOT NULL DEFAULT 'maker_ne_checker'::text
+--   site                                     text NOT NULL
+--   sort_order                               integer NOT NULL DEFAULT 100
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY sod_item_types_pkey: (item_type)
+
+-- ===== sod_rules =====
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
+--   rule_key                                 text NOT NULL
+--   owner_scope                              text NOT NULL
+--   org_id                                   uuid
+--   rule_kind                                text NOT NULL
+--   item_type                                text NOT NULL
+--   maker_duty                               text
+--   checker_duty                             text
+--   scope                                    text NOT NULL DEFAULT 'same_item'::text
+--   period_days                              integer
+--   severity                                 text NOT NULL DEFAULT 'block'::text
+--   self_approval                            text
+--   enforce_floor                            boolean
+--   description                              text NOT NULL
+--   retires                                  boolean NOT NULL DEFAULT false
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   version_no                               integer NOT NULL DEFAULT 1
+--   drafted_by                               uuid
+--   checker_id                               uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY sod_rules_pkey: (id)
+
 -- ===== spv_carry_run_lines =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -4381,6 +4452,14 @@
 --   granted_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   granted_by                               uuid
 --   PRIMARY KEY user_permission_sets_pkey: (user_id, permission_set_id)
+
+-- ===== user_person_links =====
+--   user_id                                  uuid NOT NULL
+--   person_user_id                           uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   linked_via                               text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY user_person_links_pkey: (user_id)
 
 -- ===== user_roles =====
 --   user_id                                  uuid NOT NULL
