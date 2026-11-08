@@ -568,10 +568,16 @@ CREATE OR REPLACE FUNCTION portfolio.provided_model_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE src text; vid uuid; mid uuid;
 BEGIN
+  -- rep15 fix 1: one branch per table. PL/pgSQL resolves EVERY NEW.<field> in an expression against the firing
+  -- table's row type, so a single CASE naming both parent_version_id and version_id raised 42703 ("record new has
+  -- no field ...") on EVERY insert into model_version_positions / model_sleeves — every org's upload confirm.
   IF TG_TABLE_NAME = 'model_versions' THEN
     mid := NEW.model_id;
+  ELSIF TG_TABLE_NAME = 'model_sleeves' THEN
+    vid := NEW.parent_version_id;
+    SELECT model_id INTO mid FROM portfolio.model_versions WHERE id = vid AND system_to IS NULL;
   ELSE
-    vid := CASE WHEN TG_TABLE_NAME = 'model_sleeves' THEN NEW.parent_version_id ELSE NEW.version_id END;
+    vid := NEW.version_id;
     SELECT model_id INTO mid FROM portfolio.model_versions WHERE id = vid AND system_to IS NULL;
   END IF;
   SELECT source INTO src FROM portfolio.models WHERE id = mid AND system_to IS NULL;

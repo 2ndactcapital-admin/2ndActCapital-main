@@ -339,8 +339,10 @@ def raw_of(acc) -> str:
 
 
 def refused(code, body) -> bool:
-    """A refusal BY THE GATE: 409 whose detail carries the spec's reason."""
-    return code == 409 and REFUSAL in dumps(body)
+    """A refusal BY THE GATE: 409 whose detail carries the spec's reason. rep15 fix 1: read the DECODED detail —
+    ``dumps`` escapes the reason's em dash to \\u2014 (ensure_ascii), so ``REFUSAL in dumps(body)`` never matched."""
+    detail = (body or {}).get("detail") if isinstance(body, dict) else None
+    return code == 409 and isinstance(detail, str) and REFUSAL in detail
 
 
 # ═══ DB helpers ═════════════════════════════════════════════════════════════
@@ -1221,7 +1223,7 @@ async def y_use(conn):
     c, o = await api(U_A1, "POST", f"/api/v1/models/{S['mirror_a']}/versions/{S['a_first']['version_id']}/approve", {})
     check(c == 403, "the maker cannot approve their own adoption (403)", f"{c} {dumps(o)}")
     c, o = await api(U_A2, "POST", f"/api/v1/models/{S['mirror_a']}/versions/{S['a_first']['version_id']}/approve", {})
-    ok = check(c == 200 and o.get("status") == "approved", "a different holder of approve_models (A2) approves the "
+    ok = check(c == 200 and (o.get("version") or {}).get("status") == "approved", "a different holder of approve_models (A2) approves the "
                "adoption", f"{c} {dumps(o)}")
     av = await tasks_for(conn, ORG_A, PM.TASK_AVAILABLE, S["a_first"]["version_id"])
     check(bool(av) and av[0]["status"] == "completed", "the 'new version available' task closed on adoption",
@@ -1322,7 +1324,7 @@ async def y_new_version(conn):
     c, o = await api(U_A1, "POST", f"{_C}/subscriptions/{S['sub_a']}/adopt", {"version_id": fa.get("version_id")})
     c2, _ = await api(U_A1, "POST", f"/api/v1/models/{S['mirror_a']}/versions/{fa.get('version_id')}/approve", {})
     c3, o3 = await api(U_A2, "POST", f"/api/v1/models/{S['mirror_a']}/versions/{fa.get('version_id')}/approve", {})
-    check(c == 200 and c2 == 403 and c3 == 200 and o3.get("status") == "approved",
+    check(c == 200 and c2 == 403 and c3 == 200 and (o3.get("version") or {}).get("status") == "approved",
           "A's adoption of v2 needs A's checker: maker A1 refused, A2 approves", f"{c} {c2} {c3} {dumps(o3)}")
     props = int(await platform(conn, "SELECT count(*) FROM public.rebalance_proposals WHERE account_id = ANY($1::uuid[]) "
                                      "AND model_version_id = $2 AND system_to IS NULL", [ACC_A1, ACC_A2],

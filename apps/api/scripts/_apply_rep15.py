@@ -3,6 +3,7 @@
     python3 apps/api/scripts/_apply_rep15.py --schema    # docs/rep15_part1.sql, one transaction
     python3 apps/api/scripts/_apply_rep15.py --verify    # read it back from the catalog
     python3 apps/api/scripts/_apply_rep15.py --all       # both, in order
+    python3 apps/api/scripts/_apply_rep15.py --fix1      # docs/rep15_fix1.sql (provided_model_guard), then --verify
 
 Runs on the operator's postgres DSN (``DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP`` in Doppler — DDL needs the table
 owner). Idempotent. Never prints a secret. THE MIGRATION WRITES NO ROWS: no gate row exists afterwards (no row = the
@@ -25,6 +26,7 @@ from _db_connect import connect, hydrate, resolve_dsn  # noqa: E402
 hydrate()
 
 SCHEMA_SQL = REPO / "docs" / "rep15_part1.sql"
+FIX1_SQL = REPO / "docs" / "rep15_fix1.sql"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 PLATFORM_ORG_ID = "bb347258-8f28-4f49-8cc9-e29ccad82884"
 
@@ -87,6 +89,16 @@ async def apply_schema() -> None:
         await conn.close()
 
 
+async def apply_fix1() -> None:
+    conn = await _conn()
+    try:
+        async with conn.transaction():
+            await conn.execute(FIX1_SQL.read_text(encoding="utf-8"))
+        print("[OK] rep15 fix 1 applied (portfolio.provided_model_guard)")
+    finally:
+        await conn.close()
+
+
 async def verify_schema() -> int:
     conn = await _conn()
     gaps: list[str] = []
@@ -142,6 +154,9 @@ async def verify_schema() -> int:
         guard = await conn.fetchval("SELECT pg_get_functiondef('public.fn_guard_posted_lines'::regproc)")
         need("ledger.teardown" in guard and "is_test" in guard and "Cannot modify lines of posted entry" in guard,
              "fn_guard_posted_lines: unchanged for real orgs, fixture teardown path for is_test orgs only")
+        pmg = await conn.fetchval("SELECT pg_get_functiondef('portfolio.provided_model_guard'::regproc)")
+        need("parent_version_id ELSE NEW.version_id" not in pmg and "ELSIF TG_TABLE_NAME = 'model_sleeves'" in pmg,
+             "provided_model_guard reads only the firing table's own fields (rep15 fix 1 — no 42703 on positions)")
         need(await conn.fetchval("SELECT portfolio.model_publishing_open($1::uuid)", PLATFORM_ORG_ID) is False,
              "the REAL platform org's publishing gate is OFF")
         for full in NEW_TABLES:
@@ -156,6 +171,9 @@ def main() -> int:
     args = sys.argv[1:]
     if "--all" in args:
         asyncio.run(apply_schema())
+        return asyncio.run(verify_schema())
+    if "--fix1" in args:
+        asyncio.run(apply_fix1())
         return asyncio.run(verify_schema())
     if "--schema" in args:
         asyncio.run(apply_schema())
