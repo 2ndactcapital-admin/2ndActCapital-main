@@ -1462,6 +1462,67 @@
 --   revoked_by                               uuid
 --   PRIMARY KEY delegate_grants_pkey: (id)
 
+-- ===== disclosure_acknowledgements =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   disclosure_id                            uuid NOT NULL
+--   version_id                               uuid NOT NULL
+--   content_sha256                           text NOT NULL
+--   user_id                                  uuid NOT NULL
+--   subject_type                             text NOT NULL
+--   subject_id                               uuid
+--   account_id                               uuid
+--   screen                                   text NOT NULL
+--   acknowledged_at                          timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY disclosure_acknowledgements_pkey: (id)
+
+-- ===== disclosure_versions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   disclosure_id                            uuid NOT NULL
+--   scope                                    text NOT NULL
+--   org_id                                   uuid
+--   household_id                             uuid
+--   account_id                               uuid
+--   version_no                               integer NOT NULL
+--   r2_key                                   text NOT NULL
+--   r2_bucket                                text
+--   file_name                                text NOT NULL
+--   content_type                             text NOT NULL
+--   size_bytes                               integer NOT NULL
+--   content_sha256                           text NOT NULL
+--   summary                                  text NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   drafted_by                               uuid NOT NULL
+--   drafted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   published_by                             uuid
+--   published_at                             timestamp with time zone
+--   retired_by                               uuid
+--   retired_at                               timestamp with time zone
+--   retire_reason                            text
+--   note                                     text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   UNIQUE disclosure_versions_id_hash_uq: (id, content_sha256)
+--   PRIMARY KEY disclosure_versions_pkey: (id)
+
+-- ===== disclosures =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   key                                      text NOT NULL
+--   title                                    text NOT NULL
+--   category                                 text NOT NULL
+--   audience                                 text NOT NULL
+--   description                              text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   archived_from_id                         uuid
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY disclosures_pkey: (id)
+
 -- ===== doc_category_proposals =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
