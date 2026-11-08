@@ -10,7 +10,8 @@ count of attempts is asserted 0).
 Everything after the bearer token is the real app against the live database, in TWO fixture orgs
 (99000000-…-000000610001 / 610002), ``is_test = true`` (asserted), as are the fixture users; their roles are granted
 through user_roles and load_principal is asserted to decide each one as intended. One fixture security in the platform
-master (reserved ticker CA1VSPY) is the option underlying; the contract rep8 creates on it is removed by id. Demo rows
+master (reserved ticker CA1VSPY) is the option underlying; the contract rep8 creates on it AND that contract's own
+master 'option' security (recorded from rep8's response; ids materialised before the delete) are removed by id. Demo rows
 (tag demo-olivo) and every real row are only READ: count + checksum before and after. audit_log is counted BY FIXTURE
 IDS ONLY (real activity — the ~07:00 UTC nightly refresh — writes to it). Teardown at start and end via
 _verify_cleanup by fixture id (``execution.teardown`` for the append-only option contracts).
@@ -243,6 +244,9 @@ from services.database import close_pool  # noqa: E402
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 TAG = "catchall1verify"
 NAME = "CA1V "            # reserved fixture name prefix (asserted to match no real row)
+#: every security NAME starting 'CA1V' (no space) is reserved too: rep8 names a contract's option security
+#: "<underlying ticker> <expiry> <strike> …", so the contract on CA1VSPY is "CA1VSPY 2026-12-18 660 CALL …"
+NAME_PREFIX = "CA1V"
 
 
 def _id(n: int) -> UUID:
@@ -254,6 +258,8 @@ FIXTURE_ORGS = [ORG_A, ORG_B]
 SEC_U = _id(900)
 FIX_SECS = [SEC_U]
 TICKER_U = "CA1VSPY"
+#: the option securities rep8's contract service created during THIS run (recorded from its response, by id)
+CREATED_SECS: list[UUID] = []
 
 OA_PERMS = frozenset({"manage_members", "view_members", "view_portfolio", "manage_portfolio", "view_dashboard",
                       "view_held_away", "manage_held_away", "view_replication", "manage_replication"})
@@ -410,28 +416,60 @@ async def operator_conn():
     return await connect(dsn)
 
 
-def _plan() -> dict:
+#: the option securities this verify owns, wherever they are: (1) recorded from rep8's response this run; (2) the
+#: security of any contract on a fixture underlying; (3) a LEAKED one from an earlier run — an 'option' security
+#: whose name starts with the fixture ticker (contract_name(TICKER_U, …)) that no contract references any more
+#: (its contract and its fixture underlying were torn down, the security was not: the catchall1 fix 1 leak).
+FIXTURE_OPTION_SQL = (
+    "SELECT id FROM portfolio.securities_global WHERE id = ANY($2::uuid[]) "
+    "UNION SELECT global_security_id FROM portfolio.option_contracts WHERE underlying_global_security_id = "
+    "ANY($1::uuid[]) "
+    "UNION SELECT g.id FROM portfolio.securities_global g WHERE g.security_type = 'option' AND g.name LIKE $3 "
+    "AND NOT EXISTS (SELECT 1 FROM portfolio.option_contracts c WHERE c.global_security_id = g.id)")
+
+
+async def fixture_option_secs(op) -> list[UUID]:
+    """Materialised BEFORE the delete: VC.cleanup deletes children first (option_contracts before
+    securities_global), so a predicate that reads option_contracts at DELETE time matches nothing — the leak."""
+    rows = await op.fetch(FIXTURE_OPTION_SQL, FIX_SECS, CREATED_SECS, TICKER_U + " %")
+    ids = sorted({r["id"] for r in rows}, key=str)
+    # refuse (delete nothing) if a reserved-name security belongs to a contract on a NON-fixture underlying
+    bad = await op.fetchval(
+        "SELECT count(*) FROM portfolio.option_contracts c JOIN portfolio.securities_global g ON "
+        "g.id = c.global_security_id WHERE g.name LIKE $1 AND NOT (c.underlying_global_security_id = "
+        "ANY($2::uuid[]))", NAME_PREFIX + "%", FIX_SECS)
+    if bad:
+        raise RuntimeError(f"refusing teardown: {bad} reserved-name ({NAME_PREFIX}%) option security(ies) sit on a "
+                           "contract whose underlying is NOT a fixture security")
+    return ids
+
+
+def _plan(opt_secs: list[UUID]) -> dict:
     users = list(USERS)
+    secs = list(FIX_SECS) + [i for i in opt_secs if i not in FIX_SECS]
     return {
         "public.audit_log": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [FIXTURE_ORGS, users]),
         "public.role_permissions": ("role_id IN (SELECT id FROM public.roles WHERE org_id = ANY($1::uuid[]))",
                                     [FIXTURE_ORGS]),
         "public.user_roles": ("user_id = ANY($1::uuid[])", [users]),
         # the contract rep8 defines on the fixture underlying (a platform row: org_id NULL) — by fixture id, explicitly
-        "portfolio.option_contracts": ("underlying_global_security_id = ANY($1::uuid[])", [FIX_SECS]),
-        "portfolio.securities_global_identifiers": (
-            "global_security_id = ANY($1::uuid[]) OR global_security_id IN (SELECT global_security_id FROM "
-            "portfolio.option_contracts WHERE underlying_global_security_id = ANY($1::uuid[]))", [FIX_SECS]),
-        "portfolio.securities_global": (
-            "id = ANY($1::uuid[]) OR id IN (SELECT global_security_id FROM portfolio.option_contracts WHERE "
-            "underlying_global_security_id = ANY($1::uuid[]))", [FIX_SECS]),
+        "portfolio.option_contracts": ("underlying_global_security_id = ANY($1::uuid[]) OR global_security_id = "
+                                       "ANY($2::uuid[])", [FIX_SECS, secs]),
+        # the fixture underlying AND the option securities rep8 created on it — ids materialised, never a subquery
+        "portfolio.securities_global_identifiers": ("global_security_id = ANY($1::uuid[])", [secs]),
+        "portfolio.securities_global": ("id = ANY($1::uuid[])", [secs]),
     }
 
 
 async def teardown(_conn=None) -> list[str]:
     op = await operator_conn()
     try:
-        res = await VC.cleanup(op, orgs=FIXTURE_ORGS, users=list(USERS), user_sub_like=f"%{TAG}%", plan=_plan(),
+        opt = await fixture_option_secs(op)
+        for r in await op.fetch("SELECT id, name, security_type, system_from FROM portfolio.securities_global WHERE "
+                                "id = ANY($1::uuid[]) ORDER BY id", opt):
+            print(f"[INFO] fixture option security to remove: {r['id']} {r['name']!r} ({r['security_type']}, "
+                  f"created {r['system_from'].isoformat()})")
+        res = await VC.cleanup(op, orgs=FIXTURE_ORGS, users=list(USERS), user_sub_like=f"%{TAG}%", plan=_plan(opt),
                                gucs=("execution.teardown",), label="verify_catchall1")
         return res["log"]
     finally:
@@ -445,6 +483,11 @@ async def leftovers(conn) -> int:
             ("SELECT count(*) FROM portfolio.option_contracts WHERE underlying_global_security_id = ANY($1::uuid[])",
              [FIX_SECS]),
             ("SELECT count(*) FROM portfolio.securities_global WHERE id = ANY($1::uuid[])", [FIX_SECS]),
+            # every reserved-name security (incl. rep8's "CA1VSPY …" option) and the ones recorded this run
+            ("SELECT count(*) FROM portfolio.securities_global WHERE name LIKE $1 OR id = ANY($2::uuid[])",
+             [NAME_PREFIX + "%", CREATED_SECS]),
+            ("SELECT count(*) FROM portfolio.securities_global_identifiers WHERE id_value LIKE $1 OR "
+             "global_security_id = ANY($2::uuid[])", [NAME_PREFIX + "%", CREATED_SECS]),
             ("SELECT count(*) FROM public.audit_log WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS])])
     finally:
         await op.close()
@@ -512,9 +555,13 @@ async def y_catalog(conn):
                                 "AND NOT (id = ANY($4::uuid[]))) + (SELECT count(*) FROM "
                                 "portfolio.securities_global_identifiers WHERE id_value LIKE 'CA1V%' AND NOT "
                                 "(global_security_id = ANY($6::uuid[]))) + (SELECT count(*) FROM "
-                                "portfolio.securities_global WHERE name LIKE $1 AND NOT (id = ANY($6::uuid[])))",
-                          NAME + "%", f"%{TAG}%", f"{TAG}%", FIXTURE_ORGS, list(USERS), FIX_SECS, fetch="fetchval")
-    check(real == 0, "the reserved fixture prefixes (names, subs, slugs, CA1V tickers) match no real row", f"{real}")
+                                "portfolio.securities_global WHERE name LIKE $7 AND NOT (id = ANY($6::uuid[]))) + "
+                                "(SELECT count(*) FROM portfolio.option_contracts WHERE "
+                                "underlying_global_security_id = ANY($6::uuid[]))",
+                          NAME + "%", f"%{TAG}%", f"{TAG}%", FIXTURE_ORGS, list(USERS), FIX_SECS, NAME_PREFIX + "%",
+                          fetch="fetchval")
+    check(real == 0, "the reserved fixture prefixes (names incl. 'CA1V' security names with no space, subs, slugs, "
+          "CA1V tickers, contracts on a fixture underlying) match no real row", f"{real}")
 
 
 async def seed(conn) -> None:
@@ -891,6 +938,13 @@ async def y_option(conn):
           "refused (403) and nothing is written", f"{cr} {dumps(rr)} {n0}->{n1}")
     c1, r1 = await api(U_OA, "POST", "/api/v1/replication/options/contracts", body)
     k1 = (r1.get("contract") or {})
+    if k1.get("global_security_id"):
+        CREATED_SECS.append(UUID(k1["global_security_id"]))      # torn down by id (and found again by name)
+    sec1 = await platform(conn, "SELECT name, security_type FROM portfolio.securities_global WHERE id = $1",
+                          k1.get("global_security_id"), fetch="fetchrow") if k1.get("global_security_id") else None
+    check(bool(sec1 and sec1["security_type"] == "option" and sec1["name"].startswith(TICKER_U + " ")),
+          "rep8 created the contract's master 'option' security (the verify records its id for teardown; its name "
+          "starts with the fixture ticker, inside the reserved prefix)", f"{dict(sec1) if sec1 else None}")
     check(bool(c1 == 201 and k1.get("strike") == "660" and k1.get("option_type") == "call"
                and k1.get("underlying_global_security_id") == str(SEC_U)),
           "defined through rep8's own route (call 660 Dec 2026, ×100)", f"{c1} {dumps(r1)}")
