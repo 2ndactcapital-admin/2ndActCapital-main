@@ -925,9 +925,13 @@ async def y_browse(conn):
           and carry.get("effective_tier") == 1 and str(carry.get("label", "")).startswith("Needs approval")
           and steps.get("Service_1", {}).get("needs_approval") is False,
           "the template page: the Tier-1 carry step reads 'Needs approval'; the read step does not", dumps(carry)[:300])
-    check(code == 200 and "BPMNShape" in det["version"].get("drawable_xml", "") and "{{" not in
-          det["version"].get("drawable_xml", "") and det["version"].get("parameters"),
-          "the page carries a drawable diagram (layout generated, placeholders at defaults) and the parameters")
+    dver = det.get("version", {}) if code == 200 else {}
+    pnames = [p.get("name") for p in (dver.get("parameters") or [])]
+    want_pnames = [p["name"] for p in shipped("distribution_received")["parameters"]]
+    check(bool(code == 200 and "BPMNShape" in dver.get("drawable_xml", "") and "{{" not in dver.get("drawable_xml", "")
+               and want_pnames and pnames == want_pnames),
+          "the page carries a drawable diagram (layout generated, placeholders at defaults) and the parameters — "
+          "exactly the shipped template's, in order", f"{pnames} want {want_pnames}")
     pre = {p["key"]: p for p in det.get("prerequisites", [])} if code == 200 else {}
     check(pre.get("manage_billing", {}).get("met") is False and pre.get("author_workflows", {}).get("met") is False
           and "you do not hold author_workflows" in det.get("missing_prerequisites", [])

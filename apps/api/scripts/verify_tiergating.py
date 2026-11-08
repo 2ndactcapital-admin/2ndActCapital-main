@@ -152,6 +152,55 @@ from uuid import UUID
 
 HERE = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent))
+
+# WFTEMPLATES1 FIX 1 — --self-checks-only: offline (no Doppler, no database, no network). It used to be ignored
+# entirely, so a caller passing it ran the WHOLE verify. It checks the fixture-role invariants the run-console proof
+# rests on, using the app's own pure rules, and that both run-console routes still name their gates.
+if __name__ == "__main__" and "--self-checks-only" in sys.argv:
+    import re as _re
+
+    _API = HERE.parent.parent
+    sys.path.insert(0, str(_API))
+    _n = {"pass": 0, "fail": 0}
+
+    def _sc(passed, label, detail=""):
+        ok = bool(passed)
+        _n["pass" if ok else "fail"] += 1
+        print(f"[{'PASS' if ok else 'FAIL'}] {label}" + ("" if ok or not detail else f" — {detail}"), flush=True)
+
+    print("[INFO] verify_tiergating.py --self-checks-only (no database, no network)")
+    try:
+        from services import authz as _AZ
+        from services import rbac as _RB
+
+        _src = HERE.read_text()
+        _role = _re.search(r'^ROLE_INTERNAL_A = "([^"]+)"', _src, _re.M)
+        _r = _role.group(1) if _role else None
+        _sc(_r in _AZ.INTERNAL_ROLE_NAMES and _r not in _AZ.STAFF_ROLE_NAMES and _r not in _AZ.CLIENT_ROLE_NAMES,
+            "the maker's fixture role is INTERNAL (so services.authz honours its Profile keys) but NOT staff (no "
+            "permission bypass) and not a client role", f"{_r}")
+        _sc(_RB.mirrored_role_string({"TIERGATING Verify Reviewer A", _r}) == "member",
+            "its users.role mirror stays 'member' (the fixture-role check's expectation)", f"{_r}")
+        _sc(_src.count("ROLE_INTERNAL_A") >= 6 and "U_MAKER, internal_role" in _src,
+            "the seed grants it to the maker ONLY, and teardown + the leftover count both name it")
+        _wf = (_API / "routers" / "workflows.py").read_text()
+
+        def _body(path_re):
+            m = _re.search(path_re + r'.*?(?=\n@router\.)', _wf, _re.S)
+            return m.group(0) if m else ""
+
+        _get = _body(r'@router\.get\("/admin/workflow-runs/\{run_id\}"\)')
+        _dec = _body(r'@router\.post\("/admin/workflow-runs/\{run_id\}/steps/\{step_id\}/decision"\)')
+        _sc("_require_workflow_permission(request, PERM_VIEW_RUNS)" in _get,
+            "GET /admin/workflow-runs/{run_id} is still gated on view_workflow_runs (the Principal: roles ∪ profile "
+            "∪ permission sets)", f"{len(_get)} chars")
+        _sc("review_agent_proposals" in _dec or "REVIEW_PERMISSION" in _dec,
+            "POST …/decision is still gated on review_agent_proposals", f"{len(_dec)} chars")
+    except Exception as _exc:  # noqa: BLE001
+        _sc(False, "self-checks raised", f"{type(_exc).__name__}: {_exc}")
+    print(f"\nTOTAL: {_n['pass']} PASS, {_n['fail']} FAIL")
+    sys.exit(0 if _n["fail"] == 0 else 1)
+
 from _db_bootstrap import bootstrap_async  # noqa: E402  (also puts apps/api on sys.path)
 
 import asyncpg  # noqa: E402
@@ -187,6 +236,13 @@ NAME_MARKER = "TIERGATING_VERIFY"
 ROLE_REVIEWER_A = "TIERGATING Verify Reviewer A"
 ROLE_REVIEWER_B = "TIERGATING Verify Reviewer B"
 PROFILE_VIEWER_A = "TIERGATING Verify Run Viewer"
+# WFTEMPLATES1 FIX 1 — the maker is a FIRM operator, so it holds an internal role, as any real run-console user does.
+# Without one, services.authz.principal_from_row classifies it client-like (BUGFIX2 / STAFFROLES1) and caps its
+# PROFILE keys to the org's member-safe set, so the Profile's view_workflow_runs never reached the Principal and the
+# run console answered 403. 'advisor' is internal but NOT staff (no permission bypass), mirrors to users.role
+# 'member', and is granted ZERO permissions here — the maker's view_workflow_runs still comes only from its Profile.
+# The role row lives only in the fixture org ORG_A, so teardown removes it by (fixture org, name).
+ROLE_INTERNAL_A = "advisor"
 
 HEADERS = {"Authorization": "Bearer verify-token"}
 
@@ -399,13 +455,18 @@ async def teardown(conn) -> None:
             ALL_FIXTURE_ORGS, f"%{NAME_MARKER.split('_')[0]}%",
         )
         await conn.execute(
-            """DELETE FROM role_permissions WHERE role_id IN
-                 (SELECT id FROM roles WHERE org_id = ANY($1::uuid[]) AND name IN ($2, $3))""",
-            ALL_FIXTURE_ORGS, ROLE_REVIEWER_A, ROLE_REVIEWER_B,
+            """DELETE FROM user_roles WHERE user_id = ANY($1::uuid[]) AND role_id IN
+                 (SELECT id FROM roles WHERE org_id = ANY($2::uuid[]) AND name = $3)""",
+            ALL_FIXTURE_USERS, ALL_FIXTURE_ORGS, ROLE_INTERNAL_A,
         )
         await conn.execute(
-            "DELETE FROM roles WHERE org_id = ANY($1::uuid[]) AND name IN ($2, $3)",
-            ALL_FIXTURE_ORGS, ROLE_REVIEWER_A, ROLE_REVIEWER_B,
+            """DELETE FROM role_permissions WHERE role_id IN
+                 (SELECT id FROM roles WHERE org_id = ANY($1::uuid[]) AND name IN ($2, $3, $4))""",
+            ALL_FIXTURE_ORGS, ROLE_REVIEWER_A, ROLE_REVIEWER_B, ROLE_INTERNAL_A,
+        )
+        await conn.execute(
+            "DELETE FROM roles WHERE org_id = ANY($1::uuid[]) AND name IN ($2, $3, $4)",
+            ALL_FIXTURE_ORGS, ROLE_REVIEWER_A, ROLE_REVIEWER_B, ROLE_INTERNAL_A,
         )
         await conn.execute("UPDATE users SET profile_id = NULL WHERE id = ANY($1::uuid[])", ALL_FIXTURE_USERS)
         await conn.execute(
@@ -494,6 +555,18 @@ async def seed(conn) -> dict:
             permission_name=agent_proposals.REVIEW_PERMISSION,
         )
 
+        # The maker's internal standing (see ROLE_INTERNAL_A): a role with NO permissions.
+        internal_role = await conn.fetchval(
+            """INSERT INTO roles (org_id, name, description) VALUES ($1, $2, $3)
+               ON CONFLICT (org_id, name) DO UPDATE SET description = EXCLUDED.description
+               RETURNING id""",
+            ORG_A, ROLE_INTERNAL_A, f"{NAME_MARKER} fixture role (internal, no permissions)",
+        )
+        await conn.execute(
+            "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            U_MAKER, internal_role,
+        )
+
         # view_workflow_runs via the PROFILE system, for the run-console
         # display proof (GET /admin/workflow-runs/{id} is gated Profile-side).
         viewer_profile = await conn.fetchval(
@@ -542,7 +615,7 @@ async def seed(conn) -> dict:
 # through user_roles (never a role string), but nothing asserted the APP decides each fixture that way; a seed the
 # app reads differently would make every later refusal check prove nothing. Same check as secmaster2 fix 1.
 EXPECTED_ROLES = {
-    U_MAKER: ({ROLE_REVIEWER_A}, ORG_A, True),
+    U_MAKER: ({ROLE_REVIEWER_A, ROLE_INTERNAL_A}, ORG_A, True),
     U_REVIEWER1: ({ROLE_REVIEWER_A}, ORG_A, True),
     U_TRIGGER_CREATOR: (set(), ORG_A, False),
     U_REVIEWER_B: ({ROLE_REVIEWER_B}, ORG_B, True),
@@ -570,10 +643,17 @@ async def check_fixture_roles(conn) -> bool:
             if uid == U_MAKER:
                 ok = ok and "view_workflow_runs" in perms  # the run-console proof rests on this profile grant
             if not ok:
-                bad.append((str(uid), sorted(names), mirror, sorted(perms)[:10]))
+                bad.append({"user": str(uid), "want_roles": sorted(want_roles), "found_roles": sorted(names),
+                            "want_mirror": "member", "found_mirror": mirror,
+                            "want_review": reviews, "found_review": agent_proposals.REVIEW_PERMISSION in perms,
+                            "want_view_runs": True if uid == U_MAKER else None,
+                            "found_view_runs": "view_workflow_runs" in perms,
+                            "super": [_RB.is_super_admin(lp), bool(pr and pr.is_super_admin)],
+                            "perms": sorted(perms)[:10]})
     return check(not bad, "every fixture role is a user_roles grant the app decides as meant (maker + reviewer 1 + "
                  "reviewer B hold review_agent_proposals, the trigger creator nothing, nobody Super Admin; users.role "
-                 "is its 'member' mirror; the maker's run-console view_workflow_runs comes from its Profile)",
+                 "is its 'member' mirror; the maker's run-console view_workflow_runs comes from its Profile, honoured because "
+                 "the maker also holds an internal role ('advisor', zero permissions) as a firm operator would)",
                  f"{bad}")
 
 
@@ -1109,13 +1189,13 @@ async def main_async() -> int:
                             + (SELECT count(*) FROM audit_log WHERE org_id = ANY($2::uuid[]))
                             + (SELECT count(*) FROM user_roles WHERE user_id = ANY($3::uuid[]))
                             + (SELECT count(*) FROM roles WHERE org_id = ANY($2::uuid[])
-                                                          AND name IN ($5, $6))
+                                                          AND name IN ($5, $6, $7))
                             + (SELECT count(*) FROM profiles WHERE org_id = ANY($2::uuid[])
                                                              AND is_seed = false)
                             + (SELECT count(*) FROM users WHERE id = ANY($3::uuid[]))
                             + (SELECT count(*) FROM organizations WHERE id = ANY($2::uuid[]))""",
                     ALL_DEF_IDS, ALL_FIXTURE_ORGS, ALL_FIXTURE_USERS, f"%{NAME_MARKER}%",
-                    ROLE_REVIEWER_A, ROLE_REVIEWER_B,
+                    ROLE_REVIEWER_A, ROLE_REVIEWER_B, ROLE_INTERNAL_A,
                 )
             check(
                 leftovers == 0,
