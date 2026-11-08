@@ -455,8 +455,9 @@ async def seed(conn) -> dict:
         await _super(conn)
 
         for org_id, name in ((ORG_A, "TIERGATING Fixture Org A"), (ORG_B, "TIERGATING Fixture Org B")):
+            # WFTEMPLATES1: fixture orgs are is_test = true (rep6fix2 — schedulers and sweeps skip test orgs).
             await conn.execute(
-                """INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3)
+                """INSERT INTO organizations (id, name, slug, is_test) VALUES ($1, $2, $3, true)
                    ON CONFLICT (id) DO NOTHING""",
                 org_id, name, str(org_id) + "-tiergating",
             )
@@ -464,10 +465,10 @@ async def seed(conn) -> dict:
         async def mk_user(uid, org_id):
             sub = _sub(uid)
             await conn.execute(
-                """INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, is_active)
-                   VALUES ($1, $2, $3, $4, $5, 'member', true)
+                """INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, status, is_active, is_test)
+                   VALUES ($1, $2, $3, $4, $5, 'member', 'active', true, true)
                    ON CONFLICT (auth0_sub) DO UPDATE
-                     SET org_id = EXCLUDED.org_id, is_active = true""",
+                     SET org_id = EXCLUDED.org_id, is_active = true, status = 'active', is_test = true""",
                 uid, org_id, f"{sub}@test.local", sub, sub,
             )
 
@@ -535,6 +536,45 @@ async def seed(conn) -> dict:
             await derive_and_store_steps(conn, ver_id, ORG_A, xml)
 
     return {"viewer_profile": viewer_profile}
+
+
+# WFTEMPLATES1 — BUGFIX4 made user_roles the ONE role source. This script already granted review_agent_proposals
+# through user_roles (never a role string), but nothing asserted the APP decides each fixture that way; a seed the
+# app reads differently would make every later refusal check prove nothing. Same check as secmaster2 fix 1.
+EXPECTED_ROLES = {
+    U_MAKER: ({ROLE_REVIEWER_A}, ORG_A, True),
+    U_REVIEWER1: ({ROLE_REVIEWER_A}, ORG_A, True),
+    U_TRIGGER_CREATOR: (set(), ORG_A, False),
+    U_REVIEWER_B: ({ROLE_REVIEWER_B}, ORG_B, True),
+}
+
+
+async def check_fixture_roles(conn) -> bool:
+    from services import authz as _AZ
+    from services import rbac as _RB
+
+    bad = []
+    async with conn.transaction():
+        await _super(conn)
+        for uid, (want_roles, org, reviews) in EXPECTED_ROLES.items():
+            names = {r["name"] for r in await conn.fetch(
+                "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 "
+                "AND r.org_id = $2", uid, org)}
+            mirror = await conn.fetchval("SELECT role FROM users WHERE id = $1", uid)
+            lp = await _RB.load_principal(conn, uid)
+            pr = await _AZ.load_principal(conn, uid)
+            perms = set(getattr(pr, "permissions", ()) or ())
+            ok = (names == want_roles and _RB.is_super_admin(lp) is False and bool(pr and pr.is_super_admin) is False
+                  and mirror == _RB.mirrored_role_string(names) == "member"
+                  and (agent_proposals.REVIEW_PERMISSION in perms) is reviews)
+            if uid == U_MAKER:
+                ok = ok and "view_workflow_runs" in perms  # the run-console proof rests on this profile grant
+            if not ok:
+                bad.append((str(uid), sorted(names), mirror, sorted(perms)[:10]))
+    return check(not bad, "every fixture role is a user_roles grant the app decides as meant (maker + reviewer 1 + "
+                 "reviewer B hold review_agent_proposals, the trigger creator nothing, nobody Super Admin; users.role "
+                 "is its 'member' mirror; the maker's run-console view_workflow_runs comes from its Profile)",
+                 f"{bad}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -618,6 +658,8 @@ async def main_async() -> int:
     dsn = await bootstrap_async()
     if not dsn:
         print("[SKIP] no working DATABASE_URL — nothing can be proven")
+        check(False, "a working DATABASE_URL", "none resolved")
+        print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
         return 2
 
     register_all()
@@ -650,6 +692,7 @@ async def main_async() -> int:
 
         print("\n── Fixtures ──")
         fixtures = await seed(conn)
+        await check_fixture_roles(conn)
         check(
             fixtures["viewer_profile"] is not None,
             "the ORG_A viewer profile (view_workflow_runs) was created",
@@ -1088,7 +1131,7 @@ async def main_async() -> int:
             await conn.close()
 
     print(f"\n{'=' * 70}\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL, {len(_finds)} FIND\n{'=' * 70}")
-    return 0 if _ok else 1
+    return 0 if (_ok and _n_fail == 0) else 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1146,4 +1189,17 @@ def _api_decision(uid: UUID, org_id: UUID, run_id, step_id, decision: str):
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main_async()))
+    # WFTEMPLATES1: TOTAL on EVERY exit path — a crash (seed, teardown, an import) printed a traceback and no TOTAL,
+    # so a caller parsing the final TOTAL line could not tell a crash from a run that never started.
+    import traceback as _tb
+
+    try:
+        _rc = asyncio.run(main_async())
+    except BaseException as _exc:  # noqa: BLE001
+        if isinstance(_exc, SystemExit) and _exc.code in (0, None):
+            raise
+        _tb.print_exc()
+        check(False, "verify_tiergating crashed", f"{type(_exc).__name__}: {_exc}")
+        print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+        _rc = 1
+    sys.exit(_rc)

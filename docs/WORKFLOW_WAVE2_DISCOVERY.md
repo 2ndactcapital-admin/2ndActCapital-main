@@ -1,5 +1,12 @@
 # Workflow Manager Wave 2 — Discovery Findings
 
+**[RESOLVED, wftemplates1.structural, 2026-11-08] — Wave 2 is COMPLETE.** The one remaining item named below
+(the NL-to-workflow-template library — a reusable-template picker, distinct from the definitions list) is built:
+platform templates (one Super Admin drafts, a different one publishes), org templates (inside one firm), browse /
+preview / copy as a draft the firm owns, provenance, "a newer version exists" that never overwrites. The template
+writer is the THIRD writer of `workflow_versions.bpmn_xml` and goes through the same `_validate` as the other two.
+See docs/WORKFLOW_TEMPLATES.md and docs/WFTEMPLATES1_DISCOVERY.md.
+
 **[RESOLVED, scripttaskrefusal.structural, 2026-09-18]** — Task 3's finding
 below (SpiffWorkflow's unsandboxed `PythonScriptEngine` runs a hand-authored
 `bpmn:scriptTask` unrestricted, with no rejection anywhere in this codebase)

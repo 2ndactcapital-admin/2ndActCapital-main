@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:twoa="http://2ndactcapital.com/bpmn/ext"
+                  id="Definitions_annual_client_review" targetNamespace="http://2ndactcapital.com/bpmn/templates">
+  <bpmn:process id="tmpl_annual_client_review" name="Annual client review" isExecutable="true">
+    <bpmn:startEvent id="Start_1" name="Start">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="Task_1" name="Start preparing {{lead_days}} days before the meeting">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:serviceTask id="Service_2" name="Current allocation">
+      <bpmn:extensionElements>
+        <twoa:governance actionRegistryKey="portfolio.show_allocation"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Service_3" name="Find the member's holdings">
+      <bpmn:extensionElements>
+        <twoa:governance actionRegistryKey="portfolio.find_my_investment"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="Task_4" name="Prepare the X-ray and draft the review pack">
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_5" name="Adviser meeting">
+      <bpmn:extensionElements>
+        <twoa:governance assignedRoleProfileId="{{adviser}}"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_6</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:serviceTask id="Service_6" name="Draft the meeting note">
+      <bpmn:extensionElements>
+        <twoa:governance actionRegistryKey="crm.draft_note"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_6</bpmn:incoming>
+      <bpmn:outgoing>Flow_7</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="Task_7" name="File the meeting notes">
+      <bpmn:incoming>Flow_7</bpmn:incoming>
+      <bpmn:outgoing>Flow_8</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="End_1" name="Done">
+      <bpmn:incoming>Flow_8</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_1" targetRef="Task_1"/>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_1" targetRef="Service_2"/>
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Service_2" targetRef="Service_3"/>
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="Service_3" targetRef="Task_4"/>
+    <bpmn:sequenceFlow id="Flow_5" sourceRef="Task_4" targetRef="Task_5"/>
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="Task_5" targetRef="Service_6"/>
+    <bpmn:sequenceFlow id="Flow_7" sourceRef="Service_6" targetRef="Task_7"/>
+    <bpmn:sequenceFlow id="Flow_8" sourceRef="Task_7" targetRef="End_1"/>
+  </bpmn:process>
+</bpmn:definitions>

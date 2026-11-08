@@ -34,6 +34,9 @@ export default async function AdminWorkflowsPage() {
           </p>
         </div>
         <nav className="flex gap-4 text-sm">
+          <Link href="/admin/workflows/templates" className="text-gold hover:underline">
+            Start from a template
+          </Link>
           <Link href="/admin/workflows/runs" className="text-gold hover:underline">
             Run Console
           </Link>

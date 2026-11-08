@@ -53,3 +53,4 @@ verify_catchall1.py
 verify_disclosures1.py
 verify_rep14.py
 verify_rep15.py
+verify_wftemplates1.py

@@ -1,5 +1,5 @@
 {
- "app_route_count": 958,
+ "app_route_count": 968,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -17236,6 +17236,213 @@
    "name": "mp_correct",
    "note": "",
    "path": "/api/v1/model-provider/fees/invoices/{invoice_id}/correct",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(author_workflows|view_workflow_runs|configure_workflow_triggers)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "author_workflows",
+     "configure_workflow_triggers",
+     "view_workflow_runs"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.workflow_templates",
+   "name": "wt_catalog",
+   "note": "",
+   "path": "/api/v1/admin/workflow-templates",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(author_workflows|view_workflow_runs|configure_workflow_triggers)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "author_workflows",
+     "configure_workflow_triggers",
+     "view_workflow_runs"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.workflow_templates",
+   "name": "wt_copies",
+   "note": "",
+   "path": "/api/v1/admin/workflow-templates/copies",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(author_workflows|view_workflow_runs|configure_workflow_triggers)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "author_workflows",
+     "configure_workflow_triggers",
+     "view_workflow_runs"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.workflow_templates",
+   "name": "wt_detail",
+   "note": "",
+   "path": "/api/v1/admin/workflow-templates/{template_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz author_workflows",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "author_workflows"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_templates",
+   "name": "wt_use",
+   "note": "",
+   "path": "/api/v1/admin/workflow-templates/{template_id}/use",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz author_workflows",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "author_workflows"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_templates",
+   "name": "wt_save_org",
+   "note": "",
+   "path": "/api/v1/admin/workflow-templates/org",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz author_workflows",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "author_workflows"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_templates",
+   "name": "wt_retire_org",
+   "note": "",
+   "path": "/api/v1/admin/workflow-templates/versions/{version_id}/retire",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.workflow_templates",
+   "name": "wt_platform",
+   "note": "",
+   "path": "/api/v1/admin/platform/workflow-templates",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_templates",
+   "name": "wt_platform_draft",
+   "note": "",
+   "path": "/api/v1/admin/platform/workflow-templates",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_templates",
+   "name": "wt_platform_decide",
+   "note": "",
+   "path": "/api/v1/admin/platform/workflow-templates/versions/{version_id}/decide",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.workflow_templates",
+   "name": "wt_platform_retire",
+   "note": "",
+   "path": "/api/v1/admin/platform/workflow-templates/versions/{version_id}/retire",
    "public": false,
    "write": true
   },

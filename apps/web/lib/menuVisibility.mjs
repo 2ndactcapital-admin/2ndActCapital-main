@@ -123,6 +123,11 @@ export const GATE_HOUSEHOLDS = { internal: true, perm: "manage_members", strict:
 export const GATE_AUTHOR_WORKFLOWS = { perm: "author_workflows", strict: true };
 export const GATE_VIEW_WORKFLOW_RUNS = { perm: "view_workflow_runs", strict: true };
 export const GATE_WORKFLOW_TRIGGERS_READ = { anyOf: ["view_workflow_runs", "configure_workflow_triggers"], strict: true };
+// WFTEMPLATES1 — the template library: any of the three workflow keys (API require_any_permission); using or saving a
+// template needs author_workflows and is decided by the page from the server's envelope.
+export const GATE_WORKFLOW_TEMPLATES_READ = {
+  anyOf: ["author_workflows", "view_workflow_runs", "configure_workflow_triggers"], strict: true,
+};
 // BULKAPPROVE1 — Approvals (bulk approve): GET /approvals/bulk is any(view_authority | approve_authority |
 // view_held_away | approve_held_away); STRICT (canPermStrict per key), so a lost envelope hides the tab.
 export const GATE_APPROVALS = {
@@ -336,6 +341,7 @@ export const MENU_ITEMS = [
   tab("org_admin", "workflows", 1, "/admin/workflows", "Workflows", GATE_AUTHOR_WORKFLOWS, true),
   tab("org_admin", "workflows", 2, "/admin/workflows/runs", "Runs", GATE_VIEW_WORKFLOW_RUNS, true),
   tab("org_admin", "workflows", 3, "/admin/workflows/triggers", "Triggers", GATE_WORKFLOW_TRIGGERS_READ, true),
+  tab("org_admin", "workflows", 4, "/admin/workflows/templates", "Templates", GATE_WORKFLOW_TEMPLATES_READ, true),
   // BUGFIX2 — firm-level screens: never a member (view_portfolio is a MEMBER grant).
   // STAFFROLES1 — an internal role holding view_portfolio, staff as before.
   tab("org_admin", "billing", 1, "/admin/billing-groups", "Billing Groups", GATE_FIRM_PORTFOLIO, true),
@@ -361,6 +367,8 @@ export const MENU_ITEMS = [
   tab("platform", "controls", 5, "/admin/integrated-import", "Integrated import", GATE_SUPER_ADMIN, true),
   // REP15 — the platform as a sub-adviser: provider record, publishing gate (OFF), subscribers (Super Admin)
   tab("platform", "controls", 6, "/admin/model-provider", "Published models", GATE_SUPER_ADMIN, true),
+  // WFTEMPLATES1 — platform workflow templates: draft, publish by a second Super Admin, retire, usage counts
+  tab("platform", "controls", 7, "/admin/platform/workflow-templates", "Workflow templates", GATE_SUPER_ADMIN, true),
   tab("platform", "ai_models", 1, "/admin/model-catalog", "Model Catalog", GATE_SUPER_ADMIN, true),
   // modelresearch.structural — STRICT: fails closed on a lost envelope. Its
   // gate is manage_org_settings, so an org admin sees the AI Models group too.
