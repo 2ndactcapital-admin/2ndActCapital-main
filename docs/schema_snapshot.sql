@@ -3625,6 +3625,225 @@
 --   UNIQUE roles_org_id_name_key: (org_id, name)
 --   PRIMARY KEY roles_pkey: (id)
 
+-- ===== section351_asset_classes =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   owner_scope                              text NOT NULL
+--   org_id                                   uuid
+--   global_security_id                       uuid NOT NULL
+--   asset_class                              text NOT NULL
+--   source                                   text NOT NULL
+--   as_of                                    date NOT NULL
+--   entered_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY section351_asset_classes_pkey: (id)
+
+-- ===== section351_basis_records =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   plan_id                                  uuid NOT NULL
+--   version_no                               integer NOT NULL
+--   csv_document_id                          uuid NOT NULL
+--   csv_sha256                               text NOT NULL
+--   pdf_document_id                          uuid NOT NULL
+--   pdf_sha256                               text NOT NULL
+--   totals                                   jsonb NOT NULL
+--   lines                                    jsonb NOT NULL
+--   created_by                               uuid NOT NULL
+--   delivered_on                             date
+--   delivered_note                           text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY section351_basis_records_pkey: (id)
+
+-- ===== section351_plan_accounts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   plan_id                                  uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   owner_type                               text NOT NULL
+--   eligibility                              jsonb NOT NULL DEFAULT '{}'::jsonb
+--   us_person                                text NOT NULL DEFAULT 'unconfirmed'::text
+--   us_person_source                         text
+--   us_person_as_of                          date
+--   lot_ids                                  ARRAY
+--   test_result                              jsonb NOT NULL DEFAULT '{}'::jsonb
+--   test_verdict                             text NOT NULL DEFAULT 'not_run'::text
+--   contributed_value                        numeric
+--   consent_document_id                      uuid
+--   consent_signed_on                        date
+--   consent_signer                           text
+--   consent_recorded_by                      uuid
+--   tax_adviser_name                         text
+--   tax_adviser_confirmed_on                 date
+--   tax_adviser_note                         text
+--   tax_adviser_recorded_by                  uuid
+--   cash_to_member                           numeric NOT NULL DEFAULT 0
+--   status                                   text NOT NULL DEFAULT 'active'::text
+--   etf_global_security_id                   uuid
+--   etf_shares                               numeric
+--   received_on                              date
+--   confirmed_by                             uuid
+--   confirmed_at                             timestamp with time zone
+--   removed_reason                           text
+--   added_by                                 uuid NOT NULL
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY section351_plan_accounts_pkey: (id)
+
+-- ===== section351_plans =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   target_etf                               text NOT NULL
+--   sponsor_trust                            text
+--   sponsor_profile_id                       uuid NOT NULL
+--   sponsor_profile_version                  integer NOT NULL
+--   valuation_date                           date NOT NULL
+--   seed_capital                             numeric NOT NULL DEFAULT 0
+--   seed_note                                text
+--   etf_custodian_account                    text
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   control_result                           jsonb NOT NULL DEFAULT '{}'::jsonb
+--   readiness                                jsonb NOT NULL DEFAULT '{}'::jsonb
+--   ready_by                                 uuid
+--   ready_at                                 timestamp with time zone
+--   maker_id                                 uuid NOT NULL
+--   submitted_by                             uuid
+--   submitted_at                             timestamp with time zone
+--   approval_task_id                         uuid
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   decision_note                            text
+--   completed_at                             timestamp with time zone
+--   cancelled_by                             uuid
+--   cancelled_at                             timestamp with time zone
+--   cancel_reason                            text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY section351_plans_pkey: (id)
+
+-- ===== section351_settings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   version_no                               integer NOT NULL
+--   max_harvestable_loss_pct                 numeric NOT NULL
+--   min_unrealized_gain_pct                  numeric NOT NULL
+--   min_years_since_inception                numeric NOT NULL
+--   note                                     text
+--   created_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY section351_settings_pkey: (id)
+
+-- ===== section351_sponsor_profiles =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   profile_key                              uuid NOT NULL
+--   version_no                               integer NOT NULL
+--   name                                     text NOT NULL
+--   adviser_name                             text
+--   distributor_name                         text
+--   contact                                  text
+--   launch_windows                           jsonb NOT NULL DEFAULT '[]'::jsonb
+--   eligible_owner_types                     ARRAY NOT NULL
+--   review_owner_types                       ARRAY NOT NULL
+--   us_persons_only                          boolean NOT NULL DEFAULT true
+--   ineligible_assets                        ARRAY NOT NULL
+--   cash_rule                                text NOT NULL DEFAULT 'not_contributed'::text
+--   note                                     text
+--   status                                   text NOT NULL DEFAULT 'active'::text
+--   created_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY section351_sponsor_profiles_pkey: (id)
+
+-- ===== section351_tracker_steps =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   plan_id                                  uuid NOT NULL
+--   step_key                                 text NOT NULL
+--   seq                                      integer NOT NULL
+--   owner_id                                 uuid
+--   due_on                                   date
+--   status                                   text NOT NULL DEFAULT 'open'::text
+--   task_id                                  uuid
+--   done_by                                  uuid
+--   done_at                                  timestamp with time zone
+--   note                                     text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY section351_tracker_steps_pkey: (id)
+
+-- ===== section351_transfers =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   plan_id                                  uuid NOT NULL
+--   plan_account_id                          uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   tax_lot_id                               uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   quantity                                 numeric NOT NULL
+--   basis                                    numeric NOT NULL
+--   acquired_date                            date NOT NULL
+--   fmv                                      numeric NOT NULL
+--   destination                              text NOT NULL
+--   kind                                     text NOT NULL DEFAULT 'in_kind_transfer_out'::text
+--   status                                   text NOT NULL DEFAULT 'approved'::text
+--   routed_via                               text
+--   routing_reason                           text
+--   maker_ids                                ARRAY NOT NULL
+--   approved_by                              uuid NOT NULL
+--   approved_at                              timestamp with time zone NOT NULL
+--   sent_by                                  uuid
+--   sent_at                                  timestamp with time zone
+--   sent_channel                             text
+--   confirmed_by                             uuid
+--   confirmed_at                             timestamp with time zone
+--   received_on                              date
+--   closed_lot_id                            uuid
+--   etf_lot_id                               uuid
+--   etf_shares                               numeric
+--   realized_gain                            numeric
+--   cancelled_by                             uuid
+--   cancelled_at                             timestamp with time zone
+--   cancel_reason                            text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY section351_transfers_pkey: (id)
+
 -- ===== spv_carry_run_lines =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
