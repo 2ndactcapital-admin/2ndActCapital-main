@@ -4486,6 +4486,67 @@
 --   PRIMARY KEY workflow_steps_pkey: (id)
 --   UNIQUE workflow_steps_workflow_version_id_step_key_key: (workflow_version_id, step_key)
 
+-- ===== workflow_template_copies =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   template_id                              uuid NOT NULL
+--   template_version_id                      uuid NOT NULL
+--   template_owner_org_id                    uuid NOT NULL
+--   template_version_no                      integer NOT NULL
+--   workflow_definition_id                   uuid NOT NULL
+--   workflow_version_id                      uuid NOT NULL
+--   parameter_values                         jsonb NOT NULL DEFAULT '{}'::jsonb
+--   copied_by                                uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY workflow_template_copies_pkey: (id)
+
+-- ===== workflow_template_versions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   template_id                              uuid NOT NULL
+--   owner_org_id                             uuid NOT NULL
+--   scope                                    text NOT NULL
+--   version_no                               integer NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   title                                    text NOT NULL
+--   category                                 text NOT NULL
+--   description                              text NOT NULL
+--   bpmn_xml                                 text NOT NULL
+--   bpmn_sha256                              text NOT NULL
+--   steps                                    jsonb NOT NULL
+--   parameters                               jsonb NOT NULL DEFAULT '[]'::jsonb
+--   prerequisites                            jsonb NOT NULL DEFAULT '[]'::jsonb
+--   source_definition_id                     uuid
+--   source_version_id                        uuid
+--   drafted_by                               uuid NOT NULL
+--   drafted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   checker_id                               uuid
+--   published_at                             timestamp with time zone
+--   rejected_at                              timestamp with time zone
+--   decision_note                            text
+--   retired_by                               uuid
+--   retired_at                               timestamp with time zone
+--   retire_reason                            text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY workflow_template_versions_pkey: (id)
+
+-- ===== workflow_templates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   owner_org_id                             uuid NOT NULL
+--   scope                                    text NOT NULL
+--   template_key                             text NOT NULL
+--   created_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY workflow_templates_pkey: (id)
+
 -- ===== workflow_triggers =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   workflow_definition_id                   uuid NOT NULL
