@@ -4402,6 +4402,22 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY adviser_quotes_pkey: (id)
 
+-- ===== portfolio.asset_disposals =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   asset_id                                 uuid NOT NULL
+--   end_date                                 date NOT NULL
+--   reason                                   text NOT NULL
+--   proceeds                                 numeric
+--   notes                                    text
+--   entered_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY asset_disposals_pkey: (id)
+
 -- ===== portfolio.asset_identifiers =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   asset_id                                 uuid NOT NULL
