@@ -14,7 +14,10 @@ never calls or changes.
        security a trade of an OPEN proposal prices, read through the layer
        (internal) — stale and disagreeing items become quality events and a
        to-do for the org's approvers.
-    4. One security_data_runs summary row.
+    4. CASH SOURCES (CASH03): Treasury Fiscal Data (daily) and SEC N-MFP (monthly, from the 8th) — each ONLY when
+       its provider row is 'active' (both ship 'not_connected': a Super Admin switches them on) and its cadence is
+       due (the last ok provider_call_log day). One failing never stops the other.
+    5. One security_data_runs summary row.
 
 Network only through the providers' injected transports (tests pass
 recorded fixtures); the registry is an ARGUMENT."""
@@ -35,6 +38,29 @@ from services.security_data.providers import fred as FRED
 
 TODO_SOURCE = "security_data_quality"
 OPEN_STATUSES = ("draft", "pending_approval", "approved")
+#: CASH03 — the cash data sources the cash_sources step refreshes, in order, with their cadence
+CASH_SOURCES = ("treasury_fiscal", "sec_nmfp")
+CADENCE = {"treasury_fiscal": "daily", "sec_nmfp": "monthly"}
+#: CASH03 — per-provider staleness limits (days) for THE rule settings.is_stale; a provider not listed keeps its data
+#: type's default. N-MFP is monthly by design (a 5-day index-level limit would flag every fund every day).
+PROVIDER_STALE_DAYS = {"treasury_fiscal": 10, "sec_nmfp": 45}
+MMF_CIK_LIMIT = 50
+
+
+def stale_limit(provider_key: str | None, data_type: str) -> int | None:
+    """The staleness limit for one provider's series: its own (PROVIDER_STALE_DAYS) or the data type's default."""
+    if provider_key in PROVIDER_STALE_DAYS:
+        return PROVIDER_STALE_DAYS[provider_key]
+    return S.STALE_DAYS_DEFAULT[data_type]
+
+
+def cash_source_due(provider_key: str, today: date, last_ok: date | None) -> bool:
+    """daily: not yet fetched ok today; monthly: once a calendar month, from the 8th (edgar_nmfp.due)."""
+    from services import edgar_nmfp
+
+    if CADENCE.get(provider_key) == "monthly":
+        return edgar_nmfp.due(today, last_ok)
+    return last_ok is None or last_ok < today
 
 
 @dataclass
@@ -132,8 +158,8 @@ async def platform_quality(pool, today: date, run: RunResult, *, only_keys: list
                 series: dict = {}
                 for r in rows:
                     series.setdefault((r["k"], r["provider_key"] or ""), []).append((r["d"], r["v"]))
-                limit = S.STALE_DAYS_DEFAULT[dtype]
                 for (k, prov), pts in series.items():
+                    limit = stale_limit(prov, dtype)
                     gsid = k if dtype == "eod_price" else None
                     age = (today - pts[-1][0]).days
                     events = []
@@ -148,6 +174,47 @@ async def platform_quality(pool, today: date, run: RunResult, *, only_keys: list
                                                      event_date=today, kind=kind, provider_key=prov, detail=detail,
                                                      run_id=run.run_id)
                         run.quality_events += 1
+
+
+async def mmf_ciks(conn) -> set[str]:
+    """The registrant CIKs (unpadded, as the EDGAR index writes them) of the money-market fund classes the security
+    master holds — the funds the N-MFP refresh asks for. Platform rows; read-only."""
+    rows = await conn.fetch(
+        "SELECT DISTINCT c.value FROM portfolio.security_reference_attributes c JOIN "
+        "portfolio.security_reference_attributes s ON s.global_security_id = c.global_security_id AND s.field = "
+        "'fund_structure' AND s.value = 'money_market' AND s.valid_to IS NULL AND s.system_to IS NULL "
+        "WHERE c.field = 'cik' AND c.valid_to IS NULL AND c.system_to IS NULL ORDER BY 1 LIMIT $1", MMF_CIK_LIMIT)
+    return {str(int(r["value"])) for r in rows if str(r["value"]).isdigit()}
+
+
+async def cash_sources(pool, providers: dict, today: date, run: RunResult, *, ciks_fn=None) -> None:
+    """CASH03 — refresh each ACTIVE cash source whose cadence is due. ``ciks_fn(conn)`` overrides :func:`mmf_ciks`
+    (tests). A provider that is not active, not installed or not due is left alone (nothing is written for it)."""
+    from services.market_data.adapters import scrub_error
+
+    async with pool.acquire() as conn:
+        rows = await R.providers(conn)
+    for key in CASH_SOURCES:
+        p, mod = rows.get(key), providers.get(key)
+        if p is None or mod is None or p["status"] != "active" or not hasattr(mod, "refresh"):
+            continue
+        async with pool.acquire() as conn:
+            last = await conn.fetchval("SELECT max(call_date) FROM portfolio.provider_call_log WHERE provider_key = $1 "
+                                       "AND ok", key)
+            ciks = await (ciks_fn or mmf_ciks)(conn) if key == "sec_nmfp" else None
+        if not cash_source_due(key, today, last):
+            continue
+        try:
+            if key == "sec_nmfp":
+                res = await mod.refresh(pool, today=today, ciks=ciks, run_id=run.run_id)
+            else:
+                res = await mod.refresh(pool, today=today, run_id=run.run_id)
+        except Exception as exc:  # noqa: BLE001 — one source failing never stops the other
+            run.errors.append(f"cash_sources {key}: {scrub_error(exc)}")
+            continue
+        run.calls[key] = run.calls.get(key, 0) + int(res.calls or 0)
+        run.fetched[f"cash:{key}"] = res.yields_written
+        run.errors += [f"cash_sources {key}: {x}" for x in res.rejected[:10]]
 
 
 async def _plat(pool, key):
@@ -235,9 +302,9 @@ async def org_quality(pool, today: date, run: RunResult, *, include_test_orgs: b
 
 async def run_nightly(pool, *, providers: dict | None = None, today: date | None = None, trigger: str = "scheduled",
                       include_test_orgs: bool = False, only_org_ids: list[str] | None = None,
-                      steps: tuple[str, ...] = ("refresh", "platform_quality", "org_quality"),
+                      steps: tuple[str, ...] = ("refresh", "platform_quality", "org_quality", "cash_sources"),
                       ranks: dict | None = None, coverage_fn=None, only_keys: list[str] | None = None,
-                      feed_fn=None) -> RunResult:
+                      feed_fn=None, ciks_fn=None) -> RunResult:
     providers = L.code_registry(providers)
     today = today or datetime.now(timezone.utc).date()
     run = RunResult(uuid.uuid4(), trigger)
@@ -246,7 +313,8 @@ async def run_nightly(pool, *, providers: dict | None = None, today: date | None
                      ("platform_quality", lambda: platform_quality(pool, today, run, only_keys=only_keys)),
                      ("org_quality", lambda: org_quality(pool, today, run, include_test_orgs=include_test_orgs,
                                                          only_org_ids=only_org_ids, providers=providers,
-                                                         feed_fn=feed_fn))):
+                                                         feed_fn=feed_fn)),
+                     ("cash_sources", lambda: cash_sources(pool, providers, today, run, ciks_fn=ciks_fn))):
         if name not in steps:
             continue
         try:

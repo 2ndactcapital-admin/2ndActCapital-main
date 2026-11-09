@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nmfp2">
+  <headerData><submissionType>N-MFP2</submissionType></headerData>
+  <formData>
+    <generalInfo><reportDate>2026-10-31</reportDate><seriesId>S990030003</seriesId><nameOfSeries>CASH03 VERIFY Tax-Exempt Reserves</nameOfSeries></generalInfo>
+    <seriesLevelInfo><moneyMarketFundCategory>Other Tax Exempt</moneyMarketFundCategory><averagePortfolioMaturity>19</averagePortfolioMaturity><averageLifeMaturity>22</averageLifeMaturity></seriesLevelInfo>
+    <classLevelInfo><classesId>C990030004</classesId><classFullName>CASH03 VERIFY Tax-Exempt Reserves — Admiral</classFullName><sevenDayNetYield>0.0310</sevenDayNetYield></classLevelInfo>
+  </formData>
+</edgarSubmission>

@@ -23,6 +23,10 @@ def build_providers(*, transports: Mapping[str, Any] | None = None, environ: Map
     # without one an adapter can still READ the store (the rank walk) but any fetch raises ProviderNotConnected —
     # the prices job / backfill build their own real transport (services.security_data.prices.fetcher).
     from services.security_data.providers import tiingo, yahoo_chart
+    # CASH03 — Treasury Fiscal Data (bills / notes) and SEC N-MFP (money-market funds); shipped NOT CONNECTED, refreshed
+    # by the nightly's cash_sources step (their own cadence), never by marketdata1's refresh (no ``fetches``)
+    from services import edgar_nmfp
+    from services.market_data import treasury_fiscal
 
     t = dict(transports or {})
     return {
@@ -42,4 +46,6 @@ def build_providers(*, transports: Mapping[str, Any] | None = None, environ: Map
         "sec_mutual_funds": sec_mutual_funds.SecMutualFundsProvider(),
         "yahoo_chart": yahoo_chart.YahooChartProvider(transport=t.get("yahoo_chart"), environ=environ),
         "tiingo": tiingo.TiingoProvider(transport=t.get("tiingo"), environ=environ),
+        "treasury_fiscal": treasury_fiscal.TreasuryFiscalProvider(transport=t.get("treasury_fiscal")),
+        "sec_nmfp": edgar_nmfp.NmfpProvider(transport=t.get("sec_nmfp")),
     }

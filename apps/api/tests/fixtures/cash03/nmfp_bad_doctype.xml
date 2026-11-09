@@ -1,0 +1,3 @@
+<?xml version="1.0"?>
+<!DOCTYPE edgarSubmission [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]>
+<edgarSubmission><formData><generalInfo><reportDate>2026-10-31</reportDate><seriesId>S990030007</seriesId><nameOfSeries>&b;</nameOfSeries></generalInfo></formData></edgarSubmission>

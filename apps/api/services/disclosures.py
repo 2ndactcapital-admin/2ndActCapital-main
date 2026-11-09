@@ -117,6 +117,10 @@ KEYS: dict[str, dict] = {
     # CASH02 — carried by every estimated sleeve yield (Treasury → cash policy)
     "cash.yield_estimate": {"title": "Cash sleeve yield estimates", "category": "other", "audience": "both",
                             "description": "What an estimated sleeve yield (a Treasury-curve proxy) means."},
+    # CASH03 — carried by every after-tax figure of the ladder / instrument plan (Treasury)
+    "cash.tax_estimate": {"title": "Cash after-tax estimates", "category": "tax", "audience": "both",
+                          "description": "What an after-tax yield in the instrument plan means (the owner's tax "
+                                         "profile and the instrument's exemptions)."},
     "prices.internal_use_notice": {"title": "Price data — internal use only", "category": "licence",
                                    "audience": "staff",
                                    "description": "The free end-of-day price source is licensed for internal use "
@@ -236,6 +240,12 @@ def _fallback_yield() -> str:
     return CP.YIELD_ESTIMATE
 
 
+def _fallback_tax_estimate() -> str:
+    from services import cash_instruments as CI
+
+    return CI.TAX_ESTIMATE
+
+
 def _fallback_member_notice() -> str:
     from services import model_provider as PM
 
@@ -249,6 +259,7 @@ FALLBACK_SOURCES = {
     "tax.estimate_label": _fallback_tax,
     "cash.coverage_estimate": _fallback_coverage,
     "cash.yield_estimate": _fallback_yield,
+    "cash.tax_estimate": _fallback_tax_estimate,
     "prices.internal_use_notice": _fallback_prices,
     "replica.fund_affiliation": _fallback_replica,
 }

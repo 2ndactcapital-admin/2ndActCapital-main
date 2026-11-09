@@ -1,0 +1,12 @@
+Description:           Master Index of EDGAR Dissemination Feed
+Last Data Received:    November 6, 2026
+Comments:              webmaster@sec.gov
+Anonymous FTP:         ftp://ftp.sec.gov/edgar/
+
+CIK|Company Name|Form Type|Date Filed|Filename
+--------------------------------------------------------------------------------
+9900301|CASH03 VERIFY TREASURY TRUST|N-MFP3|2026-11-06|edgar/data/9900301/0009900301-26-000011.txt
+9900302|CASH03 VERIFY GOVERNMENT TRUST|N-MFP3|2026-11-06|edgar/data/9900302/0009900302-26-000012.txt
+9900303|CASH03 VERIFY TAX-EXEMPT TRUST|N-MFP2|2026-11-05|edgar/data/9900303/0009900303-26-000013.txt
+9900304|CASH03 VERIFY BROKEN TRUST|N-MFP3|2026-11-04|edgar/data/9900304/0009900304-26-000014.txt
+9900305|CASH03 VERIFY NOTE ISSUER|424B2|2026-11-06|edgar/data/9900305/0009900305-26-000015.txt

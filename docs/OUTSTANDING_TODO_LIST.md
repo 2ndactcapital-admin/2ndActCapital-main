@@ -277,6 +277,14 @@ out to build them. Check first.
   submitted for approval) → approve it in the app as a SECOND person; register `fred.dgs3mo` /
   `fred.dgs6mo` / `fred.dgs1` in the market-data registry seed (Reserve's yield reads "needs" until
   then); run verify_cash02.py (its regression is verify_cash01.py).
+- ⬜ CASH03 operator steps: switch `treasury_fiscal` and `sec_nmfp` on (Admin → Security data →
+  Providers, Super Admin); `load_cash_market_data.py --dry-run` (check the first real N-MFP parse —
+  element names and the yield scale were taken from the forms' specs, no live filing was fetched)
+  → `--real`; `load_olivo_ladder.py --dry-run` once the Olivo policy is approved; load account cash
+  balances (`account_balances_daily` is empty for the demo, so the plan reads "not allocated"); run
+  verify_cash03.py (its regression is verify_cash02.py). Open: a muni yield source (none free); the
+  owner's state of domicile and a single-state fund's state (muni MMFs are treated as state-taxed);
+  a trust's grantor status; cash04 snapshots the rungs it proposes.
 - ⬜ Do capital calls and distributions post real journal lines? Gates the
   `v_capital_accounts` fix.
 - ⬜ `investment_profile_questions` vs `udf_definitions` — is one retirable?

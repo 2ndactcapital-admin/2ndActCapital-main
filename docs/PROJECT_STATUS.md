@@ -344,6 +344,97 @@ This file starts with the email item below.
 ---
 
 
+## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CASH03 — the OBLIGATION-MATCHED LADDER (Long-term rungs on the dates of large obligations + monthly fillers, business-day maturities, real issues else indicative) and AFTER-TAX INSTRUMENT SELECTION per sleeve × account (Treasury vs muni vs taxable MMF / bills / notes; IRA / trust / foundation treatment; the 133 bp T-bill-vs-CD case); Treasury Fiscal Data + SEC N-MFP registered through the provider registry, SWITCHED OFF; a target, never a trade; catalog APPLIED; verify WRITTEN, not yet run (2026-11-09)
+
+Branch cash03-work. Read-only on money (proposals / orders are cash04). Docs: `docs/cash/CASH03_NOTES.md` (Task 1:
+binding decisions, the provider registration shape, N-MFP and the EDGAR pipeline, Treasury Fiscal Data endpoints and
+licence, account tax treatment, the security-master add path, reuse inventory, decisions D1–D9) and
+`docs/cash/CASH_LADDER.md` (ladder rules, after-tax method, yield bases, providers and cadence, operator steps).
+
+- **FINDs.**
+  - The provider registry with licence facts is `portfolio.data_providers` + `services/security_data`, not
+    `services/market_data/registry.py`, which is the indicator seed loader.
+  - The FULL Treasury curve (DGS1MO…DGS30) already lives in `portfolio.index_levels` (fred, marketdata1). cash02's
+    "no 3m / 6m / 1y" was true only of the indicator registry. cash03 reads `index_levels`.
+  - `fred` is `lic_member_display = not_allowed`, so a member never sees a curve-interpolated yield. cash02 shows its
+    indicator-store proxy to members; recorded, not changed.
+  - The EDGAR pipeline knew no N-MFP (only 424B2 / FWP).
+  - No muni yield source is free.
+  - No holiday calendar existed.
+  - Not recorded anywhere: the state of domicile, a single-state fund's state, a trust's grantor status.
+  - Olivo has 34 open accounts, 0 cash-balance rows, and no policy or tax profile.
+  - `CASH_TRACK_PLAN_v1.2.md` is still absent.
+- **Schema.** `docs/cash03_part1.sql` APPLIED (`_apply_cash03.py --all`: SCHEMA OK).
+  - No table.
+  - The reference-field CHECK gains `maturity_date`, `issue_date`, `security_term`, `treasury_type` and
+    `mmf_category`, plus date / type / category CHECKs.
+  - Providers `treasury_fiscal` (public_api) and `sec_nmfp` (regulator_filing), both **not_connected**, with
+    licence facts (public record: internal, member display allowed, redistribution, keep; attribution; terms;
+    budget).
+  - Platform rank: index_level 4 / 5, reference 7 / 8.
+  - The snapshot is unchanged (no column added; it records no CHECKs).
+- **Providers.**
+  - `services/market_data/treasury_fiscal.py` (auctions_query): a bill's high investment rate, a note's high yield;
+    bad / partial pages refused whole with a reason; a bad row skipped with its reason.
+  - `services/edgar_nmfp.py` on the EDGAR pipeline (`edgar_index.parse_index_lines(forms=N-MFP2/3)`, `edgar_fetch`):
+    7-day net yield (fraction × 100), WAM / WAL and category; a DOCTYPE / no yield / a percent refused. Element names
+    are from the forms' specs; no live filing was fetched.
+  - Both write through `Matcher` (now creators; N-MFP creates by SEC class id) and `upsert_index_levels`.
+  - The nightly's new `cash_sources` step (daily / monthly from the 8th) acts on ACTIVE providers only.
+  - Per-provider staleness: Treasury 10 days, N-MFP 45 days (`nightly.stale_limit`).
+- **Ladder.** `services/cash_ladder.py` (pure plus reads through the rank walk) and `services/us_business_days.py`:
+  - large = ≥ 10 % of the Long-term target, or firm and ≥ $250k;
+  - large obligations on the same date share a rung; at most `rung_count` rungs;
+  - monthly fillers spread evenly;
+  - a maturity is the latest real issue ≤ the date (within 35 days), else indicative on the prior business day;
+  - small obligations are funded by the latest earlier rung;
+  - the leftover is spread across the fillers to the cent;
+  - the yield is the auction's (≤ 35 days old), else the curve interpolated (labelled).
+  - Not stored (D3).
+- **After-tax.** `services/cash_instruments.py`: candidates per sleeve, the exemption table, treatment from
+  `accounts.tax_status`, rates from `tax_profiles.profile_for_account`. Each row gets the choice, why (one sentence),
+  the runner-up and the bp gap. Also the CD hurdle, allocation by `account_balances_daily.cash_value`, and blends
+  Σ value × yield ÷ total. A sleeve with an instrument blend replaces cash02's proxy; the others keep cash02's label.
+- **API.** The treasury envelope gains `plan`: one per scope with an ACTIVE policy; purpose `member_display` for a
+  member; no CUSIP for a member; the providers' status. If the plan fails, the envelope survives and the plan reads
+  `error`. Labels gain `cash.tax_estimate`, a new disclosure key ("After-tax figures use your tax profile and are
+  estimates; have counsel review.").
+- **Route.** `POST /cash/households/{id}/plan/regenerate`: `require_internal_permission(manage_cash_policy)`; audits
+  `cash.plan.regenerated` with the policy versions, rung counts and the plan's fingerprint. AUTHZ1 and VISIBILITY1
+  route docs regenerated; both `--check` CURRENT.
+- **Web.** `components/treasury/LadderPanel.jsx` + `lib/cashPlan.mjs` (fails closed), inside the Treasury tab after
+  the policy panel:
+  - the ladder timeline (targeted vs filler, indicative faded, large obligations marked) and the rung table (holiday
+    moves stated);
+  - the instrument plan per sleeve × account;
+  - blended yields, also on the policy editor (`PlanBlended`);
+  - Regenerate only for an author;
+  - a member's read-only view with the library labels.
+  - The proxy is `/api/cash/households/[id]/plan/regenerate`.
+  - Tests: `tests/cash03` (7). `node --test tests/`: 682 tests, 681 pass, 0 fail, 1 skipped.
+- **Loaders.**
+  - `scripts/load_cash_market_data.py` (`--dry-run [--fixtures]` / `--real`; the real run is refused while switched
+    off). The sprint ran only `--dry-run --fixtures`: 6 auctions / 5 issues / 1 row refused; 3 N-MFP series / 4
+    classes / 1 filing refused.
+  - `scripts/load_olivo_ladder.py --dry-run` (read-only transaction) ran against the demo, from the Recommended
+    policy cash02's loader would draft, with the 18 Olivo obligations in memory:
+    - Long-term target $15,429,450.08 in 8 rungs: 3 targeted (the GRAT annuity, the foundation's 5 % distribution,
+      the ILIT premium) and 5 fillers. All are indicative (Treasury Fiscal Data is off); two weekend maturities moved
+      to the prior business day.
+    - Ladder 4.450 % on the curve. Reserve's indicative bill is 4.273 %.
+    - Near-term chooses nothing: no N-MFP data while switched off.
+    - Every taxable account reads "after-tax: needs a tax profile". The allocation reads "not allocated — needs each
+      account's cash balance".
+- **Verify.** `apps/api/scripts/verify_cash03.py` WRITTEN, NOT RUN; added to scripts/regression_set.txt. Its
+  regression is verify_cash02.py: once, flat, after teardown, VERIFY_NESTED=1, 2700 s. What the sprint did run
+  against it:
+  - its PURE sections offline (Task 1, ladder, after-tax): 45 PASS (the 1 FAIL was CASH_LADDER.md, written since);
+  - its catalog pre-check (`y_schema` + the prefix guard) on a READ-ONLY connection: 12 PASS / 0 FAIL.
+  - `--self-checks-only` of verify_cash01 / cash02 / secmaster1 / secmaster2 / prices1 / marketdata1 / disclosures1
+    after the edits: all 0 FAIL.
+  - NOT run (WSL memory): the full verify_cash03.py, verify_cash02.py, npm run build.
+- **UPDATE (cash03 fix 1 + fix 2, 2026-11-09) — the operator run was 130 PASS / 7 FAIL: the seed's security-master check found 1 N-MFP share class, not 4, and that gated off all six fixture sections. Three CODE defects and the verify changes below. Fix 1's leg was killed at the 90-minute cap with its work uncommitted; fix 2 reviewed it, corrected one hunk, finished it and committed it.** (1, CODE, fix 1 + fix 2 correction) `services/security_master_load.py`: the Matcher deduped each batch on (cusip, figi, ticker, exchange family). Every N-MFP class has none of those (it is created by its SEC class id), so all of them collapsed onto one key and only the first was written. The new `batch_key(r)` adds the unique extra ids (EXTRA_ID_UNIQUE = sec_class_id). Fix 1 added them to EVERY record. Fix 2 narrowed that to records with no CUSIP, FIGI or ticker, because `sec_mutual_funds` records carry a ticker AND a sec_class_id, and fix 1's key would have stopped its first-ticker-wins dedup from merging one ticker listed under two classes. A record with a primary id now keys exactly as before. (2, CODE, fix 1) `routers/cash.py` POST plan/regenerate: the scope now comes from `family_visibility.scope_for_request` (the VISIBILITY1 staff scope), not `authz.member_entity_scope`. On a POST, STAFFROLES1 sends a non-staff internal role down the member path, which gave an advisor author an empty scope and a 404 on their own family. The new call gives the same scope the treasury GET reads for that caller, so the audited fingerprint matches the envelope. The recorded gate is now `internal + any(manage_cash_policy)` (AUTHZ1_ROUTES.* regenerated). (3, CODE, fix 1) `services/cash_ladder.py` / `cash_instruments.py`: `curve_why` (`no_curve_text`) is threaded through `curve_yield` / `issue_yield` / `build_ladder` / `reserve_bill`, so a curve-based yield whose FRED curve cannot be used says why (e.g. a licence refusal) instead of the generic NO_CURVE. (4, VERIFY, fix 1) `--only=<seed|providers|master|ladder|after-tax|plan|app>` one-off mode ('plan' pulls in 'master'); the regenerate route's expected gate is updated; a reproduction shows the pre-fix key gives 1 key for the 4 class records and batch_key gives 4; the app checks print more detail on failure. (5, VERIFY, fix 2) A pure check that a sec_mutual_funds / openfigi / CUSIP record keeps the pre-fix key; the nested regression now also runs verify_secmaster2.py (the Matcher's owner), once, flat, after teardown, VERIFY_NESTED=1, 2700 s, next to verify_cash02.py; fix 1's scratch `_cash03_fix1_discover.py` is deleted. PROOF on fixtures (one-off runs; each one runs the seed and the full teardown): the seed's security-master check passes (5 Treasury issues, 4 N-MFP classes as 4 securities, 6 auction points + 4 class yields with WAM / WAL). Every section is 0 FAIL, own PASS counts shown: providers 16, security master 6 (+2 batch-key checks), ladder 10, after-tax 10, plan (db) 10, app + visibility 15. Totals per run, including seed (schema + seed 16) and teardown (40): 74 / 66 / 68 / 68 / 74 / 73. A read-only one-off over the real master (15,967 securities; id types cusip / figi / isin / ticker, NO sec_class_id: sec_mutual_funds has never written live) built each feed's record shape from the real ids, 79,682 records. batch_key equals the pre-fix key for every record carrying a CUSIP / FIGI / ticker, and the per-feed dedup keeps the same records (finance_database, nasdaq_trader, openfigi, sec_tickers). With synthetic sec_mutual_funds records on 2,000 real tickers (50 of them under a second class id), the corrected key gives 2,000 keys, as before; fix 1's key would have given 2,050. `--cleanup-only`: zero fixture rows. The real security master (15,999; md5 2b8074ca…) and real index levels (11 keys; 1c3755e2…) are unchanged across every run, as are the provider rows (21) and platform rank (28). `--self-checks-only` (after the commit): verify_cash03 33 / 0 (the 2 route-gate FAILs before it compared HEAD's old gate with the working tree), verify_secmaster2 18 / 0. NOT run (WSL memory): the full verify_cash03.py and its nested verify_cash02.py / verify_secmaster2.py, npm run build.
+
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CASH02 — cash POLICIES and the THREE SLEEVES (Near-term / Reserve / Long-term, in months of obligations; derived $ and %; presets; 3-step questionnaire; estimated yields from the FRED curve; maker-checker on every save through S30); a target, never a trade; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
 
 Branch cash02-work. Read-only on money (proposals / orders are cash04). Docs: `docs/cash/CASH02_NOTES.md` (Task 1: cash01's binding decisions, the SoD / inbox registration paths, FRED series, tax profiles, the minimum's migration, permissions, reuse inventory) and `docs/cash/CASH_POLICY.md` (windows, presets, questionnaire mapping, yield proxies and labels, approval flow).

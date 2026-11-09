@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nmfpfund">
+  <formData>
+    <generalInfo><reportDate>2026-10-31</reportDate><seriesId>S990030006</seriesId></generalInfo>
+    <seriesLevelInfo><moneyMarketFundCategory>Prime</moneyMarketFundCategory></seriesLevelInfo>
+    <classLevelInfo><classesId>C990030006</classesId><sevenDayNetYield>5.12</sevenDayNetYield></classLevelInfo>
+  </formData>
+</edgarSubmission>
