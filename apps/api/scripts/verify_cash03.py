@@ -80,7 +80,9 @@ import _verify_self as VS  # noqa: E402
 
 SPRINT_KEY = "cash03"
 BEFORE_REF = "7030b41"   # cash03-work's base: 'merge cash02'
-_W = "internal + any(manage_cash_policy)"
+#: the route reads authz.member_entity_scope (a restricted caller's family set narrows the schedule), so the recorded
+#: gate names it after the permission
+_W = "internal + any(manage_cash_policy); member scope (own family / published deals; staff unscoped)"
 ROUTES = {("POST", "/api/v1/cash/households/{household_id}/plan/regenerate"): _W}
 OWN_FILES = ("apps/api/services/cash_ladder.py", "apps/api/services/cash_instruments.py",
              "apps/api/services/us_business_days.py", "apps/api/routers/cash.py",
@@ -163,7 +165,8 @@ def self_static(check, find):
           "security_data/nightly.py: the cash_sources step acts only on ACTIVE providers; per-provider staleness")
     check('"cash.tax_estimate"' in _src("apps/api/services/disclosures.py"),
           "the disclosure library defines cash.tax_estimate")
-    sql = MIGRATION.read_text(encoding="utf-8") if MIGRATION.exists() else ""
+    sql = "\n".join(ln.split("--", 1)[0] for ln in (MIGRATION.read_text(encoding="utf-8") if MIGRATION.exists()
+                                                       else "").splitlines())   # SQL only, comments stripped
     check("'treasury_fiscal'" in sql and "'sec_nmfp'" in sql and sql.count("'not_connected'") == 2
           and "CREATE TABLE" not in sql, "docs/cash03_part1.sql registers both providers NOT CONNECTED and creates no "
           "table")
