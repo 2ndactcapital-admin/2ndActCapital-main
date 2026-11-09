@@ -121,6 +121,11 @@ KEYS: dict[str, dict] = {
     "cash.tax_estimate": {"title": "Cash after-tax estimates", "category": "tax", "audience": "both",
                           "description": "What an after-tax yield in the instrument plan means (the owner's tax "
                                          "profile and the instrument's exemptions)."},
+    # CASH05 — RESERVED for cash07 (the custodian sweep rate). Registered so a firm can publish its text ahead of
+    # time; no cash05 screen resolves or shows it.
+    "cash.sweep_rate": {"title": "Cash sweep rate", "category": "other", "audience": "both",
+                        "description": "What the custodian's sweep rate on uninvested cash means (reserved for "
+                                       "cash07 — not shown yet)."},
     "prices.internal_use_notice": {"title": "Price data — internal use only", "category": "licence",
                                    "audience": "staff",
                                    "description": "The free end-of-day price source is licensed for internal use "
@@ -246,6 +251,12 @@ def _fallback_tax_estimate() -> str:
     return CI.TAX_ESTIMATE
 
 
+def _fallback_sweep_rate() -> str:
+    from services import cash_holdings as CH
+
+    return CH.SWEEP_RATE_ESTIMATE
+
+
 def _fallback_member_notice() -> str:
     from services import model_provider as PM
 
@@ -260,6 +271,7 @@ FALLBACK_SOURCES = {
     "cash.coverage_estimate": _fallback_coverage,
     "cash.yield_estimate": _fallback_yield,
     "cash.tax_estimate": _fallback_tax_estimate,
+    "cash.sweep_rate": _fallback_sweep_rate,
     "prices.internal_use_notice": _fallback_prices,
     "replica.fund_affiliation": _fallback_replica,
 }

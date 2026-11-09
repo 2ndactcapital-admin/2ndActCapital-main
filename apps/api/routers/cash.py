@@ -31,6 +31,18 @@ the treasury envelope for a holder of ``view_proposals``; a member's envelope is
     POST /api/v1/cash/proposals/{proposal_id}/adopt           a person adopts the waterfall's draft (manage_proposals)
   both ``require_internal_permission(manage_proposals)`` (rep5's author permission) + the visibility rule; audited.
 
+CASH05 — what a family sees day to day (READ-ONLY; no write to money, no new table). One read per screen, each behind
+the SAME read gate and visibility as the treasury envelope (``view_portfolio | manage_portfolio`` + the member /
+VISIBILITY1 scope; another family's household or entity is a 404); a member reads read-only with the library labels:
+    GET  /api/v1/cash/households/{household_id}/overview                 balance series + markers, yields, coverage
+    GET  /api/v1/cash/households/{household_id}/holdings                 per sleeve, every ladder rung
+    GET  /api/v1/cash/households/{household_id}/activity                 the ledger (filters, pending guidance)
+    GET  /api/v1/cash/households/{household_id}/activity/{entry_id}      the detail drawer (every link resolves)
+    GET  /api/v1/cash/households/{household_id}/earnings                 the period's earnings breakdown
+    GET  /api/v1/cash/households/{household_id}/documents                statements / confirmations / 1099s (ET dates)
+  services: cash_overview / cash_holdings / cash_activity / cash_earnings / cash_documents. ``entity_id`` (query) filters
+  to one entity the household reaches (its own positions — cash01's entity figure).
+
 GATES (services.authz, one Principal; Super Admin first). READ: ``view_portfolio`` (a member holds it) or
 ``manage_portfolio``, then the ONE visibility rule ``authz.member_entity_scope`` — a member reads only their own
 family (another family's household is a 404, the same as a missing one), a restricted staff caller of an enforcing
@@ -60,6 +72,11 @@ from services import cash_instruments as CI
 from services import cash_ladder as CL
 from services import cash_policy as CP
 from services import cash_proposals as CPR
+from services import cash_activity as CA
+from services import cash_documents as CD
+from services import cash_earnings as CE
+from services import cash_holdings as CH
+from services import cash_overview as CO
 from services.audit import write_audit_log
 from services.authz import require_internal_permission
 from services.database import get_pool
@@ -804,3 +821,215 @@ async def adopt_proposal_route(request: Request, proposal_id: UUID):
             raise
         raise mapped from exc
     return {"proposal": CPR.RP.proposal_out(out)}
+
+
+# ═══ CASH05 — the Treasury overview, holdings, activity, earnings and documents (read-only) ═════════════════════
+CASH05_LABELS = {"overview": (CC.ESTIMATE_KEY, CP.YIELD_KEY, CI.TAX_KEY), "holdings": (CP.YIELD_KEY,),
+                 "earnings": (CP.YIELD_KEY,), "activity": (), "documents": ()}
+
+
+async def _cash05_open(request: Request):
+    """The treasury read gate (each route then reads the ONE member / VISIBILITY1 scope itself, and
+    ``_cash05_scope`` 404s another family's household or an entity the household does not reach)."""
+    p = authz.require_any_permission(request, READ_PERMISSIONS)
+    return p, get_org_id(request), await get_pool(), authz.is_member_principal(p)
+
+
+async def _cash05_scope(conn, org_id, household_id, scope, entity_id):
+    await _household(conn, org_id, household_id)
+    await _visible_members(conn, org_id, household_id, scope)
+    try:
+        return await CH.resolve_scope(conn, org_id, household_id, member_scope=scope, entity_id=entity_id)
+    except CH.ScopeNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+async def _cash05_accounts(conn, org_id, sc, t):
+    if sc.entity_id is None:
+        return await CI.scope_accounts(conn, org_id, household_id=sc.household_id, entity_ids=list(sc.shares), today=t)
+    return await CI.scope_accounts(conn, org_id, entity_ids=[sc.entity_id], today=t)
+
+
+async def _cash05_labels(conn, org_id, household_id, screen: str) -> dict:
+    from services import disclosures as D
+
+    return {k: D.public(await D.resolve_safe(conn, k, org_id=org_id, household_id=household_id))
+            for k in CASH05_LABELS[screen]}
+
+
+def _cash05_envelope(p, member: bool, sc, *, screen: str, labels: dict, vocab: dict) -> dict:
+    """The read-only permission envelope every CASH05 screen publishes (``editable`` EMPTY — nothing is written)."""
+    return {"household": {"id": sc.household_id}, "scope": {"entity_id": sc.entity_id, "label": sc.label},
+            "member_view": member, "screen": screen, "labels": labels,
+            "permissions": {"can_read": True, "can_write": False, "is_super_admin": bool(p.is_super_admin),
+                            "read_permission": CC.READ_PERMISSION, "write_permission": None},
+            "vocabularies": {**vocab, "entities": [{"entity_id": e, "display_name": sc.names.get(e)}
+                                                   for e in sorted(sc.shares, key=lambda x: (sc.names.get(x) or "", x))],
+                             "editable": [], "inline_editable": []}}
+
+
+def _cash05_actions(p, member: bool, household_id) -> list[dict]:
+    base = "/treasury" if member else f"/portfolio/households/{household_id}?tab=treasury"
+    out = [{"key": "documents", "label": "Documents", "href": f"{base}#treasury-documents"}]
+    if not member and _can_author(p):
+        out.append({"key": "edit_policy", "label": "Edit cash policy", "href": f"{base}#treasury-policy"})
+    if not member and _can_proposals(p, CPR.RP.VIEW):
+        out.append({"key": "proposed_trades", "label": "Proposed trades", "href": f"{base}#treasury-proposals"})
+    return out
+
+
+def _purpose(member: bool) -> str:
+    return "member_display" if member else "internal"
+
+
+@router.get("/cash/households/{household_id}/overview")
+async def cash_overview_route(request: Request, household_id: UUID, entity_id: UUID | None = Query(default=None),
+                              range: str = Query(default=CO.DEFAULT_RANGE, max_length=8)):  # noqa: A002
+    """The Treasury OVERVIEW: the liquid balance over the range (core evaluations, transfer markers, pending in / out
+    per point), the blended net / after-tax yield with its method note, cash01's coverage card + per-entity table."""
+    p, org_id, pool, member = await _cash05_open(request)
+    scope = await authz.member_entity_scope(request, pool)   # the ONE member / VISIBILITY1 scope
+    if range.lower() not in {k for k, _ in CO.RANGES}:
+        raise HTTPException(status_code=422, detail=f"range must be one of {[k for k, _ in CO.RANGES]}")
+    t = today()
+    async with pool.acquire() as conn:
+        sc = await _cash05_scope(conn, org_id, household_id, scope, entity_id)
+        report = await CC.household_report(conn, org_id, household_id, today=t, member_scope=scope)
+        accts = await _cash05_accounts(conn, org_id, sc, t)
+        out = await CO.build(conn, sc, t, range_key=range, purpose=_purpose(member), report=report,
+                             account_ids=[a["id"] for a in accts])
+        labels = await _cash05_labels(conn, org_id, household_id, "overview")
+    return {**_cash05_envelope(p, member, sc, screen="overview", labels=labels,
+                             vocab={**CO.vocabularies(), "flags": CC.vocabularies()["flags"]}),
+            "today": t.isoformat(), **out, "actions": _cash05_actions(p, member, household_id)}
+
+
+@router.get("/cash/households/{household_id}/holdings")
+async def cash_holdings_route(request: Request, household_id: UUID, entity_id: UUID | None = Query(default=None)):
+    """HOLDINGS per sleeve (instrument, plain-language description, yield with basis and as-of, liquidity with its
+    cut-off, shares, value, months of obligations covered, prospectus); the Long-term ladder expands to every rung."""
+    p, org_id, pool, member = await _cash05_open(request)
+    scope = await authz.member_entity_scope(request, pool)   # the ONE member / VISIBILITY1 scope
+    t = today()
+    async with pool.acquire() as conn:
+        sc = await _cash05_scope(conn, org_id, household_id, scope, entity_id)
+        report = await CC.household_report(conn, org_id, household_id, today=t, member_scope=scope)
+        cur = await CH.current(conn, sc, t, purpose=_purpose(member))
+        cov = report.household if sc.entity_id is None else next(
+            (e for e in report.entities if e["entity_id"] == sc.entity_id), None)
+        monthly = OB.parse_money(cov["monthly_outflow"]) if cov and cov.get("monthly_outflow") else None
+        planned, note = await CH.plan_rungs(conn, sc, report, t, purpose=_purpose(member))
+        cutoff = await CH.cutoff_setting(conn, org_id)
+        body = CH.build(cur, monthly=monthly, cutoff=cutoff, planned=planned, plan_note=note, member=member)
+        labels = await _cash05_labels(conn, org_id, household_id, "holdings")
+    return {**_cash05_envelope(p, member, sc, screen="holdings", labels=labels, vocab=CH.vocabularies()),
+            "today": t.isoformat(), **body}
+
+
+def _date_q(v: str | None, name: str) -> date | None:
+    if v in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(v)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"{name} must be a date (YYYY-MM-DD)") from exc
+
+
+@router.get("/cash/households/{household_id}/activity")
+async def cash_activity_route(request: Request, household_id: UUID, entity_id: UUID | None = Query(default=None),
+                              type: list[str] | None = Query(default=None),  # noqa: A002
+                              status: str | None = Query(default=None, max_length=16),
+                              start: str | None = Query(default=None, max_length=10),
+                              end: str | None = Query(default=None, max_length=10)):
+    """The ACTIVITY ledger of the cash / sleeve / ladder holdings: date, description, change, pending marker with
+    settlement guidance, type (transfer, dividend, interest, maturity, fee, credit); a clear empty state."""
+    p, org_id, pool, member = await _cash05_open(request)
+    scope = await authz.member_entity_scope(request, pool)   # the ONE member / VISIBILITY1 scope
+    bad = [x for x in (type or []) if x not in {k for k, _ in CA.TYPES}]
+    if bad or (status not in (None, "", "pending", "settled")):
+        raise HTTPException(status_code=422, detail="unknown type or status filter")
+    t = today()
+    s0, s1 = _date_q(start, "start"), _date_q(end, "end")
+    async with pool.acquire() as conn:
+        sc = await _cash05_scope(conn, org_id, household_id, scope, entity_id)
+        got = await CA.ledger(conn, sc, t, start=s0, end=s1)
+    rows = CA.filter_entries(got["entries"], types=type, status=status or None)
+    tot = CA.totals(rows)
+    return {**_cash05_envelope(p, member, sc, screen="activity", labels={}, vocab=CA.vocabularies()),
+            "today": t.isoformat(), "filters": {"type": type or [], "status": status or None,
+                                                "start": s0.isoformat() if s0 else None,
+                                                "end": s1.isoformat() if s1 else None},
+            "entries": [CA.entry_out(e, member=member) for e in rows],
+            "totals": {k: CH.money(v) for k, v in tot.items()}, "pending_count": sum(1 for e in rows if e["pending"]),
+            "excluded": got["excluded"],
+            "empty_text": None if rows else ("No activity for these cash holdings yet." if not got["entries"]
+                                             else "No activity matches these filters.")}
+
+
+@router.get("/cash/households/{household_id}/activity/{entry_id}")
+async def cash_activity_entry_route(request: Request, household_id: UUID, entry_id: UUID,
+                                    entity_id: UUID | None = Query(default=None)):
+    """One entry's DETAIL DRAWER: source record, account (last four), security, settlement date, and the linked
+    instruction / proposal / documents — each link names the API path that opens it, offered only to a caller whose
+    own permissions open it."""
+    from services.document_embedding import visible_entity_ids
+
+    p, org_id, pool, member = await _cash05_open(request)
+    scope = await authz.member_entity_scope(request, pool)   # the ONE member / VISIBILITY1 scope
+    t = today()
+    staff = bool(p.is_super_admin or p.is_internal)
+    allowed = await visible_entity_ids(pool, org_id, p.user_id, staff)
+    async with pool.acquire() as conn:
+        sc = await _cash05_scope(conn, org_id, household_id, scope, entity_id)
+        d = await CA.drawer(conn, sc, entry_id, t, member=member, perms=set(p.permissions or ()),
+                            super_admin=bool(p.is_super_admin), doc_allowed=allowed, staff=staff)
+    if d is None:
+        raise HTTPException(status_code=404, detail="activity entry not found")
+    return {**_cash05_envelope(p, member, sc, screen="activity", labels={}, vocab=CA.vocabularies()),
+            "today": t.isoformat(), **d}
+
+
+@router.get("/cash/households/{household_id}/earnings")
+async def cash_earnings_route(request: Request, household_id: UUID, entity_id: UUID | None = Query(default=None),
+                              period: str = Query(default="mtd", max_length=8),
+                              start: str | None = Query(default=None, max_length=10),
+                              end: str | None = Query(default=None, max_length=10)):
+    """EARNINGS for the period: dividends per fund + ladder interest + cash interest − the advisory fee on cash =
+    total, reconciled to the period's activity entries (cash basis)."""
+    p, org_id, pool, member = await _cash05_open(request)
+    scope = await authz.member_entity_scope(request, pool)   # the ONE member / VISIBILITY1 scope
+    t = today()
+    s0, s1 = _date_q(start, "start"), _date_q(end, "end")
+    try:
+        CE.period_bounds(period, t, s0, s1)
+    except CE.PeriodError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    async with pool.acquire() as conn:
+        sc = await _cash05_scope(conn, org_id, household_id, scope, entity_id)
+        accts = await _cash05_accounts(conn, org_id, sc, t)
+        cur = await CH.current(conn, sc, t, purpose=_purpose(member))
+        out = await CE.build(conn, sc, t, period=period, start=s0, end=s1, account_ids=[a["id"] for a in accts],
+                             holdings=cur["holdings"])
+        labels = await _cash05_labels(conn, org_id, household_id, "earnings")
+    return {**_cash05_envelope(p, member, sc, screen="earnings", labels=labels, vocab=CE.vocabularies()),
+            "today": t.isoformat(), **CE.render(out)}
+
+
+@router.get("/cash/households/{household_id}/documents")
+async def cash_documents_route(request: Request, household_id: UUID, entity_id: UUID | None = Query(default=None),
+                               type: list[str] | None = Query(default=None)):  # noqa: A002
+    """DOCUMENTS of the cash accounts (statements, confirmations, 1099s) from Chancery, dates in Eastern time; open /
+    download through the existing document route."""
+    p, org_id, pool, member = await _cash05_open(request)
+    scope = await authz.member_entity_scope(request, pool)   # the ONE member / VISIBILITY1 scope
+    if [x for x in (type or []) if x not in {k for k, _ in CD.TYPES}]:
+        raise HTTPException(status_code=422, detail="unknown document type filter")
+    t = today()
+    staff = bool(p.is_super_admin or p.is_internal)
+    async with pool.acquire() as conn:
+        sc = await _cash05_scope(conn, org_id, household_id, scope, entity_id)
+        accts = await _cash05_accounts(conn, org_id, sc, t)
+        out = await CD.build(conn, pool, sc, t, accounts=accts, user_id=p.user_id, staff=staff, member=member,
+                             types=type)
+    return {**_cash05_envelope(p, member, sc, screen="documents", labels={}, vocab=CD.vocabularies()),
+            "today": t.isoformat(), **out}

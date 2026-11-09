@@ -7,17 +7,22 @@
  * estimated, and — for a writer only — add / edit / end a manual obligation and record a capital-call notice. CASH02:
  * the cash policy (the three sleeves, the questionnaire, maker-checker approval) renders in PolicyPanel, inside this
  * tab; the minimum coverage is edited there (it moved into the policy). A member envelope renders read-only with the estimate labels from the disclosure library. Every control
- * renders only from lib/treasury.mjs (fails closed). Light / cream; read-only on money.
+ * renders only from lib/treasury.mjs (fails closed). Light / cream; read-only on money. CASH05: the day-to-day screens
+ * (overview, holdings, activity + earnings, documents) render first, in TreasuryDaily, each from its own read.
  */
 
 import { useState } from "react";
 import {
-  certaintyOptions, controls, coveredText, estimateLabel, filterObligations, flagLabels, gapText, labelOf, money,
-  monthsText, noticeBody, obligationBody, originText, payerOptions, sourceOptions, taxLabel, vocab,
+  certaintyOptions, controls, filterObligations, labelOf, money, noticeBody, obligationBody, originText, payerOptions,
+  sourceOptions, taxLabel, vocab,
 } from "@/lib/treasury.mjs";
 import PolicyPanel from "@/components/treasury/PolicyPanel";
+import { CoverageCard, EntityTable } from "@/components/treasury/CoverageCard";
+import TreasuryDaily from "@/components/treasury/TreasuryDaily";
 import LadderPanel from "@/components/treasury/LadderPanel";
 import ProposedTradesPanel from "@/components/treasury/ProposedTradesPanel";
+
+export { CoverageCard, EntityTable };
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-4";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -31,48 +36,6 @@ async function call(path, method, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || data.error || `Request failed (${res.status})`);
   return data;
-}
-
-export function CoverageCard({ env }) {
-  const c = env?.coverage;
-  if (!c) return null;
-  const est = estimateLabel(env);
-  return (
-    <section className={card} aria-label="Cash coverage">
-      <h2 className="text-lg font-semibold text-navy" style={{ fontFamily: "'Spectral', Georgia, serif" }}>Cash coverage</h2>
-      <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div><p className="text-sm text-text-muted">Months of coverage</p><p className="text-2xl text-navy">{monthsText(c)}</p>
-          <p className="text-xs text-text-muted">Minimum {c.min_months} months</p></div>
-        <div><p className="text-sm text-text-muted">Liquid balance</p><p className="text-2xl text-navy">{money(c.liquid)}</p>
-          <p className="text-xs text-text-muted">{c.liquid_basis}</p></div>
-        <div><p className="text-sm text-text-muted">{coveredText(c)}</p><p className="text-sm text-[#334155]">{gapText(c)}</p></div>
-      </div>
-      {c.flags?.length ? <p className="mt-2 text-sm text-[#9B2335]">{flagLabels(env, c.flags).join(" · ")}</p> : null}
-      <p className="mt-2 text-xs text-text-muted">As of {c.as_of}; average monthly outflow {money(c.monthly_outflow)} (next 12 months).</p>
-      {est ? <p className="mt-2 text-xs text-text-muted" data-label="cash.coverage_estimate">{est}</p> : null}
-    </section>
-  );
-}
-
-export function EntityTable({ env }) {
-  const rows = Array.isArray(env?.entities) ? env.entities : [];
-  if (!rows.length) return <p className="text-sm text-text-muted">No entity of this household has cash or obligations yet.</p>;
-  return (
-    <table className="w-full text-sm" aria-label="Coverage by entity">
-      <thead className="text-left text-text-muted"><tr><th className="py-1">Entity</th><th>Liquid</th><th>Months</th>
-        <th>Covered through</th><th>Next gap</th><th>Flags</th></tr></thead>
-      <tbody>{rows.map((r) => (
-        <tr key={r.entity_id} className="border-t border-[#ece8dd] align-top">
-          <td className="py-1">{r.display_name}</td>
-          <td>{r.has_cash ? money(r.liquid) : "No cash"}</td>
-          <td>{monthsText(r)} <span className="block text-xs text-text-muted">min {r.min_months}{r.min_basis ? ` (${r.min_basis})` : ""}</span></td>
-          <td>{r.covered_beyond_horizon ? `beyond ${r.covered_through}` : r.covered_through}</td>
-          <td>{r.next_gap ? `${r.next_gap.name}, ~${money(r.next_gap.amount)}, ${r.next_gap.date}` : "—"}</td>
-          <td className="text-[#9B2335]">{flagLabels(env, r.flags).join(" · ")}</td>
-        </tr>))}
-      </tbody>
-    </table>
-  );
 }
 
 export function ObligationsCalendar({ env }) {
@@ -192,11 +155,13 @@ export default function TreasuryPanel({ initialEnvelope }) {
   };
   return (
     <div className="space-y-4">
-      <CoverageCard env={env} />
-      <PolicyPanel env={env} onReload={reload} />
+      <TreasuryDaily env={env} fallback={<>
+        <CoverageCard env={env} />
+        <section className={card}><h3 className="mb-2 font-semibold text-navy">By entity</h3><EntityTable env={env} /></section>
+      </>} />
+      <div id="treasury-policy"><PolicyPanel env={env} onReload={reload} /></div>
       <LadderPanel env={env} onReload={reload} />
-      <ProposedTradesPanel env={env} onReload={reload} />
-      <section className={card}><h3 className="mb-2 font-semibold text-navy">By entity</h3><EntityTable env={env} /></section>
+      <div id="treasury-proposals"><ProposedTradesPanel env={env} onReload={reload} /></div>
       <section className={card}>
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <h3 className="mr-auto font-semibold text-navy">Obligations</h3>

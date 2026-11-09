@@ -292,6 +292,14 @@ out to build them. Check first.
   authority is not on the trade path (rep7b authority is); a Treasury position's quantity is assumed
   to be par; a note's buy limit is par (no coupon recorded); a maturity the custodian already removed
   from positions is seen only as cash.
+- ⬜ CASH05 operator steps: run verify_cash05.py (its regression is verify_cash04.py). Optional: set the
+  org setting `cash.mmf_cutoff_et` ("HH:MM", Eastern) so a fund's liquidity reads "same day if instructed
+  by HH:MM ET"; file statements / confirmations / 1099s against the cash accounts through the existing
+  `POST /documents/{id}/record-links` with record types `account_statement` / `account_confirmation` /
+  `account_tax_form`. Open: no prospectus URL and no fund cut-off in the security master; a note's coupon
+  is not recorded (no YTM at today's price); no custodian cash rate (cash interest yield not estimated);
+  no daily balance store (the series is the core as of each day); no fee runs / assignments exist for
+  real families yet ("fee on cash: not estimated"); `cash.sweep_rate` is reserved for cash07.
 - ⬜ Do capital calls and distributions post real journal lines? Gates the
   `v_capital_accounts` fix.
 - ⬜ `investment_profile_questions` vs `udf_definitions` — is one retirable?
