@@ -481,3 +481,39 @@ async def build(conn, org_id, *, fields: dict, lines: list[dict], sleeves: list[
     p = plan(sleeves, accounts, cands_by_sleeve=cands, profiles=profiles)
     return {"ladder": ladder, "instruments": p, "sources": {"curve_missing": curve_missing, "issues": issues_why,
                                                             "issues_count": len(issues), "funds_count": len(funds)}}
+
+
+async def scope_plans(conn, org_id, household_id, rep, today: date, *, purpose: str = "internal",
+                      fixture: dict | None = None) -> list[dict]:
+    """CASH03 (moved here from routers.cash._plan_block by CASH04, no logic change) — per scope with an ACTIVE policy
+    (the household, then each entity override the household reaches): the policy row, its fields, the scope's lines,
+    cash02's view, the scope's accounts and the built plan (:func:`build`). The ONE derivation both the Treasury
+    envelope (rendered) and cash04's proposals (raw) read."""
+    from services import cash_coverage as CC
+    from services import cash_policy as CP
+
+    rows = await CP.live_rows(conn, org_id, household_id=household_id, entity_ids=list(rep.shares))
+    keys = [("household", str(household_id))] + sorted(
+        {("entity", str(r["entity_id"])) for r in rows if r["scope_type"] == "entity"})
+    reads = await CP.read_yields(conn, today)
+    out = []
+    for st, sid in keys:
+        active = next((r for r in rows if r["scope_type"] == st and r["status"] == "active" and str(
+            r["household_id"] if st == "household" else r["entity_id"]) == sid), None)
+        if active is None:
+            continue
+        if st == "entity" and sid not in rep.shares:
+            continue
+        fields = CP.fields_of(active)
+        lines = CC.scope_lines(rep, st, None if st == "household" else sid)
+        liquid = CC.scope_liquid(rep, st, None if st == "household" else sid)
+        profile = await CP.subject_profile(conn, org_id, st, sid, today)
+        view = CP.evaluate(fields, lines, liquid, reads, profile, today)
+        accounts = await scope_accounts(conn, org_id, household_id=household_id if st == "household" else None,
+                                        entity_ids=list(rep.shares) if st == "household" else [sid], today=today)
+        built = await build(conn, org_id, fields=fields, lines=lines, sleeves=view["sleeves"], accounts=accounts,
+                            today=today, purpose=purpose, fixture=fixture)
+        out.append({"scope_type": st, "scope_id": sid, "active": active, "fields": fields, "lines": lines,
+                    "view": view, "accounts": accounts, "built": built,
+                    "label": "The household" if st == "household" else (rep.names.get(sid) or "An entity")})
+    return out

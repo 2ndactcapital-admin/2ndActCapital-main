@@ -16,6 +16,8 @@ from services import spv_carry_runs
 from services import security_master_jobs
 # S28 — the AI drift monitor's Service Task verb (Super Admin only; never listed to the assistant)
 from services import ai_drift
+# CASH04 — the cash maturity waterfall's Service Task verb (Super Admin only; DRAFTS only; never listed to the assistant)
+from services import cash_waterfall
 
 
 def register_all() -> None:
@@ -32,3 +34,4 @@ def register_all() -> None:
     edgar_ops.register_actions()
     security_master_jobs.register_actions()
     ai_drift.register_actions()
+    cash_waterfall.register_actions()

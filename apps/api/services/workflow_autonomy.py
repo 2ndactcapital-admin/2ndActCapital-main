@@ -67,7 +67,19 @@ VERB_AUTONOMY: dict[str, dict] = {
                       "writes": "a co-investment subscription (a capital commitment)"},
     "spv_carry.propose_from_realization": {"class": ELIGIBLE,
                                            "writes": "a carry run proposal (spv carry runs, status proposed)"},
+    # CASH04 — the monthly / on-maturity waterfall: DRAFTS only (a cash proposal in status draft, no task, plus one
+    # review task per household). It never submits, approves or routes — those two verbs are declared NEVER below and
+    # are deliberately NOT registered as actions, so no workflow and no agent can reach them (the custody cliff).
+    "cash.maturity_waterfall": {"class": ELIGIBLE, "platform_job": True, "draft_only": True,
+                                "writes": "draft cash proposals (rebalance_proposals kind cash, status draft) + one "
+                                          "review task per household — never submits or routes"},
+    "cash.proposal_submit": {"class": NEVER, "trades": True,
+                             "writes": "submits a cash proposal for approval (a trade list) — a person only"},
+    "cash.proposal_route": {"class": NEVER, "trades": True,
+                            "writes": "routes an approved cash proposal to execution instructions — a person only"},
 }
+#: CASH04 — the verbs whose write may only ever DRAFT (the run's output is a draft a person adopts)
+DRAFT_ONLY_VERBS = frozenset(k for k, v in VERB_AUTONOMY.items() if v.get("draft_only"))
 
 CLASS_REASONS = {"money": "moves money", "custody": "changes ownership / custody", "authority": "changes authority",
                  "roles": "changes roles or permissions", "trades": "submits a trade",

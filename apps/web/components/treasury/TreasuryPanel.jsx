@@ -17,6 +17,7 @@ import {
 } from "@/lib/treasury.mjs";
 import PolicyPanel from "@/components/treasury/PolicyPanel";
 import LadderPanel from "@/components/treasury/LadderPanel";
+import ProposedTradesPanel from "@/components/treasury/ProposedTradesPanel";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-4";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -194,6 +195,7 @@ export default function TreasuryPanel({ initialEnvelope }) {
       <CoverageCard env={env} />
       <PolicyPanel env={env} onReload={reload} />
       <LadderPanel env={env} onReload={reload} />
+      <ProposedTradesPanel env={env} onReload={reload} />
       <section className={card}><h3 className="mb-2 font-semibold text-navy">By entity</h3><EntityTable env={env} /></section>
       <section className={card}>
         <div className="mb-2 flex flex-wrap items-center gap-2">

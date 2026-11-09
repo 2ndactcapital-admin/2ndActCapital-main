@@ -118,6 +118,17 @@ JOBS: dict[str, JobSpec] = {
         "opens, refreshes or closes drift alerts. Calls no model. Platform job (S28).",
         "17 */6 * * *", "UTC", "Every 6 hours at :17 UTC (00:17, 06:17, 12:17, 18:17)",
         (StepSpec("drift", "ai.drift_monitor", "AI drift check (every task and org)"),)),
+    # CASH04 — the monthly / on-maturity cash waterfall (services.cash_waterfall registers its action). Seeded INACTIVE
+    # (scripts/_apply_cash04.py --seed-jobs, an operator step); the Super Admin switches it on with BUGFIX4's switch.
+    # Weekdays: a household is acted on only when a new month starts (the monthly run) or a rung matured since its last
+    # run — otherwise the run records "nothing since the last run" for it. Output: DRAFT proposals + one review task.
+    "cash_maturity_waterfall": JobSpec(
+        "cash_maturity_waterfall", "system:Cash — maturity waterfall",
+        "Per household with an ACTIVE cash policy: maturities and earnings since the last run → a DRAFT cash proposal "
+        "per account (top up Near-term first, reinvest the remainder as a new rung, earnings by the target allocation) "
+        "and one review task. Never submits, approves or routes. Platform job (CASH04).",
+        "15 7 * * 1-5", "America/New_York", "Weekdays 07:15 New York (11:15 / 12:15 UTC) — before the open",
+        (StepSpec("waterfall", "cash.maturity_waterfall", "Cash maturity waterfall (drafts only)"),)),
 }
 JOB_BY_NAME = {j.name: j for j in JOBS.values()}
 
@@ -436,6 +447,9 @@ FETCHES = {
                              "does.",
     "ai_drift_monitor": "Nothing external: it reads the platform's own AI decision log (ai_decision_log) and writes "
                         "drift alerts. It calls no model and makes no network request.",
+    "cash_maturity_waterfall": "Nothing external: it reads each household's own holdings, transactions and active cash "
+                               "policy and writes DRAFT cash proposals and review tasks. It never submits, approves "
+                               "or routes a trade, and makes no network request.",
     "security_data_prices": "End-of-day closes for the coverage set (held, modelled, replicated, option underlyings, "
                             "benchmarks) from the ranked price sources — today Yahoo Finance (internal use only, "
                             "never shown to members), Tiingo when its key is added. Gap fill for the last few days; "

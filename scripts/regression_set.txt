@@ -59,3 +59,4 @@ apps/api/scripts/verify_s29b.py
 apps/api/scripts/verify_cash01.py
 apps/api/scripts/verify_cash02.py
 apps/api/scripts/verify_cash03.py
+apps/api/scripts/verify_cash04.py
