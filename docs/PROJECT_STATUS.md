@@ -344,6 +344,68 @@ This file starts with the email item below.
 ---
 
 
+## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CASH04 — from PLAN to ORDERS: a CASH PROPOSAL per account (a KIND of rebalance proposal — sells over target in withdrawal order with the early-sale warning, buys of the chosen funds by notional and of the ladder rungs by par with a limit, the shortfall never borrowed, non-cash never sold); approval → execution instructions through Replication Studio's own path (services.sod, route_trade_list → create_instructions, Manual route); the MONTHLY MATURITY WATERFALL as a platform job that only DRAFTS (S29b draft-only), shipped switched off; catalog APPLIED; verify WRITTEN, not yet run (2026-11-09)
+
+Branch cash04-work. No money moves between accounts (cash07). Docs: `docs/cash/CASH04_NOTES.md` (Task 1: how a rebalance
+proposal is stored / approved / routed, the kind decision with evidence, the bill / note order convention, the job
+registration path, the S29b class, the reuse inventory, decisions D1–D11) and `docs/cash/CASH_PROPOSALS.md` (builder
+rules, withdrawal order, approval → instruction path, waterfall, permissions, operator steps).
+
+- **[FIND]** `execution_routers.registry()` is rep9's FIX **block** router (manual / fix, nothing connected), not a
+  per-custodian Manual / Altruist registry. The per-custodian choice is `custody.trading.route_trade_list`; cash04 routes
+  through it and honours `route_refusal` (manual offered, fix refused with its reason).
+- **[FIND]** SOC5 `trading_authority` gates the assistant's money-movement actions only; the trade path's authority check
+  is rep7b's `authority.refusal` (managed only for any proposal path). cash04 relies on that and does not re-implement
+  either.
+- **[FIND]** No fixed-income order convention existed (letters said "shares"; every proposal routed at market). cash04:
+  a bill / note by PAR (USD face, $100 increments) with a LIMIT per 100 of par; a fund by notional (buy) / shares (sell).
+  A Treasury position's quantity is taken as par (stated on each line).
+- **[FIND]** `CASH_TRACK_PLAN_v1.2.md` is still not in the repo. The Olivo household has NO active cash policy yet:
+  `olivo_cash_proposal.py --dry-run` (run by the sprint) printed that and exited 0.
+- **Schema.** `docs/cash04_part1.sql` APPLIED (`_apply_cash04.py --all`: SCHEMA OK); snapshot updated (`cash_leg`).
+  - `rebalance_proposals_kind_chk` + a strict `cash` branch (no model; `trigger_ref ? 'cash_policy_id'`; manual ⇒ a
+    person, cash_waterfall ⇒ the system with a period); the `model` branch now refuses `cash_waterfall`.
+  - `rebalance_proposals_trigger_chk` + `cash_waterfall`.
+  - `rebalance_proposal_trades.cash_leg` + `rebalance_proposal_trades_cash_leg_chk` (the option_leg / short_leg pattern).
+  - `rebalance_proposals_cash_waterfall_uq` (account, period) — the idempotency backstop.
+  - **No new table**; `execution_instructions` untouched (side / amount / price CHECKs asserted identical by the verify).
+- **Services.**
+  - `services/cash_proposals.py` — the pure builder (`build_account`) + `write_proposal` (through `account_lock`, the
+    authority check, one open proposal per account; never supersedes another kind) + `write_draft` (the waterfall's
+    only write) + `adopt` + `propose_household` + the panel.
+  - `services/cash_waterfall.py` — the pure waterfall (`build_waterfall`), detection (maturities from the account's own
+    positions; earnings = dividend / interest transactions), `run_household` (one review task per household,
+    de-duplicated), `run_job` (platform job; a test platform org touches test orgs only), `register_actions`.
+  - `cash_instruments.scope_plans`: cash03's per-scope plan loop moved out of `routers/cash._plan_block` (no logic change)
+    so the envelope and the proposals read ONE derivation.
+  - Additive: `rebalance_proposals` (kind / trigger labels, `_trade_line` reads a cash leg's limit, generate() refuses
+    `cash_waterfall`, the instruction notes say par / per 100), `authority.TRIGGERS` (+ `cash_waterfall`, a model path),
+    `workflow_autonomy.VERB_AUTONOMY` (`cash.maturity_waterfall` eligible + platform_job + draft_only;
+    `cash.proposal_submit` / `cash.proposal_route` never, trades — not registered), `sod.VERB_DUTIES`,
+    `security_master_jobs.JOBS` (+ FETCHES), `execution_letter` (par wording), `execution.instruction_out` (security type).
+- **Routes** (`routers/cash.py`, +2): `POST /cash/households/{id}/proposals`, `POST /cash/proposals/{id}/adopt` — both
+  `internal + any(manage_proposals)` + the visibility rule. The Treasury envelope gains a STAFF-only `proposals` block
+  (`view_proposals`); a member's is unchanged. AUTHZ1_ROUTES and VISIBILITY1_ROUTES regenerated (`--check` CURRENT).
+- **Web.** Household → Treasury → Proposed trades (`ProposedTradesPanel.jsx`, `lib/cashProposals.mjs`, fails closed):
+  lines grouped by sleeve / rung with reasons, early-sale warnings, shortfall, after-tax effect, links into the existing
+  proposal / instruction screens (approve / route / sheet), the waterfall's run history, Adopt from the server's
+  actions only. Proxies `/api/cash/households/[id]/proposals`, `/api/cash/proposals/[proposalId]/adopt`. Tests:
+  `tests/cash04` (6, passing); `tests/cash01–03` still 18 / 18.
+- **Job.** `cash_maturity_waterfall`, weekdays 07:15 New York; seeded INACTIVE by `_apply_cash04.py --seed-jobs` — an
+  OPERATOR step (NOT run by the sprint; no real row written).
+  - **[FIND]** verify_secmaster1's real-jobs check expects EVERY `security_master_jobs.JOBS` entry to exist in the real
+    platform org (the other 7 are seeded, inactive). Until the operator runs `--seed-jobs`, it sees 7 of 8 and FAILS
+    that one check. Run the seed before verify_secmaster1.
+- **Operator script.** `scripts/olivo_cash_proposal.py --dry-run` (read-only transaction; prints each line and the sheet
+  it WOULD become; never routes). Run by the sprint: no active policy → exit 0.
+- **Verify.** `apps/api/scripts/verify_cash04.py` WRITTEN, NOT RUN; added to scripts/regression_set.txt. Its
+  regressions: verify_cash03.py and verify_rep13.py, each once, flat, after teardown, VERIFY_NESTED=1, 2700 s.
+  - What the sprint ran: the pure builder and waterfall on scratch hand cases (matched the hand arithmetic), the
+    verify's static markers extracted offline (all pass but the regression-set line, added since), `node --test`
+    for tests/cash01–04.
+  - NOT run (WSL memory): the full verify_cash04.py, its nested regressions, npm run build.
+- **UPDATE (cash04 fix 1, 2026-11-09). The operator run was 173 PASS / 5 FAIL. Its nested regressions passed (verify_cash03 192/0, verify_rep13 195/0), and every failure was in sections that ran before the regressions.** (1, VERIFY) `y_approval` compared `sod_decisions.item_id` (TEXT) to `$1::uuid`. That raised "operator does not exist: text = uuid", so nothing after it in the section ran and no fixture instruction was created. The verify now uses `$1::text` with `str(pid)`. Those were the only two text-id-as-uuid casts in the verify. (2, CODE) `services/rebalance_proposals.py`: the routing restatement copies every trade row to stamp its `instruction_id`, but it copied only `short_leg` and dropped cash04's `cash_leg` (and `option_leg`). So an approved cash proposal's lines lost their sleeve, limit and warning. This was the real cause of the "lines carry sleeve / … link to each instruction" FAIL, which only showed once (1) let approval run. The copy now carries all three leg columns. (3, CODE) `services/cash_ladder._finish`: when every rung carried a yield but the ladder held ZERO par (org B's household: no Long-term obligation, so its 3 filler rungs were empty), the code took the "some rungs lack a yield" branch and read `miss[0]` from an empty list. The IndexError gave a 500 on POST /cash/households/{id}/proposals, and the Treasury GET hid the same failure as a `plan.error`. This case now has its own branch: "not estimated — the ladder holds no par". The other `[0]` sites in services/cash_*.py and routers/cash.py are guarded. (4, CODE) For a household with no ACTIVE cash policy, POST …/proposals now answers 200 `{"empty": "no active cash policy — nothing to propose"}` and writes nothing. It used to answer 201 with empty lists and an audit row. ProposedTradesPanel shows the message. (5, VERIFY) `--only=<seed|builder|approval|refusals|waterfall|app|empty>` one-off mode ('app' pulls in approval + waterfall). `api()` now uses `raise_app_exceptions=True`, so a 500 prints the server traceback (it used to be swallowed into "Internal Server Error"). A new "empty states" section reproduces the pre-fix IndexError by running ec6efd4's `cash_ladder._finish`, then proves the fix. It also checks: org B's own Treasury GET is 200 with no plan error and the ladder shows "holds no par"; for the no-policy household H2 (premise asserted: 0 active policies), GET /cash/households, GET /treasury and ?horizon_months=60 all answer 200 with no plan or proposals error, and generate answers 200 with the empty state and writes nothing. PROOF (one-off `--only=builder,approval,refusals,waterfall,app,empty`, seed + full teardown): **117 PASS / 0 FAIL**. PASS counts by section: schema 16, builder (db) 9, approval 14 (the maker is refused 403 and that refusal is recorded 0→1 in sod_decisions; U_ADV2 approves; 4 instructions are created through create_instructions only, routed manual; the sheet prints par with a limit per 100), refusals 4, waterfall 13, app + visibility 10 (B: lines + links PASS; E: 404 / 201; C: A→B 0, B→A 0, own 8/1, instr 0; D: ['manual'], Altruist never called), empty states 8, teardown 41 (real rows unchanged). `--cleanup-only`: 0 fixture rows (2/0). `--self-checks-only`: 29/0. `node --test tests/cash04`: 6/6. NOT run (WSL memory): the full verify_cash04.py, its nested verify_cash03.py / verify_rep13.py, npm run build.
+
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CASH03 — the OBLIGATION-MATCHED LADDER (Long-term rungs on the dates of large obligations + monthly fillers, business-day maturities, real issues else indicative) and AFTER-TAX INSTRUMENT SELECTION per sleeve × account (Treasury vs muni vs taxable MMF / bills / notes; IRA / trust / foundation treatment; the 133 bp T-bill-vs-CD case); Treasury Fiscal Data + SEC N-MFP registered through the provider registry, SWITCHED OFF; a target, never a trade; catalog APPLIED; verify WRITTEN, not yet run (2026-11-09)
 
 Branch cash03-work. Read-only on money (proposals / orders are cash04). Docs: `docs/cash/CASH03_NOTES.md` (Task 1:

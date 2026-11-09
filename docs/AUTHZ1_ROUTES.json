@@ -1,5 +1,5 @@
 {
- "app_route_count": 991,
+ "app_route_count": 993,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -17937,6 +17937,48 @@
    "name": "regenerate_plan_route",
    "note": "",
    "path": "/api/v1/cash/households/{household_id}/plan/regenerate",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_proposals)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "generate_proposals_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/proposals",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_proposals)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "adopt_proposal_route",
+   "note": "",
+   "path": "/api/v1/cash/proposals/{proposal_id}/adopt",
    "public": false,
    "write": true
   },

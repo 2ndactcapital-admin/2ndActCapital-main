@@ -3551,6 +3551,7 @@
 --   lot_method                               text
 --   option_leg                               jsonb
 --   short_leg                                jsonb
+--   cash_leg                                 jsonb
 --   PRIMARY KEY rebalance_proposal_trades_pkey: (id)
 
 -- ===== rebalance_proposals =====

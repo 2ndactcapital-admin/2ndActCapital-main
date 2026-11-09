@@ -87,7 +87,8 @@ CALENDAR_BASIS = "weekends_only"
 CALENDAR_NOTE = ("settlement date = trade date + 1 business day, counting weekends only — no holiday calendar "
                  "exists in this build")
 
-TRIGGERS = ("join", "model_change", "drift", "cash_flow", "manual", "harvest")
+TRIGGERS = ("join", "model_change", "drift", "cash_flow", "manual", "harvest",
+            "cash_waterfall")   # CASH04 — the waterfall's system drafts: a model path, managed only
 PATH_LABELS = {
     "join": "Join a model", "change_model": "Change model", "settings": "Change model settings",
     "transition": "Transition preview", **{f"proposal:{t}": f"Proposal — {t.replace('_', ' ')}" for t in TRIGGERS},

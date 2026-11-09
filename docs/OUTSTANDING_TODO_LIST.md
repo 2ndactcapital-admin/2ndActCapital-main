@@ -285,6 +285,13 @@ out to build them. Check first.
   verify_cash03.py (its regression is verify_cash02.py). Open: a muni yield source (none free); the
   owner's state of domicile and a single-state fund's state (muni MMFs are treated as state-taxed);
   a trust's grantor status; cash04 snapshots the rungs it proposes.
+- ⬜ CASH04 operator steps: `_apply_cash04.py --seed-jobs` (the maturity-waterfall job, trigger
+  INACTIVE; verify_secmaster1's real-jobs check needs it — it counts every JOBS entry) → switch it on in Admin → Security master (Super Admin) when wanted;
+  `olivo_cash_proposal.py --dry-run` once the Olivo policy is approved (cash02's step); run
+  verify_cash04.py (its regressions are verify_cash03.py and verify_rep13.py). Open: SOC5 trading
+  authority is not on the trade path (rep7b authority is); a Treasury position's quantity is assumed
+  to be par; a note's buy limit is par (no coupon recorded); a maturity the custodian already removed
+  from positions is seen only as cash.
 - ⬜ Do capital calls and distributions post real journal lines? Gates the
   `v_capital_accounts` fix.
 - ⬜ `investment_profile_questions` vs `udf_definitions` — is one retirable?

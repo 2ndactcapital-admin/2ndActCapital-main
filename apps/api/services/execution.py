@@ -1037,7 +1037,8 @@ def instruction_out(r: dict, *, sec: dict | None = None, acct: dict | None = Non
         "short_terms": _loads(r.get("short_terms")),          # rep13 — SELL SHORT / BUY TO COVER: effect, lots, rate
         "side_label": SIDE_LABELS.get(r["side"], r["side"]),
         "security": {"name": sec["name"], "ticker": (sec.get("identifiers") or {}).get("ticker"),
-                     "cusip": (sec.get("identifiers") or {}).get("cusip")} if sec else None,
+                     "cusip": (sec.get("identifiers") or {}).get("cusip"),
+                     "security_type": sec.get("security_type")} if sec else None,   # CASH04 — par for fixed income
         "account": {"account_number_masked": acct["account_number_masked"], "custodian_code": acct["custodian_code"],
                     "is_held_away": acct["is_held_away"]} if acct else None,
     }

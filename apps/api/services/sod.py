@@ -674,6 +674,7 @@ VERB_DUTIES: dict[str, str] = {
     "spv.record_transaction": "write",
     "spv.subscribe": "write",
     "spv_carry.propose_from_realization": "propose",
+    "cash.maturity_waterfall": "propose",     # CASH04 — drafts a cash proposal; a person adopts, another approves
 }
 
 

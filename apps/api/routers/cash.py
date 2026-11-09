@@ -23,6 +23,14 @@ stored) ride in the same treasury envelope as ``plan`` (one per scope with an AC
     POST /api/v1/cash/households/{household_id}/plan/regenerate    recompute + audit ``cash.plan.regenerated``
   ``require_internal_permission(manage_cash_policy)`` — cash02's authoring permission reused.
 
+CASH04 — from PLAN to ORDERS: a CASH PROPOSAL per account is a KIND of rebalance proposal (services.cash_proposals);
+approval, routing and instructions are Replication Studio's existing routes (/proposals/{id}/submit|approve|execute,
+/instructions/{id}). The staff-only ``proposals`` block (the Proposed-trades panel + the waterfall's run history) rides
+the treasury envelope for a holder of ``view_proposals``; a member's envelope is unchanged.
+    POST /api/v1/cash/households/{household_id}/proposals     a DRAFT cash proposal per account     (manage_proposals)
+    POST /api/v1/cash/proposals/{proposal_id}/adopt           a person adopts the waterfall's draft (manage_proposals)
+  both ``require_internal_permission(manage_proposals)`` (rep5's author permission) + the visibility rule; audited.
+
 GATES (services.authz, one Principal; Super Admin first). READ: ``view_portfolio`` (a member holds it) or
 ``manage_portfolio``, then the ONE visibility rule ``authz.member_entity_scope`` — a member reads only their own
 family (another family's household is a 404, the same as a missing one), a restricted staff caller of an enforcing
@@ -41,6 +49,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StrictInt
 
 from routers.entities import get_org_id
@@ -50,6 +59,7 @@ from services import cash_obligations as OB
 from services import cash_instruments as CI
 from services import cash_ladder as CL
 from services import cash_policy as CP
+from services import cash_proposals as CPR
 from services.audit import write_audit_log
 from services.authz import require_internal_permission
 from services.database import get_pool
@@ -170,6 +180,38 @@ def _can_author(p) -> bool:
     if p.is_super_admin or p.is_staff:
         return True
     return bool(p.is_internal and CP.PERMISSION in p.permissions)
+
+
+def _can_proposals(p, permission: str) -> bool:
+    """CASH04 — the exact rule of require_internal_permission(<permission>), for the envelope (fails closed)."""
+    if p is None or not p.admitted or not p.is_active:
+        return False
+    if p.is_super_admin or p.is_staff:
+        return True
+    return bool(p.is_internal and permission in p.permissions)
+
+
+def _proposal_err(exc: Exception):
+    import asyncpg
+    from services import human_tasks as HTK
+
+    RP = CPR.RP
+    if isinstance(exc, (RP.ProposalNotFound, HTK.HumanTaskNotFound)):
+        return HTTPException(status_code=404, detail=str(exc) or "Not found")
+    if isinstance(exc, (RP.MakerCheckerViolation, PermissionError, HTK.HumanTaskPermissionError, HTK.MakerCheckerError,
+                        HTK.AgentActorRefused)):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, RP.OpenProposalExists):
+        return HTTPException(status_code=409, detail="an open proposal of another kind exists for this account — "
+                                                     "it is never superseded by a cash proposal")
+    if isinstance(exc, (CPR.CashProposalConflict, RP.ProposalConflict, HTK.HumanTaskConflict,
+                        asyncpg.UniqueViolationError)):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, asyncpg.CheckViolationError):
+        return HTTPException(status_code=422, detail=f"refused by the database: {exc.constraint_name}")
+    if isinstance(exc, (CPR.CashProposalError, RP.ProposalError, HTK.HumanTaskError)):
+        return HTTPException(status_code=422, detail=str(exc))
+    return None
 
 
 def _policy_err(exc: Exception):
@@ -293,6 +335,21 @@ async def treasury_route(request: Request, household_id: UUID,
                     "vocabularies": {**CI.vocabularies(), "editable": [], "inline_editable": []}}
         labels[CI.TAX_KEY] = D.public(await D.resolve_safe(conn, CI.TAX_KEY, org_id=org_id,
                                                            household_id=household_id))
+        proposals = None
+        if not member and _can_proposals(p, CPR.RP.VIEW):
+            try:      # CASH04 — the Proposed-trades panel never takes the coverage envelope down
+                accts = await CI.scope_accounts(conn, org_id, household_id=household_id,
+                                                entity_ids=list(report.shares), today=t)
+                proposals = await CPR.household_panel(
+                    conn, org_id, household_id, user_id=p.user_id, can_write=_can_proposals(p, CPR.PERMISSION),
+                    can_approve=_can_proposals(p, CPR.RP.APPROVE), account_ids=[a["id"] for a in accts])
+            except Exception as exc:  # noqa: BLE001
+                import logging
+
+                logging.getLogger(__name__).exception("cash04 proposals block failed for household %s", household_id)
+                proposals = {"proposals": [], "waterfall_history": [], "routes": [], "actions": [],
+                             "error": f"the proposed trades could not be read ({type(exc).__name__})",
+                             "vocabularies": {"editable": [], "inline_editable": []}}
     names = report.names
     lines = [ln.to_json(names) for ln in report.lines]
     actions = ["add_obligation", "record_notice", "sync_alerts"] if can_write else []
@@ -308,12 +365,16 @@ async def treasury_route(request: Request, household_id: UUID,
         "stored": stored,
         "policy": policy,
         "plan": plan,
+        "proposals": proposals,
         "labels": labels,
         "member_view": member,
         "actions": actions,
         "permissions": {"can_read": True, "can_write": can_write, "is_super_admin": bool(p.is_super_admin),
                         "read_permission": CC.READ_PERMISSION, "write_permission": CC.WRITE_PERMISSION,
-                        "can_author_policy": can_author, "policy_permission": CP.PERMISSION},
+                        "can_author_policy": can_author, "policy_permission": CP.PERMISSION,
+                        "can_view_proposals": proposals is not None,
+                        "can_generate_proposals": bool(proposals is not None and _can_proposals(p, CPR.PERMISSION)),
+                        "proposal_permission": CPR.PERMISSION},
         "vocabularies": {**OB.vocabularies(can_write=can_write), **CC.vocabularies(),
                          "payers": [{"entity_id": e["entity_id"], "display_name": e["display_name"]}
                                     for e in report.entities] if can_write else []},
@@ -479,32 +540,13 @@ async def _plan_block(conn, org_id, household_id, rep, t: date, *, member: bool,
     from services.security_data import registry as SR
 
     purpose = "member_display" if member else "internal"
-    rows = await CP.live_rows(conn, org_id, household_id=household_id, entity_ids=list(rep.shares))
-    keys = [("household", str(household_id))] + sorted(
-        {("entity", str(r["entity_id"])) for r in rows if r["scope_type"] == "entity"})
-    reads = await CP.read_yields(conn, t)
     scopes = []
-    for st, sid in keys:
-        active = next((r for r in rows if r["scope_type"] == st and r["status"] == "active" and str(
-            r["household_id"] if st == "household" else r["entity_id"]) == sid), None)
-        if active is None:
-            continue
-        if st == "entity" and sid not in rep.shares:
-            continue
-        fields = CP.fields_of(active)
-        lines = CC.scope_lines(rep, st, None if st == "household" else sid)
-        liquid = CC.scope_liquid(rep, st, None if st == "household" else sid)
-        profile = await CP.subject_profile(conn, org_id, st, sid, t)
-        view = CP.evaluate(fields, lines, liquid, reads, profile, t)
-        accounts = await CI.scope_accounts(conn, org_id, household_id=household_id if st == "household" else None,
-                                           entity_ids=list(rep.shares) if st == "household" else [sid], today=t)
-        built = await CI.build(conn, org_id, fields=fields, lines=lines, sleeves=view["sleeves"], accounts=accounts,
-                               today=t, purpose=purpose, fixture=_PLAN_FIXTURE["fx"])
+    for sp in await CI.scope_plans(conn, org_id, household_id, rep, t, purpose=purpose, fixture=_PLAN_FIXTURE["fx"]):
+        active, built, lines = sp["active"], sp["built"], sp["lines"]
         names = {ln["key"]: ln.get("name") for ln in lines}
         ladder = CL.render(built["ladder"], names, member=member)
         instruments = CI.render(built["instruments"], member=member)
-        scopes.append({"scope_type": st, "scope_id": sid,
-                       "label": "The household" if st == "household" else (rep.names.get(sid) or "An entity"),
+        scopes.append({"scope_type": sp["scope_type"], "scope_id": sp["scope_id"], "label": sp["label"],
                        "policy_id": str(active["id"]), "version_no": active["version_no"],
                        "rung_count": active["rung_count"], "ladder": ladder, "instruments": instruments,
                        "sources": built["sources"] if not member else {
@@ -708,3 +750,57 @@ async def regenerate_plan_route(request: Request, household_id: UUID):
     await write_audit_log(org_id=org_id, action="cash.plan.regenerated", table_name="cash_policies",
                           record_id=household_id, new=summary, actor=p.user_id)
     return {"plan": plan, "audit": summary}
+
+
+# ═══ CASH04 — cash proposals (a kind of rebalance proposal) ═════════════════════════════════════════════════════
+@router.post("/cash/households/{household_id}/proposals", status_code=201)
+async def generate_proposals_route(request: Request, household_id: UUID):
+    """A person's DRAFT cash proposal per account of the household's ACTIVE cash policies (services.cash_proposals:
+    sell what is over target in withdrawal order, buy the chosen instruments and ladder rungs within the account's
+    cash; the shortfall shown, never borrowed). Submit / approve / route are the existing proposal routes."""
+    p = require_internal_permission(request, "manage_proposals")  # = CPR.PERMISSION (rep5's author permission)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    await require_visible(request, pool, household_ids=[household_id])
+    staff = await scope_for_request(request, pool)
+    scope = None if staff is None else set(staff.entity_ids)
+    async with pool.acquire() as conn:
+        await _household(conn, org_id, household_id)
+        await _visible_members(conn, org_id, household_id, scope)
+    try:
+        out = await CPR.propose_household(pool, org_id=org_id, household_id=household_id, actor_id=p.user_id,
+                                          today=today(), scope=scope)
+    except Exception as exc:  # noqa: BLE001
+        mapped = _proposal_err(exc)
+        if mapped is None:
+            raise
+        raise mapped from exc
+    if out.get("empty"):      # cash04 fix 1: nothing to propose — 200 with the empty state, nothing created
+        return JSONResponse(status_code=200, content=out)
+    return out
+
+
+@router.post("/cash/proposals/{proposal_id}/adopt")
+async def adopt_proposal_route(request: Request, proposal_id: UUID):
+    """A person ADOPTS the maturity waterfall's SYSTEM draft: a new cash proposal with the same lines, that person its
+    maker, supersedes the draft and is submitted — a DIFFERENT person approves it (CASH04 D8)."""
+    p = require_internal_permission(request, "manage_proposals")  # = CPR.PERMISSION
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT a.household_id, a.primary_entity_id FROM public.rebalance_proposals r JOIN public.accounts a "
+            "ON a.id = r.account_id AND a.system_to IS NULL AND a.valid_to IS NULL WHERE r.id = $1::uuid AND "
+            "r.org_id = $2::uuid AND r.system_to IS NULL AND r.proposal_kind = 'cash'", str(proposal_id), str(org_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="cash proposal not found")
+    await require_visible(request, pool, household_ids=[row["household_id"]] if row["household_id"] else [],
+                          entity_ids=[row["primary_entity_id"]])
+    try:
+        out = await CPR.adopt(pool, org_id=org_id, proposal_id=proposal_id, actor_id=p.user_id, today=today())
+    except Exception as exc:  # noqa: BLE001
+        mapped = _proposal_err(exc)
+        if mapped is None:
+            raise
+        raise mapped from exc
+    return {"proposal": CPR.RP.proposal_out(out)}

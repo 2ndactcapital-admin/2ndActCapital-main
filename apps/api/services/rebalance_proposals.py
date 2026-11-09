@@ -116,7 +116,12 @@ SUBJECT = "rebalance_proposal"
 VIEW, MANAGE, APPROVE = AM.VIEW, AM.MANAGE, AM.APPROVE
 
 TRIGGER_LABELS = {"join": "Joined the model", "model_change": "The model changed", "drift": "Drift over threshold",
-                  "cash_flow": "Cash flow", "manual": "Rebalance now", "harvest": "Tax-loss harvest"}
+                  "cash_flow": "Cash flow", "manual": "Rebalance now", "harvest": "Tax-loss harvest",
+                  # CASH04 — the maturity waterfall job's SYSTEM drafts (services.cash_waterfall); made ONLY by
+                  # services.cash_proposals, never by generate() (refused there)
+                  "cash_waterfall": "Cash maturity waterfall"}
+#: CASH04 — triggers generate() refuses (another module owns the kind that uses them)
+CASH_ONLY_TRIGGERS = ("cash_waterfall",)
 # the triggers that never supersede an open proposal (they wait for the account to be free)
 NO_SUPERSEDE_TRIGGERS = ("harvest",)
 #: rep13 — the triggers a long/short account's proposals take (a person's: Rebalance now, the join)
@@ -139,9 +144,14 @@ WARNING_LABELS = {
     "held_away_realized": "Includes gains realized in held-away accounts",
     "stale_held_away": "Held-away data is stale — confirm before approval",
     "one_off": "One-off trade — advise (the member or another adviser executes)",
+    # CASH04 — cash proposals (services.cash_proposals)
+    "early_sale": "Early sale before maturity — may lose principal", "cash_shortfall": "Cash shortfall — not borrowed",
+    "cash_needs_issue": "A rung or bill has no issue in the security master — not bought",
+    "cash_note": "Cash plan note", "cash_fixed_income": "Bills / notes are ordered by par with a limit",
 }
 PROPOSAL_KIND_LABELS = {"model": "Model rebalance", "one_off": "One-off trade (advise)",
-                        "options": "Options sleeve (manual execution only)"}
+                        "options": "Options sleeve (manual execution only)",
+                        "cash": "Cash plan (treasury sleeves and ladder)"}      # CASH04
 PRICE_SOURCE_LABELS = {"account_position": "The account's own position valuation",
                        "security_price": "Security price (security-data layer: ranked source)", "none": "No price — bought by amount",
                        "adviser_quote": "An adviser-entered quote (source and as-of on the line)"}
@@ -795,8 +805,9 @@ async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, 
                     trigger_ref: dict | None, withdrawal: Decimal | None, today: date | None,
                     harvest_plan: dict | None, lot_override: dict | None = None,
                     target_override: dict | None = None) -> dict:
-    if trigger not in TRIGGER_LABELS:
-        raise ProposalError(f"trigger is one of {list(TRIGGER_LABELS)}")
+    if trigger not in TRIGGER_LABELS or trigger in CASH_ONLY_TRIGGERS:
+        raise ProposalError(f"trigger is one of {[t for t in TRIGGER_LABELS if t not in CASH_ONLY_TRIGGERS]} "
+                            "(a cash proposal is made by services.cash_proposals)")
     if maker_kind not in ("user", "system") or (maker_kind == "user") != (maker_id is not None):
         raise ProposalError("a proposal is made by a person (maker_id) or by the system (no maker)")
     if withdrawal is not None and (not isinstance(withdrawal, Decimal) or withdrawal <= 0):
@@ -1026,6 +1037,8 @@ def _title(account: dict, p: dict) -> str:
         return f"Approve one-off trade (advise): {account['account_number_masked']}"
     if p.get("proposal_kind") == "options":
         return f"Approve options trades (manual execution): {account['account_number_masked']}"
+    if p.get("proposal_kind") == "cash":        # CASH04
+        return f"Approve cash plan trades: {account['account_number_masked']}"
     return f"{'Review' if p['maker_kind'] == 'system' else 'Approve'} rebalance: {account['account_number_masked']} " \
            f"— {TRIGGER_LABELS[p['trigger']].lower()}"
 
@@ -1236,8 +1249,13 @@ def _trade_line(t: dict):
     from services.custody.trading import LotInstruction, PriceGuidance, TradeLine
 
     ref_at = datetime.combine(t["price_as_of"], time(0, 0), tzinfo=timezone.utc) if t["price_as_of"] else None
-    pg = PriceGuidance(kind="market", reference_price=t["price"], reference_at=ref_at) if t["price"] is not None \
-        else PriceGuidance(kind="market")
+    leg = _loads(t.get("cash_leg")) or {}
+    if leg.get("price_kind") == "limit":
+        # CASH04 — a bill / note by PAR with a LIMIT per 100 of par (docs/cash/CASH04_NOTES.md §4)
+        pg = PriceGuidance(kind="limit", limit_price=Decimal(str(leg["limit_price"])))
+    else:
+        pg = PriceGuidance(kind="market", reference_price=t["price"], reference_at=ref_at) if t["price"] is not None \
+            else PriceGuidance(kind="market")
     lots = [LotInstruction(tax_lot_id=x["lot_id"], quantity=Decimal(x["quantity"]))
             for x in (_loads(t["lots"]) or []) if x.get("lot_id")]
     flag = _loads(t["wash_sale_flag"])
@@ -1302,12 +1320,16 @@ async def execute(pool, *, org_id, proposal_id, actor_id, manual: bool = False) 
     advice = p["advice_only"]
     executor, ex_name, ex_contact = executor_for(p, acct)
     one_off = p.get("proposal_kind") == "one_off"
+    cash = p.get("proposal_kind") == "cash"          # CASH04
     tl = TradeList(account_id=p["account_id"], trades=[_trade_line(t) for t in trades], executor_type=executor,
                    executor_name=ex_name, executor_contact=ex_contact,
                    execute_by=date.today() + timedelta(days=within), if_not_filled="ask", source="proposal",
                    source_ref=p["id"],
                    notes=(f"From one-off trade proposal {p['id']} (advise — the {executor.replace('_', ' ')} "
                           "executes; letter of instruction)" if one_off else
+                          f"From cash proposal {p['id']} (cash plan, policy version "
+                          f"{(_loads(p['trigger_ref']) or {}).get('policy_version_no')}); fixed-income lines: quantity "
+                          "is PAR (USD face value) and the limit is per 100 of par" if cash else
                           f"From rebalance proposal {p['id']} ({TRIGGER_LABELS[p['trigger']].lower()})"
                           + ("; ADVICE ONLY — the member decides and executes" if advice else "")
                           + ("; manual DVP settlement at the receiving custodian" if executor in ("broker", "trader")
@@ -1333,10 +1355,13 @@ async def execute(pool, *, org_id, proposal_id, actor_id, manual: bool = False) 
                 await conn.execute(
                     f"""INSERT INTO {T_T} (org_id, proposal_id, line_no, global_security_id, side, quantity, notional,
                             price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                            wash_sale, instruction_id, lot_method, short_leg)
+                            wash_sale, instruction_id, lot_method, short_leg, option_leg, cash_leg)
                         SELECT org_id, proposal_id, line_no, global_security_id, side, quantity, notional, price,
                                price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                               wash_sale, $2::uuid, lot_method, short_leg FROM {T_T} WHERE id = $1""", t["id"], iid)
+                               wash_sale, $2::uuid, lot_method, short_leg, option_leg, cash_leg FROM {T_T}
+                        WHERE id = $1""", t["id"], iid)
+                # cash04 fix 1: the routing restatement carries EVERY leg column (short / option / cash) — it used to
+                # drop cash_leg, so an approved cash proposal's lines lost their sleeve, limit and warning
             new = await _update(conn, p["id"], {"execution": {
                 "instruction_ids": ids, "routing": result.as_dict(), "executor_type": executor,
                 "held_by_wash_sale": held,
@@ -1851,6 +1876,7 @@ def trade_out(t: dict) -> dict:
             "lot_method_label": E.METHOD_LABELS.get(t["lot_method"]) if t.get("lot_method") else None,
             "option_leg": _loads(t.get("option_leg")),
             "short_leg": _loads(t.get("short_leg")),       # rep13 — SELL SHORT / BUY TO COVER
+            "cash_leg": _loads(t.get("cash_leg")),         # CASH04 — sleeve, rung, price kind, limit, reason
             "side_label": {"sell_short": "SELL SHORT", "buy_to_cover": "BUY TO COVER"}.get(t["side"], t["side"].title())}
 
 

@@ -23,8 +23,15 @@ from services.deal_room_pdf import MARGIN, MUTED, NAVY, PAGE_H, PAGE_W, _safe
 _LABEL_W = 150
 
 
+def is_fixed_income(d: dict) -> bool:
+    """CASH04 — a bill / note is ordered by PAR (USD face) with a limit per 100 of par."""
+    return ((d.get("security") or {}).get("security_type") == "fixed_income")
+
+
 def _amount(d: dict) -> str:
     if d.get("quantity") is not None:
+        if is_fixed_income(d):
+            return f"{d['quantity']} par (USD face value)"
         return f"{d['quantity']} shares"
     return f"{d['notional']} {(d.get('account') or {}).get('base_currency') or 'USD'} notional"
 
@@ -32,7 +39,7 @@ def _amount(d: dict) -> str:
 def _price(d: dict) -> str:
     kind = d.get("price_kind")
     if kind == "limit":
-        return f"Limit {d['limit_price']}"
+        return f"Limit {d['limit_price']}" + (" per 100 of par" if is_fixed_income(d) else "")
     if kind == "range":
         return (f"Between {d['range_low']} and {d['range_high']}, against a reference price of "
                 f"{d['reference_price']} at {d['reference_at']}")
