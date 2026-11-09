@@ -111,6 +111,9 @@ KEYS: dict[str, dict] = {
                                                 "may see one."},
     "tax.estimate_label": {"title": "Tax estimates", "category": "tax", "audience": "both",
                            "description": "What every estimated tax figure means."},
+    # CASH01 — carried by every member-facing cash coverage figure (Treasury)
+    "cash.coverage_estimate": {"title": "Cash coverage estimates", "category": "other", "audience": "both",
+                               "description": "What a coverage figure (months, covered through, next gap) means."},
     "prices.internal_use_notice": {"title": "Price data — internal use only", "category": "licence",
                                    "audience": "staff",
                                    "description": "The free end-of-day price source is licensed for internal use "
@@ -218,6 +221,12 @@ def _fallback_replica() -> str:
 
 
 #: key → a function returning the exact pre-library text (read from the ORIGINAL constant, never copied here)
+def _fallback_coverage() -> str:
+    from services import cash_coverage as CC
+
+    return CC.COVERAGE_ESTIMATE
+
+
 def _fallback_member_notice() -> str:
     from services import model_provider as PM
 
@@ -229,6 +238,7 @@ FALLBACK_SOURCES = {
     "long_short.risks": _fallback_long_short,
     "hypothetical.performance": _fallback_hypothetical,
     "tax.estimate_label": _fallback_tax,
+    "cash.coverage_estimate": _fallback_coverage,
     "prices.internal_use_notice": _fallback_prices,
     "replica.fund_affiliation": _fallback_replica,
 }

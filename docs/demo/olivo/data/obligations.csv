@@ -1,0 +1,19 @@
+key,payer_name,source_type,name,amount_usd,amount_rule,due_date,rrule,end_date,certainty,notes
+tax-federal-q,Dominic J. Olivo Revocable Trust,tax_estimate,Federal estimated tax (quarterly),1250000.00,,2026-01-15,"FREQ=YEARLY;BYMONTH=1,4,6,9",,estimated,"Quarterly estimates (Apr, Jun, Sep, Jan); grantor trust — paid from the revocable trust's cash"
+tax-state-ct-q,Dominic J. Olivo Revocable Trust,tax_estimate,Connecticut estimated tax (quarterly),210000.00,,2026-01-15,"FREQ=YEARLY;BYMONTH=1,4,6,9",,estimated,Connecticut resident May–November
+prop-roundhill-tax,Round Hill Road LLC,property_carrying,"Round Hill Road, Greenwich — property tax (semi-annual)",72500.00,,2027-01-01,FREQ=MONTHLY;INTERVAL=6,,estimated,Greenwich bills July and January
+prop-roundhill-ins,Round Hill Road LLC,property_carrying,"Round Hill Road, Greenwich — homeowner's insurance",62000.00,,2027-03-01,FREQ=YEARLY,,firm,
+prop-roundhill-maint,Round Hill Road LLC,property_carrying,"Round Hill Road, Greenwich — staff and maintenance",18000.00,,2026-12-01,FREQ=MONTHLY,,estimated,
+prop-portroyal-tax,Port Royal Residence LLC,property_carrying,"Port Royal, Naples — property tax",118000.00,,2026-11-30,FREQ=YEARLY,,estimated,Collier County (November discount date)
+prop-portroyal-ins,Port Royal Residence LLC,property_carrying,"Port Royal, Naples — windstorm and homeowner's insurance",95000.00,,2027-06-01,FREQ=YEARLY,,firm,
+prop-portroyal-maint,Port Royal Residence LLC,property_carrying,"Port Royal, Naples — maintenance",12000.00,,2026-12-01,FREQ=MONTHLY,,estimated,
+prop-ajax-tax,Ajax Peak LLC,property_carrying,"Ajax Peak, Aspen — property tax (semi-annual)",20500.00,,2027-02-28,FREQ=MONTHLY;INTERVAL=6,,estimated,
+prop-ajax-hoa,Ajax Peak LLC,property_carrying,"Ajax Peak, Aspen — HOA and maintenance",9500.00,,2026-12-01,FREQ=MONTHLY,,estimated,
+prop-brickell-tax,Brickell Bay 41 LLC,property_carrying,"Brickell Bay, Miami — property tax",36000.00,,2026-11-30,FREQ=YEARLY,,estimated,
+prop-brickell-hoa,Brickell Bay 41 LLC,property_carrying,"Brickell Bay, Miami — condominium association",4800.00,,2026-12-01,FREQ=MONTHLY,,firm,
+prop-vineyard-tax,Stag's Hollow Vineyard LLC,property_carrying,Stag's Hollow Vineyard — property tax,28000.00,,2027-04-10,FREQ=YEARLY,,estimated,
+ilit-premium,Olivo 2012 ILIT,insurance_premium,Olivo 2012 ILIT — survivorship policy premium,310000.00,,2027-02-01,FREQ=YEARLY,,firm,Crummey notices go out before the premium; the trust holds no cash of its own
+grat-annuity,DJO 2021 GRAT,trust_payment,DJO 2021 GRAT — annuity payment,3400000.00,,2026-12-15,FREQ=YEARLY,2027-12-31,firm,Annuity through 2027 (term ends 2027-12-31)
+foundation-payout,Olivo Family Foundation,charitable_payout,Olivo Family Foundation — 5% minimum distribution,,pct_of_value:5,2026-12-31,FREQ=YEARLY,,estimated,5% of the foundation's value (net-worth core) at load time
+tuition-giulia,Giulia Olivo 2503(c) Trust,tuition,Giulia — school tuition (two installments),34000.00,,2027-01-15,"FREQ=YEARLY;BYMONTH=1,8",,firm,
+lifestyle-household,Dominic J. Olivo Revocable Trust,lifestyle_recurring,"Household lifestyle spending (Greenwich, Naples)",85000.00,,2026-12-01,FREQ=MONTHLY,,estimated,Trailing average of personal spending

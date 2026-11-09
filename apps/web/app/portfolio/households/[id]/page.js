@@ -10,6 +10,7 @@ import BulkPendingLink from "@/components/approvals/BulkPendingLink";
 import HouseholdSummary from "@/components/households/HouseholdSummary";
 import TeamPanel from "@/components/visibility/TeamPanel";
 import { RecordDisclosures } from "@/components/disclosures/Disclosures";
+import TreasuryPanel from "@/components/treasury/TreasuryPanel";
 
 // REP7 — Household → tab "X-ray": the look-through of every fund the
 // household holds (managed and held-away accounts), replicable funds and the
@@ -58,13 +59,22 @@ export default async function HouseholdPage({ params, searchParams }) {
       disclosures = null;
     }
   }
+  // CASH01 — tab "Treasury": coverage + obligations (no portfolio access / not this caller's family: no panel)
+  let treasury = null;
+  if (tab === "treasury") {
+    try {
+      treasury = await fetchAPI(`/api/v1/cash/households/${encodeURIComponent(id)}/treasury`);
+    } catch {
+      treasury = null;
+    }
+  }
   // VISIBILITY1 — the household's Team panel (who covers this family); refused / not found → no panel
   const [team, people, teams] = await Promise.all([
     fetchAPI(`/api/v1/staff-visibility/households/${encodeURIComponent(id)}/team`).catch(() => null),
     fetchAPI("/api/v1/admin/staff/people").catch(() => []),
     fetchAPI("/api/v1/admin/staff/teams").catch(() => []),
   ]);
-  const name = envelope?.xray?.household?.name || authority?.household?.name || lotMethod?.household?.name || "Household";
+  const name = envelope?.xray?.household?.name || treasury?.household?.name || authority?.household?.name || lotMethod?.household?.name || "Household";
   return (
     <AppShell user={session.user}>
       <p className="text-sm"><a className="text-navy underline" href="/portfolio/households">Households</a></p>
@@ -75,6 +85,7 @@ export default async function HouseholdPage({ params, searchParams }) {
         <a className={`pb-2 ${tab === "lot-method" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=lot-method`}>Lot method</a>
         <a className={`pb-2 ${tab === "consolidate" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=consolidate`}>Consolidate</a>
         <a className={`pb-2 ${tab === "disclosures" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=disclosures`}>Disclosures</a>
+        <a className={`pb-2 ${tab === "treasury" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=treasury`}>Treasury</a>
       </nav>
       {/* BULKAPPROVE1 — this household's pending items, when more than one waits for this viewer */}
       <div className="mt-3"><BulkPendingLink householdId={id} /></div>
@@ -82,7 +93,8 @@ export default async function HouseholdPage({ params, searchParams }) {
       <div className="mt-3"><HouseholdSummary householdId={id} /></div>
       {team ? <div className="mt-3"><TeamPanel kind="household" id={id} initialEnvelope={team} people={people || []} teams={teams || []} /></div> : null}
       <div className="mt-4">
-        {tab === "disclosures" ? (disclosures ? <RecordDisclosures kind="household" id={id} initialEnvelope={disclosures} />
+        {tab === "treasury" ? <TreasuryPanel initialEnvelope={treasury} />
+          : tab === "disclosures" ? (disclosures ? <RecordDisclosures kind="household" id={id} initialEnvelope={disclosures} />
           : <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">The disclosure library is open to staff holding view_disclosures.</div>)
           : tab === "consolidate" ? <ConsolidatePanel householdId={id} />
           : tab === "lot-method" ? (lotMethod ? <LotMethodPanel initialEnvelope={lotMethod} kind="household" />

@@ -229,6 +229,14 @@ TRUST_FIELDS = (
     DetailField("annuity_term_years", "Annuity term (years)", "integer", min=Decimal(0), max=Decimal(99)),
     DetailField("annuity_end", "Annuity end", "date"),
     DetailField("unitrust_rate_pct", "Unitrust rate (%)", "decimal", min=Decimal(0), max=Decimal(100)),
+    # CASH01 — what the obligations ledger derives a trust's payments from (docs/cash/CASH_OBLIGATIONS.md): a GRAT's
+    # annuity (amount + next payment, yearly through Annuity end) and a CRUT's next unitrust payment (rate × value).
+    DetailField("annuity_amount", "Annuity amount (per year)", "decimal", min=Decimal(0),
+                help="The GRAT's annual annuity payment, in the trust's currency."),
+    DetailField("annuity_payment_date", "Next annuity payment", "date",
+                help="The next annuity payment date; later payments fall on its anniversary through Annuity end."),
+    DetailField("unitrust_payment_date", "Next unitrust payment", "date",
+                help="The next unitrust payment date (yearly): the rate × the trust's value from net worth."),
     DetailField("crummey_notices", "Crummey notices", "boolean"),
     DetailField("funded_with", "Funded with", "text"),
     # PORTENTRY2 (MUSE-OLIVO-D6 / D7 / D8 / D18-01) — a GRAT's / CRUT's remainder beneficiary (a CRM record: a
@@ -244,6 +252,10 @@ TRUST_FIELDS = (
                 help="The insurance company's CRM record."),
     DetailField("policy_type", "Policy type", "choice", POLICY_TYPES, group=POLICY_GROUP),
     DetailField("policy_face_amount", "Face amount", "decimal", min=Decimal(0), group=POLICY_GROUP),
+    DetailField("policy_premium_amount", "Annual premium", "decimal", min=Decimal(0), group=POLICY_GROUP,
+                help="CASH01 — the yearly premium the trust pays (the obligations ledger reads it)."),
+    DetailField("policy_premium_due", "Next premium due", "date", group=POLICY_GROUP,
+                help="CASH01 — the next premium date; later premiums fall on its anniversary."),
     DetailField("policy_insureds", "Insureds", "entities", entity_types=PERSON, group=POLICY_GROUP,
                 help="The insured people's CRM records."),
     DetailField("policy_number_masked", "Policy number (masked)", "masked", group=POLICY_GROUP,
@@ -255,6 +267,8 @@ CHARITY_FIELDS = (
     DetailField("sponsor", "Sponsor", "entity", entity_types=LEGAL,
                 help="The sponsoring organisation's CRM record (a donor-advised fund's sponsor)."),
     DetailField("min_distribution_pct", "Minimum distribution (%)", "decimal", min=Decimal(0), max=Decimal(100)),
+    DetailField("distribution_due", "Next minimum distribution due", "date",
+                help="CASH01 — when the yearly minimum payout falls due (the rate × the foundation's value)."),
     DetailField("ein_status", "EIN / exemption status", "choice", EIN_STATUSES),     # PORTENTRY1 (GAP-CRM-04)
 )
 COMPANY_FIELDS = (
