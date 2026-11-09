@@ -1732,12 +1732,25 @@ async def y_visibility(conn):
     check(bool(BODIES) and not leaks, f"no full account number (seeded in custodian_account_id) and no account hash in "
           f"ANY of the {len(BODIES)} cash05 responses — last four only", f"{leaks}")
     # CASH07 (2026-11-09): the sweep-rate disclosure is now shown on a MEMBER's overview (and nowhere else) on purpose
-    staff_b = "\n".join(b for w, b in BODIES if not (w.startswith(f"{USERS[U_MEM][2]} ") and "/overview" in w))
-    mem_ov = [b for w, b in BODIES if w.startswith(f"{USERS[U_MEM][2]} ") and "/overview" in w]
-    check(DS.fallback_text("cash.sweep_rate") is not None and "cash.sweep_rate" in DS.KEYS
-          and "cash.sweep_rate" not in staff_b and bool(mem_ov) and all("cash.sweep_rate" in b for b in mem_ov),
+    # cash07 fix 1: the member ALSO requests another family's overview (H2) — a 404 that rightly carries no label. The
+    # check counted it as a "member overview" and required the key in it. Own family (H1) = must carry; every other
+    # response (staff, the member's other screens, the member's 404 on another family) = must not.
+    mem_pfx = f"{USERS[U_MEM][2]} GET {hh_path(H1, 'overview').split('?')[0]}"
+    mem_ov = [(w, b) for w, b in BODIES if w.startswith(mem_pfx)]
+    others = [(w, b) for w, b in BODIES if not w.startswith(mem_pfx)]
+    leak = [w for w, b in others if "cash.sweep_rate" in b]
+    missing = [w for w, b in mem_ov if "cash.sweep_rate" not in b]
+    mem_other_ov = [w for w, _b in others if w.startswith(f"{USERS[U_MEM][2]} ") and "/overview" in w]
+    reg = DS.fallback_text("cash.sweep_rate") is not None and "cash.sweep_rate" in DS.KEYS
+    print(f"[INFO] sweep_rate: own-family member overviews {[w for w, _b in mem_ov]}; the member's other-family "
+          f"overviews (not counted as theirs) {mem_other_ov}; {len(others)} other responses")
+    check(bool(reg and mem_ov and not missing and not leak),
           "cash.sweep_rate is registered with its fallback and shown ONLY on a member's overview (CASH07), in no other "
-          "cash05 response", f"member overviews {len(mem_ov)}")
+          "cash05 response", f"registered={reg} own-family member overviews={len(mem_ov)} missing={missing[:3]} "
+          f"leaks={leak[:3]}")
+    check(bool(mem_other_ov) and all(w not in leak for w in mem_other_ov),
+          "REPRODUCED (cash07 fix 1): the member's 404 on ANOTHER family's overview is a second '/overview' body for the "
+          "member — it carries no sweep-rate label (and is no longer required to)", f"{mem_other_ov}")
 
 
 async def y_no_writes(conn, before: dict):

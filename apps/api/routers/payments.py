@@ -142,8 +142,18 @@ async def _household(conn, org_id, household_id, scope) -> None:
 async def _open(request: Request, household_id: UUID):
     p = authz.require_any_permission(request, READ_PERMISSIONS)
     org_id, pool = get_org_id(request), await get_pool()
-    scope = await authz.member_entity_scope(request, pool)       # the ONE member / VISIBILITY1 scope
     member = authz.is_member_principal(p)
+    if not member and p.is_internal and not (p.is_super_admin or p.is_staff):
+        # cash07 fix 1: member_entity_scope keeps an internal role's WRITE on the MEMBER path (STAFFROLES1) — an
+        # advisor's own-family set, i.e. EMPTY — so every payment write 404'd. An internal caller is scoped by
+        # VISIBILITY1 (its families when the org enforces, else the org) on reads AND writes, like every cash write
+        # (FV.require_visible); a member keeps the member path below.
+        from services import family_visibility as FV
+
+        staff = await FV.scope_for_request(request, pool)
+        scope = None if staff is None else set(staff.entity_ids)
+    else:
+        scope = await authz.member_entity_scope(request, pool)   # the ONE member / VISIBILITY1 scope
     async with pool.acquire() as conn:
         await _household(conn, org_id, household_id, scope)
     return p, org_id, pool, member

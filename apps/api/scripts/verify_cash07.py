@@ -39,6 +39,8 @@ plan by their fixture keys. Every touched table re-read for its exact pre-test c
 and after.
 
 --self-checks-only: git / route / static self-checks only. --cleanup-only: the teardown and the leftover check only.
+--only=<seed|lifecycle|approval|authority|rails|adapters|reconciliation|disclosures|visibility|autonomy,…>: the one-off
+path (cash07 fix 1) — the seed, the named sections, the full teardown; no routes / front end / regression.
 With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
 """
 
@@ -222,6 +224,7 @@ from services import payment_adapters as PA  # noqa: E402
 from services import payments as PS  # noqa: E402
 from services import rbac  # noqa: E402
 from services import sod  # noqa: E402
+from services import sod_admin as SA  # noqa: E402
 from services import trading_authority as TA  # noqa: E402
 from services import users as users_mod  # noqa: E402
 from services import workflow_autonomy as WA  # noqa: E402
@@ -291,7 +294,10 @@ CAP_ROWS = [(CUSTODIAN, "ach", "yes"), (CUSTODIAN, "journal", "yes"), (CUSTODIAN
 # the feed: key → (account, code, amount)
 TXS = {"T_OUT": ("A1", "sell", AMOUNT), "T_IN": ("A2", "buy", AMOUNT), "T_WRONG": ("A1", "sell", "24999.99"),
        "T_DIR": ("A1", "buy", AMOUNT)}
-ORG_POLICIES = [("agent_proposal", "when_no_other_checker", False), ("payment_instruction", "when_no_other_checker", False)]
+# cash07 fix 1: the org turned self-approval ON for a NON-money item type only. The old second row (payment_instruction,
+# when_no_other_checker) was a floor RELAXATION no legal path can write (services.sod_admin.draft_rule refuses it) —
+# the approval section now proves that refusal instead of planting the row.
+ORG_POLICIES = [("agent_proposal", "when_no_other_checker", False)]
 
 SEED_CHECK_LITERALS = (
     ("public.payment_instructions", "payment_instructions_rail_chk", ("ach", "wire", "journal", "check")),
@@ -326,7 +332,7 @@ SEED_ROWS = {
         "value_date": TODAY.isoformat(), "purpose": "verify", "status": "draft", "maker_id": str(U_MK),
         "maker_ids": [str(U_MK)], "reconciled_transaction_ids": []}],
 }
-SEED_NON_COLUMN = {"app.is_super_admin", "true", "1 day", "active", "staff_visibility.enforced", "general", "manual",
+SEED_NON_COLUMN = {"app.is_super_admin", "app.current_org_id", "true", "1 day", "active", "staff_visibility.enforced", "general", "manual",
                    "units", "cash", "taxonomy_mc_8_1", "USD", "trust", "taxable", "view_only", "Lead adviser",
                    "individual", "application/json"}
 UNIQUES = ("assets_cash_active_uniq", "trading_authority_grants_entity_id_user_id_key", "custodian_capabilities_live_uq",
@@ -918,6 +924,10 @@ async def seed(conn) -> None:
         for u, e, t in GRANTS:
             await conn.execute("INSERT INTO trading_authority_grants (org_id, entity_id, user_id, authority_tier) "
                                "VALUES ($1, $2, $3, $4)", USERS[u][0], e, u, t)
+        # cash07 fix 1: sod_rules' INSERT policy admits an ORG row only when org_id = app.current_org_id (the
+        # Super Admin flag admits org_id IS NULL rows only) — the RLS context is set ON this connection, in this
+        # transaction, for the org rule; the policy is unchanged.
+        await conn.execute("SELECT set_config('app.current_org_id', $1, true)", str(ORG_A))
         for row in SEED_ROWS["public.sod_rules"]:
             await conn.execute(
                 "INSERT INTO sod_rules (rule_key, owner_scope, org_id, rule_kind, item_type, scope, severity, "
@@ -925,6 +935,7 @@ async def seed(conn) -> None:
                 "$9, $10, $11, $12)", row["rule_key"], row["owner_scope"], ORG_A, row["rule_kind"], row["item_type"],
                 row["scope"], row["severity"], row["self_approval"], row["enforce_floor"], row["description"],
                 row["status"], row["version_no"])
+        await conn.execute("SELECT set_config('app.current_org_id', '', true)")
         aid = uuid.uuid4()
         await conn.execute("INSERT INTO portfolio.assets (id, org_id, name, asset_type, default_taxonomy_key, "
                            "currency_code) VALUES ($1, $2, $3, 'cash', 'taxonomy_mc_8_1', 'USD')", aid, ORG_A,
@@ -1093,16 +1104,25 @@ async def y_lifecycle(conn):
     # ACH: provisional through the return window
     c, b = await act(U_MK, pid, "close")
     p = await live(conn, pid)
+    # cash07 fix 1: 2026-11-11 is Veterans Day (a Federal Reserve holiday — not a US business day in the ONE calendar,
+    # services.us_business_days), so 2 business days after Mon 11-09 is Thu 11-12; the old 11-11 expectation ignored it
+    check(not PS.BD.is_business_day(date(2026, 11, 11)) and PS.add_business_days(TODAY, 2) == date(2026, 11, 12),
+          "the calendar: 2026-11-11 (Veterans Day) is not a business day, so 11-09 + 2 business days = 11-12",
+          f"{PS.add_business_days(TODAY, 2)}")
     check(c == 409 and "provisional" in detail_text(b) and p["status"] == "reconciled"
-          and p["provisional_until"] == date(2026, 11, 11),
-          "ACH: settled on 11-09 is PROVISIONAL until 11-11 (2 business days); close is refused through the window",
-          f"{c} {detail_text(b)[:200]} {p['status']} {p['provisional_until']}")
+          and p["provisional_until"] == date(2026, 11, 12),
+          "ACH: settled on 11-09 is PROVISIONAL until 11-12 (2 business days, the 11-11 holiday skipped); close is "
+          "refused through the window", f"{c} {detail_text(b)[:200]} {p['status']} {p['provisional_until']}")
     PS.set_clock(lambda: date(2026, 11, 12))
     try:
+        c12, b12 = await act(U_MK, pid, "close", note="last day of the window")
+        PS.set_clock(lambda: date(2026, 11, 13))
         c, b = await act(U_MK, pid, "close", note="window passed")
     finally:
         PS.set_clock(lambda: TODAY)
-    check(c == 200 and pay_of(b).get("status") == "closed", "after the window (clock 11-12) it closes", f"{c}")
+    check(c12 == 409 and "provisional" in detail_text(b12), "on the window's last day (clock 11-12) close is still "
+          "refused (409)", f"{c12} {detail_text(b12)[:160]}")
+    check(c == 200 and pay_of(b).get("status") == "closed", "after the window (clock 11-13) it closes", f"{c}")
     bad = await disallowed_refused(conn, pid, "closed")
     check(not bad, f"closed is immutable: every one of the {len(STATUSES) - 1} targets refused", f"{bad[:3]}")
     # append-only events
@@ -1152,9 +1172,57 @@ async def y_approval(conn):
                                     maker_ids=[U_MK], other_checker_exists=False)
             d_ap = await sod.can_check(c_, org_id=ORG_A, item_type=sod.AGENT_PROPOSAL, checker_id=U_MK,
                                        maker_ids=[U_MK], other_checker_exists=False)
-    check(len(pol) == 2 and d.refused and "floor rule" in d.reason and d_ap.self_approval,
+    pol_types = sorted(r["item_type"] for r in pol)
+    check(pol_types == ["agent_proposal"] and all(r["self_approval"] == "when_no_other_checker" for r in pol),
+          "the org's own policy turned self-approval ON for a NON-money item type only (agent proposals) — it has no "
+          "payment_instruction row", f"{[dict(r) for r in pol]}")
+    check(bool(d.refused and "floor rule" in d.reason and d_ap.self_approval),
           "an org that turned self-approval ON (agent proposals self-approve there) still cannot self-approve a "
-          "payment: the floor rule refuses", f"{[dict(r) for r in pol]} {d.reason} / {d_ap.outcome}")
+          "payment: the floor rule refuses", f"{d.reason} / {d_ap.outcome}")
+    # cash07 fix 1: an attempt to RELAX the floor for payments through the app's own rule service is refused (both
+    # shapes: self-approval on; enforce_floor off) and writes nothing
+    n_r0 = int(await platform(conn, "SELECT count(*) FROM sod_rules WHERE org_id = $1", ORG_A, fetch="fetchval"))
+    relax = []
+    for sa_, ef_ in (("when_no_other_checker", False), ("when_no_other_checker", True), ("never", False)):
+        for actor, is_sa in ((U_CK, False), (U_SA, True)):
+            with _ctx(ORG_A):
+                pool = await get_pool()
+                async with pool.acquire() as c_:
+                    try:
+                        await SA.draft_rule(c_, org_id=ORG_A, actor_id=actor, is_super_admin=is_sa, body={
+                            "owner_scope": "org", "rule_kind": "policy", "item_type": sod.PAYMENT_INSTRUCTION,
+                            "self_approval": sa_, "enforce_floor": ef_,
+                            "description": "verify_cash07: an attempt to relax the floor for payments"})
+                        relax.append((sa_, ef_, is_sa, "DRAFTED"))
+                    except SA.SoDAdminRefused as exc:
+                        relax.append((sa_, ef_, is_sa, f"refused: {str(exc)[:80]}"))
+                    except Exception as exc:  # noqa: BLE001
+                        relax.append((sa_, ef_, is_sa, f"{type(exc).__name__}: {str(exc)[:80]}"))
+    n_r1 = int(await platform(conn, "SELECT count(*) FROM sod_rules WHERE org_id = $1", ORG_A, fetch="fetchval"))
+    check(len(relax) == 6 and all(r[3].startswith("refused:") for r in relax) and n_r1 == n_r0,
+          "an attempt to RELAX the payment floor through services.sod_admin.draft_rule (self-approval on, or "
+          "enforce_floor off; as an org admin AND as a Super Admin) is refused (SoDAdminRefused) and writes no rule",
+          f"{relax} rules {n_r0} → {n_r1}")
+
+    # even a raw relaxation row (the DB policy does not forbid an org policy row's content) does not relax the floor:
+    # the evaluation decides a floor item type before any policy — inserted and evaluated in ONE rolled-back txn
+    async def _raw_relax(c2):
+        await c2.execute(
+            "INSERT INTO sod_rules (rule_key, owner_scope, org_id, rule_kind, item_type, scope, severity, "
+            "self_approval, enforce_floor, description, status, version_no) VALUES ($1, 'org', $2, 'policy', $3, "
+            "'same_item', 'block', 'when_no_other_checker', false, 'verify_cash07: raw relaxation (rolled back)', "
+            "'active', 1)", f"policy:{sod.PAYMENT_INSTRUCTION}", ORG_A, sod.PAYMENT_INSTRUCTION)
+        out = []
+        for who in (U_MK, U_SA):
+            dd = await sod.can_check(c2, org_id=ORG_A, item_type=sod.PAYMENT_INSTRUCTION, checker_id=who,
+                                     maker_ids=[who], other_checker_exists=False)
+            out.append((dd.refused, dd.reason))
+        return out
+    raw_res, raw_err = await in_rolled_back(conn, ORG_A, _raw_relax)
+    n_r2 = int(await platform(conn, "SELECT count(*) FROM sod_rules WHERE org_id = $1", ORG_A, fetch="fetchval"))
+    check(raw_err is None and bool(raw_res) and all(r and "floor rule" in why for r, why in raw_res) and n_r2 == n_r0,
+          "defence in depth: even with a raw org policy row turning payment self-approval on (rolled back), the maker "
+          "and a Super Admin maker are still refused by the floor rule", f"{raw_res} {raw_err} rules {n_r0} → {n_r2}")
     # a co-maker (an editor) cannot approve either
     c, b = await drafted(purpose=NAME + "co-maker")
     pco = pay_of(b).get("id")
@@ -1206,12 +1274,16 @@ async def y_approval(conn):
     # the inbox: the maker waits, the checker may act
     c1, mk = await api(U_MK, "GET", "/api/v1/human-tasks/mine")
     c2, ck = await api(U_CK2, "GET", "/api/v1/human-tasks/mine")
-    tid = str(after["approval_task_id"])
+    # cash07 fix 1: P_FLOOR's task was already DECIDED above (U_CK approved it) — a closed task is in no inbox; the
+    # co-maker payment (made by U_MK, edited by U_CK) is still pending: the maker waits, the editor is blocked, U_CK2 acts
+    tid = str((await live(conn, pco))["approval_task_id"])
     in_wait = any(t.get("id") == tid for t in mk.get("waiting_on_others") or [])
     not_act = not any(t.get("id") == tid for t in mk.get("actionable") or [])
-    co_ok = any(t.get("id") == str((await live(conn, pco))["approval_task_id"]) for t in ck.get("actionable") or [])
-    ed_blocked = not any(t.get("id") == str((await live(conn, pco))["approval_task_id"])
-                         for t in (await api(U_CK, "GET", "/api/v1/human-tasks/mine"))[1].get("actionable") or [])
+    # cash07 fix 1: an `await` inside a generator passed to any() made it an async generator (TypeError) — hoisted
+    co_tid = str((await live(conn, pco))["approval_task_id"])
+    _ce, ed_inbox = await api(U_CK, "GET", "/api/v1/human-tasks/mine")
+    co_ok = any(t.get("id") == co_tid for t in ck.get("actionable") or [])
+    ed_blocked = _ce == 200 and not any(t.get("id") == co_tid for t in ed_inbox.get("actionable") or [])
     check(c1 == 200 and c2 == 200 and in_wait and not_act and co_ok and ed_blocked,
           "the inbox respects the floor: the maker sees the task WAITING (never actionable), the editor is not offered "
           "it, a different approver is", f"{c1} {c2} wait={in_wait} notact={not_act} co={co_ok} ed={ed_blocked}")
@@ -1220,13 +1292,13 @@ async def y_approval(conn):
     pbk = pay_of(b).get("id")
     await act(U_MK, pbk, "submit")
     cl, lst = await api(U_MK, "GET", "/api/v1/approvals/bulk?type=payment")
-    mine = next((i for i in lst.get("items") or [] if i.get("id") == pbk), {})
+    mine = next((i for i in lst.get("rows") or [] if i.get("id") == pbk), {})
     r0 = await refusals(conn, pbk)
     cm, bm = await api(U_MK, "POST", "/api/v1/approvals/bulk", {"type": "payment", "item_ids": [pbk],
                                                                "decision": "approve"})
     res_m = (bm.get("results") or [{}])[0]
     cl2, lst2 = await api(U_CK2, "GET", "/api/v1/approvals/bulk?type=payment")
-    theirs = next((i for i in lst2.get("items") or [] if i.get("id") == pbk), {})
+    theirs = next((i for i in lst2.get("rows") or [] if i.get("id") == pbk), {})
     cc, bc = await api(U_CK2, "POST", "/api/v1/approvals/bulk", {"type": "payment", "item_ids": [pbk],
                                                                 "decision": "approve"})
     res_c = (bc.get("results") or [{}])[0]
@@ -1370,8 +1442,11 @@ async def y_adapter(conn):
     code, raw, _ct = await api_raw(U_MK, "POST", pp(H1, f"/{px}/sheet"))
     c2, b2 = await act(U_MK, px, "mark_sent", channel="email")
     msg = raw.decode("utf-8", "replace")
-    check(c == 201 and [s for _n, s in steps] == [200, 200] and code == 409 and "not connected" in msg
-          and c2 == 409 and "not connected" in detail_text(b2) and (await live(conn, px))["status"] == "approved",
+    # cash07 fix 1: the reason is the adapter's OWN text (PA.NOT_CONNECTED_REASON, "no payment adapter is connected
+    # for …") — the old phrase "not connected" never occurs in it; both refusals must carry that exact reason
+    why = PA.NOT_CONNECTED_REASON.format(custodian=CUSTODIAN_X)
+    check(c == 201 and [s for _n, s in steps] == [200, 200] and code == 409 and why in json.loads(msg).get("detail", "")
+          and c2 == 409 and why in detail_text(b2) and (await live(conn, px))["status"] == "approved",
           "a custodian the org enabled a direct adapter for (none connected) → NotConnected: the sheet and the send are "
           "refused WITH the reason; nothing changes", f"{c} {steps} {code} {msg[:200]} {c2}")
     alt = PA.adapter_for({"custodian_code": "Altruist"}, {"altruist"})
@@ -1424,9 +1499,13 @@ async def y_reconcile(conn):
     # unmatched → one task
     with _ctx(ORG_A):
         pool = await get_pool()
-        early = await PS.unmatched_due(pool, today_=date(2026, 11, 11), org_id=ORG_A)
-        first = await PS.unmatched_due(pool, today_=date(2026, 11, 12), org_id=ORG_A)
-        again = await PS.unmatched_due(pool, today_=date(2026, 11, 13), org_id=ORG_A)
+        # cash07 fix 1: business days, not calendar days — 11-11 (Veterans Day) is skipped, so settled 11-09 + 2 BD
+        # = 11-12 (nothing yet), + 3 BD = 11-13 (the alert), + 4 BD = 11-16 (the next sweep adds none)
+        d2, d3, d4 = (PS.add_business_days(TODAY, n) for n in (2, 3, 4))
+        assert (d2, d3, d4) == (date(2026, 11, 12), date(2026, 11, 13), date(2026, 11, 16)), (d2, d3, d4)
+        early = await PS.unmatched_due(pool, today_=d2, org_id=ORG_A)
+        first = await PS.unmatched_due(pool, today_=d3, org_id=ORG_A)
+        again = await PS.unmatched_due(pool, today_=d4, org_id=ORG_A)
         async with pool.acquire() as c_:
             tasks = await HT.list_tasks(c_, ORG_A, kind=PS.REVIEW_KIND, subject_type=PS.SUBJECT, subject_id=pid,
                                         limit=10)
@@ -1686,6 +1765,29 @@ FIXTURE_SECTIONS = (("lifecycle", y_lifecycle), ("approval (the floor)", y_appro
                     ("permissions + autonomy", y_autonomy))
 
 
+#: cash07 fix 1 — the one-off path: --only=<a,b,…> runs teardown, prefix guard, real fingerprints, schema, seed, the
+#: named sections, then the full teardown + pre-count + real-row checks (no routes / front end / regression)
+ONLY_NAMES = {"lifecycle": "lifecycle", "approval": "approval (the floor)", "authority": "authority",
+              "rails": "rails + value dates", "adapters": "adapters", "reconciliation": "reconciliation",
+              "disclosures": "disclosures", "visibility": "visibility + isolation", "autonomy": "permissions + autonomy"}
+#: a section that reads another's payment (S["pay"]) or feed use pulls it in (run in FIXTURE_SECTIONS order)
+ONLY_NEEDS = {"reconciliation": ("lifecycle", "rails"), "disclosures": ("adapters",), "visibility": ("lifecycle", "approval")}
+
+
+def only_sections() -> list[str] | None:
+    arg = next((a for a in sys.argv[1:] if a.startswith("--only=")), None)
+    if arg is None:
+        return None
+    want = [x.strip() for x in arg.split("=", 1)[1].split(",") if x.strip()]
+    bad = [x for x in want if x not in ONLY_NAMES and x != "seed"]
+    if bad:
+        raise SystemExit(f"--only: unknown section(s) {sorted(bad)}; known: seed, {', '.join(ONLY_NAMES)}")
+    names = {x for x in want if x != "seed"}
+    for x in list(names):
+        names |= set(ONLY_NEEDS.get(x, ()))
+    return [ONLY_NAMES[x] for x in ONLY_NAMES if x in names]
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1698,7 +1800,19 @@ async def main_async() -> int:
     install_stubs()
     if "--cleanup-only" in sys.argv:
         return await cleanup_only(conn)
+    if "--self-checks-only" in sys.argv:
+        # cash07 fix 1: documented but never implemented — the git / notes / route / static self-checks, no fixtures
+        try:
+            await run("task 1", y_task1, conn)
+            await run("routes", y_routes, conn)
+        finally:
+            await close_conn(conn)
+        print(total_line())
+        return 0 if _n_fail == 0 else 1
     pre = None
+    only = only_sections()
+    if only is not None:
+        print(f"[INFO] --only: seed + {only or '(seed only)'}")
     try:
         await run("pre-teardown", teardown_retrying)
         check(await leftovers(conn) == 0, "pre-run cleanup: zero fixture rows before seeding")
@@ -1711,14 +1825,16 @@ async def main_async() -> int:
         await run("schema", y_schema, conn)
         if S.get("schema_ok"):
             await run("seed", seed, conn)
+        chosen = [(n, f) for n, f in FIXTURE_SECTIONS if only is None or n in only]
         if S.get("seeded"):
-            for name, fn in FIXTURE_SECTIONS:
+            for name, fn in chosen:
                 await run(name, fn, conn)
         else:
-            for name, _fn in FIXTURE_SECTIONS:
+            for name, _fn in chosen:
                 check(False, f"{name}: not run — the schema read or the seed failed (never skipped silently)")
-        await run("routes", y_routes, conn)
-        await run("front end", y_front_end, conn)
+        if only is None:
+            await run("routes", y_routes, conn)
+            await run("front end", y_front_end, conn)
         check(NETWORK_CALLS == [] and MODEL_CALLS == [], "no network call and no model call during the whole run",
               f"{NETWORK_CALLS[:3]} {MODEL_CALLS[:3]}")
     finally:
@@ -1748,7 +1864,9 @@ async def main_async() -> int:
         await close_conn(conn)
         if S.get("no_teardown"):
             print(total_line())
-    if os.environ.get("VERIFY_NESTED") == "1":
+    if only is not None:
+        print("[SKIP] regression — --only one-off run")
+    elif os.environ.get("VERIFY_NESTED") == "1":
         print("[SKIP] nested run")
     else:
         try:
