@@ -17920,7 +17920,7 @@
    "write": true
   },
   {
-   "after": "internal + any(manage_cash_policy); member scope (own family / published deals; staff unscoped)",
+   "after": "internal + any(manage_cash_policy)",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {

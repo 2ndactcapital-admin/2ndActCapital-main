@@ -53,7 +53,7 @@ from services import cash_policy as CP
 from services.audit import write_audit_log
 from services.authz import require_internal_permission
 from services.database import get_pool
-from services.family_visibility import require_visible, visible_household_ids
+from services.family_visibility import require_visible, scope_for_request, visible_household_ids
 
 router = APIRouter(tags=["cash"])
 
@@ -685,7 +685,12 @@ async def regenerate_plan_route(request: Request, household_id: UUID):
     org_id = get_org_id(request)
     pool = await get_pool()
     await require_visible(request, pool, household_ids=[household_id])
-    scope = await authz.member_entity_scope(request, pool)
+    # cash03 fix 1 — the VISIBILITY1 staff scope, NOT authz.member_entity_scope: on a POST that helper sends every
+    # non-staff internal role down the MEMBER path (STAFFROLES1) — an empty set for an advisor, so an author got 404
+    # on their own family. A member never reaches here (require_internal_permission); this is the same scope the
+    # treasury GET reads for this caller, so the audited fingerprint is the plan the envelope showed.
+    staff = await scope_for_request(request, pool)
+    scope = None if staff is None else set(staff.entity_ids)
     t = today()
     async with pool.acquire() as conn:
         await _household(conn, org_id, household_id)

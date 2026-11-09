@@ -247,7 +247,7 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | POST | `/api/v1/cash/households/{household_id}/alerts/sync` | cash | W | — | new route | internal + any(manage_portfolio) |  |
 | POST | `/api/v1/cash/households/{household_id}/notices` | cash | W | — | new route | internal + any(manage_portfolio) |  |
 | POST | `/api/v1/cash/households/{household_id}/obligations` | cash | W | — | new route | internal + any(manage_portfolio) |  |
-| POST | `/api/v1/cash/households/{household_id}/plan/regenerate` | cash | W | — | new route | internal + any(manage_cash_policy); member scope (own family / published deals; staff unscoped) |  |
+| POST | `/api/v1/cash/households/{household_id}/plan/regenerate` | cash | W | — | new route | internal + any(manage_cash_policy) |  |
 | POST | `/api/v1/cash/households/{household_id}/policies` | cash | W | — | new route | internal + any(manage_cash_policy) |  |
 | POST | `/api/v1/cash/households/{household_id}/policies/{policy_id}/approve` | cash | W | — | new route | internal + any(manage_cash_policy) |  |
 | POST | `/api/v1/cash/households/{household_id}/policies/{policy_id}/reject` | cash | W | — | new route | internal + any(manage_cash_policy) |  |

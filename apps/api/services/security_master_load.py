@@ -161,6 +161,18 @@ class BatchResult:
                 "review_item_ids": [str(x) for x in self.review_items[:50]]}
 
 
+def batch_key(r: SourceRecord) -> tuple:
+    """The within-batch subject key Matcher dedups on: (cusip, figi, ticker, exchange family) — unchanged for every
+    record carrying any of CUSIP / FIGI / ticker (CASH03 FIX 2: sec_mutual_funds records carry a ticker AND a
+    sec_class_id, and their first-ticker-wins dedup must not move). CASH03 FIX 1: ONLY an id-less record (an N-MFP
+    class: no CUSIP, FIGI or ticker, created by its SEC class id) adds the UNIQUE extra ids (EXTRA_ID_UNIQUE) —
+    without them every such record collapsed onto ONE key and only the first class of the batch was written."""
+    base = (r.cusip, r.figi, r.ticker, SYM.family(r.exchange))
+    if r.cusip or r.figi or r.ticker:
+        return base
+    return (*base, *((r.extra_ids or {}).get(t) for t in EXTRA_ID_UNIQUE))
+
+
 class _Plan:
     """Everything one batch will write, collected first, written in bulk at the end."""
 
@@ -280,7 +292,7 @@ class Matcher:
         # one record per subject within the batch (the first wins; the rest are the same statement again)
         uniq: dict = {}
         for r in records:
-            uniq.setdefault((r.cusip, r.figi, r.ticker, SYM.family(r.exchange)), r)
+            uniq.setdefault(batch_key(r), r)
         records = list(uniq.values())
         res.records = len(records)
         look = await _lookup(conn, records)

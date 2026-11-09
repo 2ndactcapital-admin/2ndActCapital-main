@@ -203,7 +203,8 @@ def mmf_candidates(funds: list[dict]) -> dict[str, dict]:
     return best
 
 
-def reserve_bill(fields: dict, today: date, issues: list[dict], auctions: dict, curve: list[dict]) -> dict:
+def reserve_bill(fields: dict, today: date, issues: list[dict], auctions: dict, curve: list[dict], *,
+                 curve_why: str | None = None) -> dict:
     """The Reserve sleeve's T-bill: the issue maturing latest on or before the Reserve window's midpoint (a real
     issue), else an indicative bill at that date's prior business day with the curve's yield."""
     from services import cash_policy as CP
@@ -218,11 +219,11 @@ def reserve_bill(fields: dict, today: date, issues: list[dict], auctions: dict, 
     if issue is not None:
         return {"kind": "bill", "security_id": issue.get("security_id"), "name": issue.get("name"),
                 "cusip": issue["cusip"], "maturity": issue["maturity"], "indicative": False,
-                "net": CL.issue_yield(issue, auctions, today, curve)}
+                "net": CL.issue_yield(issue, auctions, today, curve, curve_why=curve_why)}
     mat = BD.prior_business_day(mid)
     return {"kind": "bill", "security_id": None, "name": f"Treasury bill maturing about {mat.isoformat()}",
             "cusip": None, "maturity": mat, "indicative": True, "label": CL.INDICATIVE,
-            "net": CL.curve_yield(curve, CL.term_months(today, mat))}
+            "net": CL.curve_yield(curve, CL.term_months(today, mat), why=curve_why)}
 
 
 def candidates(sleeve: str, *, mmfs: dict, bill: dict | None, ladder: dict | None) -> list[dict]:
@@ -469,11 +470,12 @@ async def build(conn, org_id, *, fields: dict, lines: list[dict], sleeves: list[
                                                    cusip_like=fx.get("cusip_like"))
     auctions = await CL.read_auctions(conn, org_id, [i["cusip"] for i in issues], today, purpose=purpose)
     lt_amount = next((s["amount"] for s in sleeves if s["key"] == "long_term"), None)
+    curve_why = CL.no_curve_text(curve_missing) if not curve else None
     ladder = CL.build_ladder(fields, lines, today, issues=issues, auctions=auctions, curve=curve,
-                             sleeve_amount=lt_amount)
+                             sleeve_amount=lt_amount, curve_why=curve_why)
     funds = await read_mmfs(conn, org_id, today, purpose=purpose, class_like=fx.get("class_like"))
     mmfs = mmf_candidates(funds)
-    bill = reserve_bill(fields, today, issues, auctions, curve)
+    bill = reserve_bill(fields, today, issues, auctions, curve, curve_why=curve_why)
     cands = {s["key"]: candidates(s["key"], mmfs=mmfs, bill=bill, ladder=ladder) for s in sleeves}
     profiles = await account_profiles(conn, org_id, accounts, today.year)
     p = plan(sleeves, accounts, cands_by_sleeve=cands, profiles=profiles)

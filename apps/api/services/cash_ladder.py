@@ -75,11 +75,24 @@ def instrument_type_for(today: date, maturity: date) -> str:
     return "bill" if (maturity - today).days <= BILL_MAX_DAYS else "note"
 
 
-def curve_yield(curve: list[dict], months: Decimal) -> dict:
-    """Linear interpolation in months over ``curve`` ([{key, months, yield_pct, as_of}]); flat beyond its ends."""
+def no_curve_text(missing: list[str] | None) -> str | None:
+    """CASH03 FIX 1 — why the curve read came back empty, from read_curve's own per-key reasons ("DGS1: <reason>"):
+    the distinct reasons, the key stripped. None when there is no reason (the pure callers: NO_CURVE stands)."""
+    seen: list[str] = []
+    for m in missing or []:
+        r = m.split(": ", 1)[1] if ": " in m else m
+        if r and r not in seen:
+            seen.append(r)
+    return f"not estimated — the Treasury curve cannot be used: {'; '.join(seen)}" if seen else None
+
+
+def curve_yield(curve: list[dict], months: Decimal, *, why: str | None = None) -> dict:
+    """Linear interpolation in months over ``curve`` ([{key, months, yield_pct, as_of}]); flat beyond its ends.
+    ``why`` (no_curve_text): the reason an EMPTY curve is empty — a licence refusal is not a missing curve, and the
+    rung says which (cash03 fix 1); without one, NO_CURVE."""
     pts = sorted((c for c in curve if c.get("yield_pct") is not None), key=lambda c: c["months"])
     if not pts:
-        return {"estimated": False, "text": NO_CURVE}
+        return {"estimated": False, "text": why or NO_CURVE}
     as_of = min(p["as_of"] for p in pts)
     keys = [p["key"] for p in pts]
     m = Decimal(months)
@@ -115,7 +128,7 @@ def match_issue(issues: list[dict], target: date, today: date) -> dict | None:
         chr(255 - ord(c)) for c in i["cusip"])))
 
 
-def issue_yield(issue: dict, auctions: dict, today: date, curve: list[dict]) -> dict:
+def issue_yield(issue: dict, auctions: dict, today: date, curve: list[dict], *, curve_why: str | None = None) -> dict:
     """A matched issue's yield: its own auction (≤ AUCTION_FRESH_DAYS old), else the curve at its remaining term."""
     a = auctions.get(issue["cusip"])
     if a is not None and a.get("found") and (today - a["as_of"]).days <= AUCTION_FRESH_DAYS:
@@ -124,7 +137,7 @@ def issue_yield(issue: dict, auctions: dict, today: date, curve: list[dict]) -> 
         return {"estimated": True, "yield_pct": a["yield_pct"], "as_of": a["as_of"], "source": "auction",
                 "basis": f"{basis}, auction of {a['as_of'].isoformat()} (Treasury Fiscal Data)",
                 "provider": a.get("provider")}
-    y = curve_yield(curve, term_months(today, issue["maturity"]))
+    y = curve_yield(curve, term_months(today, issue["maturity"]), why=curve_why)
     if y.get("estimated"):
         why = ("its last auction is more than {} days old".format(AUCTION_FRESH_DAYS) if a is not None and a.get("found")
                else "no auction yield")
@@ -169,7 +182,7 @@ def split_cents(amount: Decimal, n: int) -> list[Decimal]:
 
 def build_ladder(fields: dict, lines: list[dict], today: date, *, issues: list[dict] | None = None,
                  auctions: dict | None = None, curve: list[dict] | None = None,
-                 sleeve_amount: Decimal | None = None) -> dict:
+                 sleeve_amount: Decimal | None = None, curve_why: str | None = None) -> dict:
     """The ladder for one policy version. ``lines``: [{key, date, amount, counted, certainty, name, source_type}].
     ``issues``: [{cusip, security_id, name, treasury_type, maturity}]; ``auctions``: {cusip: {found, yield_pct,
     as_of}}; ``curve``: [{key, months, yield_pct, as_of}]. Pure, Decimal, deterministic."""
@@ -217,13 +230,14 @@ def build_ladder(fields: dict, lines: list[dict], today: date, *, issues: list[d
             r |= {"maturity": issue["maturity"], "matched": True, "indicative": False, "cusip": issue["cusip"],
                   "security_id": issue.get("security_id"), "issue_name": issue.get("name"),
                   "instrument_type": "bill" if issue["treasury_type"] == "Bill" else "note",
-                  "label": None, "adjustment": None, "yield": issue_yield(issue, auctions, today, curve)}
+                  "label": None, "adjustment": None,
+                  "yield": issue_yield(issue, auctions, today, curve, curve_why=curve_why)}
         else:
             mat = BD.prior_business_day(r["target_date"])
             r |= {"maturity": mat, "matched": False, "indicative": True, "cusip": None, "security_id": None,
                   "issue_name": None, "instrument_type": instrument_type_for(today, mat), "label": INDICATIVE,
                   "adjustment": BD.adjustment_note(r["target_date"], mat),
-                  "yield": curve_yield(curve, term_months(today, mat))}
+                  "yield": curve_yield(curve, term_months(today, mat), why=curve_why)}
     rungs.sort(key=lambda r: (r["maturity"], r["kind"] != "targeted", r["target_date"]))
     targeted_keys = {key for r in rungs for key in r["targets"]}
     for r in rungs:

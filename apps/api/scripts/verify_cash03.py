@@ -45,7 +45,11 @@ prefixes / materialised ids. Every touched table re-read for its exact pre-test 
 included — the real security master and index levels) are fingerprinted before and after.
 
 --self-checks-only: git / route / static self-checks only. --cleanup-only: the teardown and the leftover check only
-(per-table fixture counts printed). With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
+(per-table fixture counts printed). --only=<a,b,…>: the one-off path (cash03 fix 1) — teardown, prefix guard, real
+fingerprints, schema read, seed, then ONLY the named fixture sections (seed | providers | master | ladder | after-tax |
+plan | app; 'plan' pulls in 'master', whose sec_by_cusip / sec_by_class it reads), then the full teardown + leftover +
+real-row checks; no task 1 / loaders / routes / front end / regression. With VERIFY_NESTED=1 the regression section
+prints one '[SKIP] nested run'.
 """
 
 from __future__ import annotations
@@ -80,9 +84,10 @@ import _verify_self as VS  # noqa: E402
 
 SPRINT_KEY = "cash03"
 BEFORE_REF = "7030b41"   # cash03-work's base: 'merge cash02'
-#: the route reads authz.member_entity_scope (a restricted caller's family set narrows the schedule), so the recorded
-#: gate names it after the permission
-_W = "internal + any(manage_cash_policy); member scope (own family / published deals; staff unscoped)"
+#: cash03 fix 1 — the route no longer reads authz.member_entity_scope (on a POST it put an advisor author on the
+#: MEMBER path → an empty scope → 404 on their own family); it narrows by the VISIBILITY1 staff scope
+#: (scope_for_request, the 'sql-scope' tag) behind require_visible, exactly as cash02's write routes are gated
+_W = "internal + any(manage_cash_policy)"
 ROUTES = {("POST", "/api/v1/cash/households/{household_id}/plan/regenerate"): _W}
 OWN_FILES = ("apps/api/services/cash_ladder.py", "apps/api/services/cash_instruments.py",
              "apps/api/services/us_business_days.py", "apps/api/routers/cash.py",
@@ -1238,6 +1243,29 @@ async def y_master(conn):
           and "C990030005" not in classes,
           "the 4 N-MFP share classes are funds created BY SEC CLASS ID (no ticker) with their series id; the rejected "
           "filing's class is absent", f"{sorted(classes)}")
+    # cash03 fix 1 — the reported bug reproduced, then the fix: Matcher deduped a batch on (cusip, figi, ticker,
+    # exchange family), which is (None, None, None, None) for EVERY N-MFP class record → 1 security of 4
+    from services import security_master_load as SML
+    recs = [r for n in ("nmfp_treasury.xml", "nmfp_government.xml", "nmfp_muni.xml")
+            for r in NM.source_records(NM.parse_nmfp(FX.text(n)), TODAY)]
+    old_keys = {(r.cusip, r.figi, r.ticker, SYM.family(r.exchange)) for r in recs}
+    new_keys = {SML.batch_key(r) for r in recs}
+    shared = [s for s in {r.extra_ids["sec_series_id"] for r in recs}
+              if sum(v["ids"].get("sec_series_id") == {s} for v in classes.values()) > 1]
+    check(len(recs) == 4 and len(old_keys) == 1 and len(new_keys) == 4 and shared == ["S990030002"],
+          "fix 1: the pre-fix batch key collapses the 4 id-less class records to 1 (the reported 'new 1'); "
+          "Matcher.batch_key (with sec_class_id) keeps all 4, and two classes of S990030002 share the series id "
+          "(a SHARED id — no conflict)", f"records {len(recs)} old {len(old_keys)} new {len(new_keys)} {shared}")
+    # cash03 fix 2 — batch_key is SHARED Matcher code: a record carrying a CUSIP / FIGI / ticker keys EXACTLY as before,
+    # even with a unique extra id (sec_mutual_funds: ticker + sec_class_id — a ticker under two class ids stays ONE)
+    from services.security_data.providers.reference_common import SourceRecord as _SR
+    smf = [_SR("sec_mutual_funds", ticker=t, exchange="US", extra_ids={"sec_class_id": c, "sec_series_id": "S990030009"})
+           for t, c in (("ZZCAA", "C990030091"), ("ZZCAB", "C990030092"), ("ZZCAA", "C990030093"))]
+    other = [_SR("openfigi", ticker="ZZCAA", figi="BBG0ZZCAA001", exchange="XNAS"), _SR("x", cusip="99C030AA3")]
+    check(all(SML.batch_key(r) == (r.cusip, r.figi, r.ticker, SYM.family(r.exchange)) for r in smf + other)
+          and len({SML.batch_key(r) for r in smf}) == 2,
+          "fix 2: a record with a CUSIP / FIGI / ticker keeps the pre-fix batch key even with a sec_class_id "
+          "(sec_mutual_funds' first-ticker-wins dedup unchanged)", f"{[SML.batch_key(r) for r in smf]}")
     attrs = {(r["field"], r["value"], r["provider_key"]) for r in await platform(
         conn, "SELECT field, value, provider_key FROM portfolio.security_reference_attributes WHERE global_security_id "
               f"IN ({SECS_SQL}) AND valid_to IS NULL AND system_to IS NULL")}
@@ -1645,13 +1673,14 @@ async def y_app(conn):
     check(c_r == 200 and after == before + 1 and bool(rows) and str(rows[0]["user_id"]) == str(U_ADV)
           and ((newv.get("scopes") or [{}])[0].get("fingerprint")) == fp and fp == sc.get("fingerprint"),
           "a regeneration is audited (cash.plan.regenerated, by the caller, naming the policy version and the plan's "
-          "fingerprint — the same plan the envelope showed)", f"{c_r} {before}→{after} {dumps(newv)[:400]}")
+          "fingerprint — the same plan the envelope showed)",
+          f"{c_r} {before}→{after} {dumps(newv)[:400]} response {dumps(b_r)[:300]}")
     # VISIBILITY1: a restricted author (assigned to H2 only)
     c_rs1, _x = await api(U_RS, "POST", f"/api/v1/cash/households/{H1}/plan/regenerate", {})
     c_rs2, b_rs2 = await api(U_RS, "POST", f"/api/v1/cash/households/{H2}/plan/regenerate", {})
     check(c_rs1 == 404 and c_rs2 == 200 and (b_rs2.get("plan") or {}).get("scopes") == [],
           "VISIBILITY1 ON: a restricted author cannot regenerate another family's plan (404); their own family has no "
-          "active policy → an empty plan", f"{c_rs1} {c_rs2}")
+          "active policy → an empty plan", f"{c_rs1} {c_rs2} {dumps(b_rs2)[:300]}")
     # org isolation both directions
     c_b, _y = await treasury(U_B, H1)
     c_br, _z = await api(U_B, "POST", f"/api/v1/cash/households/{H1}/plan/regenerate", {})
@@ -1738,14 +1767,21 @@ async def y_front_end(conn):
     check(code == 0, "npm run build exits 0", (out + err)[-400:] if code else "")
 
 
+#: the nested regressions, each ONCE, flat, after teardown. verify_secmaster2.py (cash03 fix 2): fix 1's
+#: security_master_load.batch_key changed SHARED Matcher code (the within-batch dedup key), and secmaster2 owns
+#: the Matcher — every existing securities feed's dedup must be unchanged.
+REGRESSIONS = ("verify_cash02.py", "verify_secmaster2.py")
+
+
 def regression():
-    section("[Y] Regression — verify_cash02.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1, 2700 s")
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}
-    code, out, err = run_cmd([sys.executable, str(HERE / "verify_cash02.py")], REPO, timeout=2700, env=env)
-    t = VT.nested_total(out, code)
-    fails = [ln for ln in out.splitlines() if ln.lstrip().startswith("[FAIL]")]
-    check(t.ok and not fails, "verify_cash02.py: 0 FAIL (its own final TOTAL line and exit code)",
-          f"{t.detail()}; {fails[:3]} {err[-200:] if not t.line else ''}")
+    for script in REGRESSIONS:
+        section(f"[Y] Regression — {script} ONCE, flat, AFTER teardown, VERIFY_NESTED=1, 2700 s")
+        code, out, err = run_cmd([sys.executable, str(HERE / script)], REPO, timeout=2700, env=env)
+        t = VT.nested_total(out, code)
+        fails = [ln for ln in out.splitlines() if ln.lstrip().startswith("[FAIL]")]
+        check(t.ok and not fails, f"{script}: 0 FAIL (its own final TOTAL line and exit code)",
+              f"{t.detail()}; {fails[:3]} {err[-200:] if not t.line else ''}")
 
 
 async def run(name, fn, *args):
@@ -1788,6 +1824,24 @@ async def cleanup_only(conn) -> int:
 
 FIXTURE_SECTIONS = (("providers", y_providers), ("security master", y_master), ("ladder", y_ladder),
                     ("after-tax", y_after_tax), ("plan (db)", y_plan_db), ("app + visibility", y_app))
+#: --only=<names>: short name → FIXTURE_SECTIONS name; a section that reads another's state pulls it in (ordered)
+ONLY_NAMES = {"providers": "providers", "master": "security master", "ladder": "ladder", "after-tax": "after-tax",
+              "plan": "plan (db)", "app": "app + visibility"}
+ONLY_NEEDS = {"plan (db)": ("security master",)}    # it reads S["sec_by_cusip"] / S["sec_by_class"]
+
+
+def only_sections() -> list[str] | None:
+    """None = the full run; [] = seed only; else the FIXTURE_SECTIONS names to run, in their own order."""
+    arg = next((a for a in sys.argv[1:] if a.startswith("--only=")), None)
+    if arg is None:
+        return None
+    want = {x.strip() for x in arg.split("=", 1)[1].split(",") if x.strip()}
+    bad = want - set(ONLY_NAMES) - {"seed"}
+    if bad:
+        raise SystemExit(f"--only: unknown section(s) {sorted(bad)}; known: seed, {', '.join(ONLY_NAMES)}")
+    names = {ONLY_NAMES[w] for w in want if w != "seed"}
+    names |= {n for x in list(names) for n in ONLY_NEEDS.get(x, ())}
+    return [n for n, _fn in FIXTURE_SECTIONS if n in names]
 
 
 async def main_async() -> int:
@@ -1802,6 +1856,9 @@ async def main_async() -> int:
     install_stubs()
     if "--cleanup-only" in sys.argv:
         return await cleanup_only(conn)
+    only = only_sections()
+    if only is not None:
+        print(f"[INFO] --only: seed + {only or '(seed only)'}")
     pre = None
     try:
         await run("pre-teardown", teardown_retrying)
@@ -1811,19 +1868,22 @@ async def main_async() -> int:
             return 1
         pre = await counts(conn)
         S["real"] = await real_fingerprints(conn)
-        await run("task 1", y_task1, conn)
+        if only is None:
+            await run("task 1", y_task1, conn)
         await run("schema", y_schema, conn)
         if S.get("schema_ok"):
             await run("seed", seed, conn)
+        chosen = [(n, fn) for n, fn in FIXTURE_SECTIONS if only is None or n in only]
         if S.get("seeded"):
-            for name, fn in FIXTURE_SECTIONS:
+            for name, fn in chosen:
                 await run(name, fn, conn)
         else:
-            for name, _fn in FIXTURE_SECTIONS:
+            for name, _fn in chosen:
                 check(False, f"{name}: not run — the schema read or the seed failed (never skipped silently)")
-        await run("loaders", y_loaders, conn)
-        await run("routes", y_routes, conn)
-        await run("front end", y_front_end, conn)
+        if only is None:
+            await run("loaders", y_loaders, conn)
+            await run("routes", y_routes, conn)
+            await run("front end", y_front_end, conn)
         check(NETWORK_CALLS == [] and MODEL_CALLS == [], "no network call and no model call during the whole run",
               f"{NETWORK_CALLS[:3]} {MODEL_CALLS[:3]}")
     finally:
@@ -1854,7 +1914,9 @@ async def main_async() -> int:
         await close_conn(conn)
         if S.get("no_teardown"):
             print(total_line())
-    if os.environ.get("VERIFY_NESTED") == "1":
+    if only is not None:
+        print("[INFO] --only: no regression (the one-off path)")
+    elif os.environ.get("VERIFY_NESTED") == "1":
         print("[SKIP] nested run")
     else:
         try:
