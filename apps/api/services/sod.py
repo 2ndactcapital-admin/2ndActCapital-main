@@ -99,6 +99,7 @@ SOD_RULE = "sod_rule"
 SOD_PLATFORM_RULE = "sod_platform_rule"
 WORKFLOW_AUTONOMY_SETTING = "workflow_autonomy_setting"   # S29B: an org's autonomy switch / limit loosened
 WORKFLOW_AUTONOMY_OPTIN = "workflow_autonomy_optin"       # S29B: a workflow version signed off to run unattended
+CASH_POLICY = "cash_policy"                               # CASH02: a household's / entity's cash policy (a target)
 
 ITEM_TYPES = (
     AGENT_PROPOSAL, WORKFLOW_STEP, WORKFLOW_USER_TASK, HUMAN_TASK, ACCOUNT_MODEL_LINK, AUTHORITY_CHANGE,
@@ -108,6 +109,7 @@ ITEM_TYPES = (
     HYPOTHETICAL_POLICY, SUBSTITUTION_SET, SUBSTITUTION_DENIAL, TAX_PROFILE, LOSS_CARRYFORWARD,
     REPLICA_TERMS_VERSION, WORKFLOW_TEMPLATE_VERSION, DISCLOSURE_VERSION, DATA_UPLOAD, FEE_RUN, CARRY_RUN,
     MONEY_MOVEMENT, ROLE_GRANT, SOD_RULE, SOD_PLATFORM_RULE, WORKFLOW_AUTONOMY_SETTING, WORKFLOW_AUTONOMY_OPTIN,
+    CASH_POLICY,
 )
 
 # services.human_tasks kinds → the item type their task decides (a kind not listed is the generic HUMAN_TASK)
@@ -135,6 +137,7 @@ TASK_KIND_ITEM_TYPES: dict[str, str] = {
     "substitution_denial_approval": SUBSTITUTION_DENIAL,
     "tax_profile_approval": TAX_PROFILE,
     "loss_carryforward_approval": LOSS_CARRYFORWARD,
+    "cash_policy_approval": CASH_POLICY,
 }
 
 

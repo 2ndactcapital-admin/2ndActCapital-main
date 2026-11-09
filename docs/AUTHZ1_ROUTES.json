@@ -1,5 +1,5 @@
 {
- "app_route_count": 986,
+ "app_route_count": 990,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -17805,22 +17805,22 @@
    },
    "find": false,
    "methods": [
-    "PUT"
+    "POST"
    ],
    "module": "routers.cash",
-   "name": "set_minimum_route",
+   "name": "sync_alerts_route",
    "note": "",
-   "path": "/api/v1/cash/households/{household_id}/minimums",
+   "path": "/api/v1/cash/households/{household_id}/alerts/sync",
    "public": false,
    "write": true
   },
   {
-   "after": "internal + any(manage_portfolio)",
+   "after": "internal + any(manage_cash_policy)",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
     "any_of": [
-     "manage_portfolio"
+     "manage_cash_policy"
     ],
     "rule": "internal_perm"
    },
@@ -17829,9 +17829,93 @@
     "POST"
    ],
    "module": "routers.cash",
-   "name": "sync_alerts_route",
+   "name": "policy_preview_route",
    "note": "",
-   "path": "/api/v1/cash/households/{household_id}/alerts/sync",
+   "path": "/api/v1/cash/households/{household_id}/policy/preview",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_cash_policy)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_cash_policy"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "save_policy_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/policies",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_cash_policy)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_cash_policy"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "submit_policy_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/policies/{policy_id}/submit",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_cash_policy)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_cash_policy"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "approve_policy_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/policies/{policy_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_cash_policy)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_cash_policy"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "reject_policy_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/policies/{policy_id}/reject",
    "public": false,
    "write": true
   },
@@ -19134,13 +19218,14 @@
    "write": true
   },
   {
-   "after": "any(view_authority|approve_authority|view_held_away|approve_held_away)",
+   "after": "any(view_authority|approve_authority|view_held_away|approve_held_away|manage_cash_policy)",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
     "any_of": [
      "approve_authority",
      "approve_held_away",
+     "manage_cash_policy",
      "view_authority",
      "view_held_away"
     ],
@@ -19158,13 +19243,14 @@
    "write": false
   },
   {
-   "after": "any(view_authority|approve_authority|view_held_away|approve_held_away)",
+   "after": "any(view_authority|approve_authority|view_held_away|approve_held_away|manage_cash_policy)",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
     "any_of": [
      "approve_authority",
      "approve_held_away",
+     "manage_cash_policy",
      "view_authority",
      "view_held_away"
     ],
@@ -19182,13 +19268,14 @@
    "write": false
   },
   {
-   "after": "any(approve_authority|approve_held_away)",
+   "after": "any(approve_authority|approve_held_away|manage_cash_policy)",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
     "any_of": [
      "approve_authority",
-     "approve_held_away"
+     "approve_held_away",
+     "manage_cash_policy"
     ],
     "rule": "perm"
    },

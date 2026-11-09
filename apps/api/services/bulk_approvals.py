@@ -7,6 +7,7 @@ item, each in its own transaction(s) exactly as the single route runs it:
 
     authority   services.authority.decide        (POST /authority/changes/{id}/approve|reject)
     held_away   services.held_away.decide_import (POST /held-away/imports/{id}/approve|reject)
+    cash_policy services.cash_policy.decide      (POST /cash/policies/{id}/approve|reject)   — CASH02
 
 so every rule — maker ≠ checker (service, human task, engine and the table's
 CHECK), the approve_* permission (route gate here, rbac.has_permission in
@@ -33,6 +34,7 @@ from decimal import Decimal, InvalidOperation
 import asyncpg
 
 from services import authority as AU
+from services import cash_policy as CP
 from services import held_away as HA
 from services import human_tasks as HT
 from services import sod  # S30 — the ONE maker-checker rule
@@ -55,16 +57,19 @@ class BulkType:
 TYPES = {
     "authority": BulkType("authority", "Authority & custody", AU.VIEW, AU.APPROVE, AU.TASK),
     "held_away": BulkType("held_away", "Held-away entries", HA.VIEW, HA.APPROVE, HA.TASK_IMPORT),
+    # CASH02 — reading AND deciding need manage_cash_policy (never view_portfolio: a member holds that)
+    "cash_policy": BulkType("cash_policy", "Cash policies", CP.PERMISSION, CP.PERMISSION, CP.TASK),
 }
 TYPE_KEYS = tuple(TYPES)
-APPROVE_KEYS = tuple(t.approve for t in TYPES.values())
-READ_KEYS = tuple(p for t in TYPES.values() for p in (t.view, t.approve))
+APPROVE_KEYS = tuple(dict.fromkeys(t.approve for t in TYPES.values()))
+READ_KEYS = tuple(dict.fromkeys(p for t in TYPES.values() for p in (t.view, t.approve)))
 
 DECISIONS = {"approve": "Approve", "reject": "Reject"}
 RESULT_LABELS = {"approved": "Approved", "rejected": "Rejected", "refused": "Refused"}
 SUBTYPE_LABELS = {
     "authority": {"household": "Household authority", "account": "Account authority / custody"},
     "held_away": {k: f"Held-away {v.lower()}" for k, v in HA.SOURCE_KIND_LABELS.items()},
+    "cash_policy": {k: f"Cash policy — {v.lower()}" for k, v in CP.SCOPES},
 }
 AGE_BUCKETS = [
     {"key": "any", "label": "Any age", "min_days": None, "max_days": None},
@@ -155,12 +160,14 @@ async def _names(conn, ids) -> dict[str, str]:
     return {str(r["id"]): (r["full_name"] or "A colleague") for r in rows}
 
 
-def _decidability(principal, bt: BulkType, maker_id, task_status: str | None, *, refused_file: bool = False) -> dict:
-    """The server's own answer for one item: which decisions this viewer may send, or why none."""
+def _decidability(principal, bt: BulkType, maker_id, task_status: str | None, *, refused_file: bool = False,
+                  maker_ids=None) -> dict:
+    """The server's own answer for one item: which decisions this viewer may send, or why none. ``maker_ids`` (CASH02)
+    names every maker of an item that has several (a policy's editors and its submitter)."""
     if not holds(principal, bt.approve):
         return {"actions": [], "blocked": "permission", "blocked_reason": BLOCK_LABELS["permission"].format(
             perm=bt.approve)}
-    if not sod.may_check_display(principal.user_id, [maker_id]):
+    if not sod.may_check_display(principal.user_id, list(maker_ids) if maker_ids else [maker_id]):
         return {"actions": [], "blocked": "maker", "blocked_reason": BLOCK_LABELS["maker"]}
     if task_status != "open":
         return {"actions": [], "blocked": "not_pending",
@@ -270,8 +277,41 @@ async def _held_away_items(conn, org_id, principal, *, household_id=None, accoun
     return out
 
 
+async def _cash_policy_items(conn, org_id, principal, *, household_id=None, account_id=None,
+                             today: date | None = None) -> list[dict]:
+    today = today or date.today()
+    bt = TYPES["cash_policy"]
+    if account_id is not None:
+        return []      # a policy belongs to a household or an entity, never to an account
+    rows = [r for r in await CP.pending_for_bulk(conn, org_id)
+            if household_id is None or str(r["hh_id"]) == str(household_id)]
+    status = await _task_status(conn, org_id, [r["approval_task_id"] for r in rows])
+    names = await _names(conn, [m for r in rows for m in r["maker_ids"]])
+    out = []
+    for r in rows:
+        tid = str(r["approval_task_id"]) if r["approval_task_id"] else None
+        scope = r["household_name"] if r["scope_type"] == "household" else (r["entity_name"] or "An entity")
+        makers = [str(m) for m in r["maker_ids"]]
+        out.append({
+            "id": str(r["id"]), "type": "cash_policy", "subtype": r["scope_type"],
+            "subtype_label": SUBTYPE_LABELS["cash_policy"][r["scope_type"]],
+            "household_id": str(r["hh_id"]) if r["hh_id"] else None, "household_name": r["household_name"],
+            "entity_id": str(r["entity_id"]) if r["entity_id"] else None, "account_id": None, "account_masked": None,
+            "from_label": None,
+            "to_label": f"{scope}: v{r['version_no']} — Near-term {r['near_months']} / Reserve {r['reserve_months']} / "
+                        f"horizon {r['horizon_months']} months, minimum {format(r['min_coverage_months'].normalize(), 'f')}",
+            "reason": r["reason"], "maker_id": str(r["submitted_by"] or r["created_by"]),
+            "maker_ids": makers, "maker_name": ", ".join(names.get(m, "A colleague") for m in makers),
+            "requested_at": _iso(r["submitted_at"]), "age_days": _age_days(r["submitted_at"], today),
+            "task_id": tid, "task_status": status.get(tid) if tid else None,
+            **_decidability(principal, bt, r["created_by"], status.get(tid) if tid else None, maker_ids=makers)})
+    return out
+
+
 async def pending(conn, org_id, principal, type_key: str, *, household_id=None, account_id=None) -> list[dict]:
     bt = bulk_type(type_key)
+    if bt.key == "cash_policy":
+        return await _cash_policy_items(conn, org_id, principal, household_id=household_id, account_id=account_id)
     if bt.key == "authority":
         return await _authority_items(conn, org_id, principal, household_id=household_id, account_id=account_id)
     return await _held_away_items(conn, org_id, principal, household_id=household_id, account_id=account_id)
@@ -323,13 +363,14 @@ async def summary(conn, org_id, principal, *, household_id=None, account_id=None
 def _refusal(exc: Exception, bt: BulkType) -> tuple[int, str]:
     """The same classification the single routes apply (routers.authority / routers.held_away _raise)."""
     msg = str(exc).split("\n")[0]
-    if isinstance(exc, (AU.AuthorityNotFound, HA.HeldAwayNotFound, HT.HumanTaskNotFound)):
+    if isinstance(exc, (AU.AuthorityNotFound, HA.HeldAwayNotFound, HT.HumanTaskNotFound, CP.PolicyNotFound)):
         return 404, "Not found"
-    if isinstance(exc, (AU.MakerCheckerViolation, HA.MakerCheckerViolation, HT.MakerCheckerError)):
+    if isinstance(exc, (AU.MakerCheckerViolation, HA.MakerCheckerViolation, HT.MakerCheckerError,
+                        CP.MakerCheckerViolation)):
         return 403, f"{BLOCK_LABELS['maker']} ({msg})"
     if isinstance(exc, (PermissionError, HT.HumanTaskPermissionError)):
         return 403, msg or f"Permission required: {bt.approve}"
-    if isinstance(exc, (AU.AuthorityConflict, HA.HeldAwayConflict, HT.HumanTaskConflict)):
+    if isinstance(exc, (AU.AuthorityConflict, HA.HeldAwayConflict, HT.HumanTaskConflict, CP.PolicyConflict)):
         return 409, f"No longer pending — {msg}"
     if isinstance(exc, asyncpg.UniqueViolationError):
         return 409, f"refused by the database: {exc.constraint_name}"
@@ -337,12 +378,14 @@ def _refusal(exc: Exception, bt: BulkType) -> tuple[int, str]:
         return 422, f"refused by the database: {exc.constraint_name}"
     if isinstance(exc, asyncpg.InsufficientPrivilegeError):
         return 409, msg
-    if isinstance(exc, (AU.AuthorityError, HA.HeldAwayError, HT.HumanTaskError, ValueError)):
+    if isinstance(exc, (AU.AuthorityError, HA.HeldAwayError, HT.HumanTaskError, CP.PolicyError, ValueError)):
         return 422, msg
     return 500, f"failed ({type(exc).__name__}) — nothing else in the batch was affected"
 
 
 async def _decide_one(pool, bt: BulkType, *, org_id, actor_id, item_id, outcome, note) -> dict:
+    if bt.key == "cash_policy":
+        return await CP.decide(pool, org_id=org_id, actor_id=actor_id, policy_id=item_id, outcome=outcome, note=note)
     if bt.key == "authority":
         return await AU.decide(pool, org_id=org_id, actor_id=actor_id, change_id=item_id, outcome=outcome, note=note)
     return await HA.decide_import(pool, org_id=org_id, actor_id=actor_id, import_id=item_id, outcome=outcome,

@@ -2,17 +2,18 @@
 
 Every route names its gate (docs/AUTHZ1_ROUTES.json; authz1_routes.py reads it):
 
-  any(view_authority|approve_authority|view_held_away|approve_held_away)
-      GET  /approvals/bulk?type=authority|held_away[&household_id=&account_id=]
+  any(view_authority|approve_authority|view_held_away|approve_held_away|manage_cash_policy)
+      GET  /approvals/bulk?type=authority|held_away|cash_policy[&household_id=&account_id=]
            the PENDING items of that type — each with the server's own `actions` and, when none, the reason
            (you made it / no permission / no longer pending); the type also needs its own view_* or approve_*
       GET  /approvals/summary[?household_id=&account_id=]
            pending counts per readable type, for the "N pending — review in bulk" entry points
-  any(approve_authority|approve_held_away)
+  any(approve_authority|approve_held_away|manage_cash_policy)
       POST /approvals/bulk {type, item_ids, decision, note}
            the type's OWN approval permission is then required (approve_authority / approve_held_away — 403
            naming it); each item goes through the SAME single-approval service function
-           (services.authority.decide / services.held_away.decide_import), in its own transaction(s); per-item
+           (services.authority.decide / services.held_away.decide_import / services.cash_policy.decide — CASH02), in its own
+           transaction(s); per-item
            results (approved / rejected / refused + reason); at most services.bulk_approvals.MAX_ITEMS ids
 
 Super Admin first (services.authz). org_id is only ever the caller's (get_org_id); every request model forbids
@@ -41,7 +42,7 @@ APPROVE_KEYS = BA.APPROVE_KEYS
 class BulkDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["authority", "held_away"]
+    type: Literal["authority", "held_away", "cash_policy"]
     # strings, not UUIDs: one malformed id is refused on its own line and never stops the others
     item_ids: list[str] = Field(min_length=1, max_length=BA.MAX_ITEMS)
     decision: Literal["approve", "reject"]

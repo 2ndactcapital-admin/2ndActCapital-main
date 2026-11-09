@@ -165,3 +165,14 @@ Two item types decide S29B's switches: `workflow_autonomy_setting` (an org turni
 limit, needing fewer shadow runs) and `workflow_autonomy_optin` (a workflow version signed off to run unattended — the
 makers are the requester AND every owner of a trigger that starts that workflow, so the trigger owner is never the
 checker). Site: `workflow_autonomy.decide_setting`. See docs/WORKFLOW_AUTONOMY.md.
+
+## CASH02 — cash policies
+
+Item type `cash_policy`: a household's or entity's cash policy (the three sleeves' boundaries, rungs, objective and
+minimum coverage — `cash_policies`). Maker duty `set_cash_policy`, checker duty `approve_cash_policy`, both granted by
+`manage_cash_policy`. No floor class (a policy is a target, not money movement — the money-movement floor duties come
+with cash07); `self_approval_capable = false` (the table's CHECK forbids `approved_by ∈ maker_ids`), platform policy
+`never` with the floor enforced. **Makers = the drafter, every editor of the draft, and the submitter.** Sites:
+`cash_policy.decide` (gate, refusals recorded) → `human_tasks.complete_task` (kind `cash_policy_approval`, the decision
+recorded) → `cash_policy._apply` (inner gate). Bulk approve (`bulk_approvals` type `cash_policy`) calls the same
+`cash_policy.decide` per item. See docs/cash/CASH_POLICY.md.

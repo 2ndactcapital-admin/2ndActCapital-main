@@ -137,9 +137,11 @@ export const GATE_WORKFLOW_TEMPLATES_READ = {
   anyOf: ["author_workflows", "view_workflow_runs", "configure_workflow_triggers"], strict: true,
 };
 // BULKAPPROVE1 — Approvals (bulk approve): GET /approvals/bulk is any(view_authority | approve_authority |
-// view_held_away | approve_held_away); STRICT (canPermStrict per key), so a lost envelope hides the tab.
+// view_held_away | approve_held_away | manage_cash_policy — CASH02's cash policies); STRICT (canPermStrict per key),
+// so a lost envelope hides the tab.
 export const GATE_APPROVALS = {
-  anyOf: ["view_authority", "approve_authority", "view_held_away", "approve_held_away"], strict: true,
+  anyOf: ["view_authority", "approve_authority", "view_held_away", "approve_held_away", "manage_cash_policy"],
+  strict: true,
 };
 // BUGFIX2 — the /admin AREA: open iff the caller can see at least one item of
 // the two admin sections of this very definition (so a member_manager with

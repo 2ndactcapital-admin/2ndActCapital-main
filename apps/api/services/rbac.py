@@ -302,6 +302,9 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("configure_workflow_triggers", "workflows", "configure"),
     ("manage_deals", "deals", "manage"),
     ("manage_members", "members", "manage"),
+    # CASH02 — cash policies (the three sleeves): author AND approve; SoD makes the approver a different person. Kept
+    # in step with docs/cash02_part1.sql §0 (the grant to every EXISTING org_admin / advisor / admin role).
+    ("manage_cash_policy", "cash_policy", "manage"),
 )
 
 #: PERMS1 — exactly the keys this sprint added to ORG_ADMIN_DEFAULT_PERMISSIONS (the verify reads it).

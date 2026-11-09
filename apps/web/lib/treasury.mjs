@@ -1,5 +1,6 @@
 // CASH01 — the pure logic behind Household → Treasury (coverage card, per-entity table, obligations calendar and
-// list, the manual obligation / notice / minimum forms) and the member's read-only view. Every write control is
+// list, the manual obligation / notice forms) and the member's read-only view. (CASH02: the minimum moved into the
+// cash policy — lib/cashPolicy.mjs — and is no longer edited here.) Every write control is
 // decided HERE from the server's envelope and fails CLOSED: it shows only for `permissions.can_write === true` AND
 // the action the server listed AND a non-empty editable list the server sent — a lost envelope renders nothing
 // writable, and a member envelope (member_view) never does. Labels (source types, certainties, flags) come from
@@ -32,7 +33,6 @@ export function controls(env) {
     addObligation: ok && acts.includes("add_obligation") && ed.includes("obligation"),
     editObligation: ok && acts.includes("add_obligation") && ed.includes("obligation"),
     recordNotice: ok && acts.includes("record_notice") && ed.includes("notice"),
-    setMinimum: ok && acts.includes("set_minimum") && ed.includes("minimum"),
     syncAlerts: ok && acts.includes("sync_alerts"),
   };
 }

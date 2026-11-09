@@ -788,5 +788,6 @@ def vocabularies(*, can_write: bool) -> dict:
                                     {"rrule": "FREQ=MONTHLY;INTERVAL=3", "label": "Quarterly"},
                                     {"rrule": "FREQ=YEARLY", "label": "Yearly"},
                                     {"rrule": "FREQ=YEARLY;BYMONTH=1,4,6,9", "label": "Estimated-tax dates"}],
-            "editable": ["obligation", "notice", "minimum"] if can_write else [],
+            # CASH02: "minimum" is gone — the minimum lives in the cash policy (maker-checker), not a direct edit
+            "editable": ["obligation", "notice"] if can_write else [],
             "inline_editable": []}

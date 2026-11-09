@@ -71,8 +71,8 @@ const ENV = (over = {}) => ({
   stored: [], unmatched_notices: [], member_view: false,
   labels: { "cash.coverage_estimate": { text: "Estimate — have counsel review (library)" },
     "tax.estimate_label": { text: "estimate (library tax)" } },
-  actions: ["add_obligation", "record_notice", "set_minimum", "sync_alerts"],
-  permissions: WRITER, vocabularies: VOC(["obligation", "notice", "minimum"]),
+  actions: ["add_obligation", "record_notice", "sync_alerts"],
+  permissions: WRITER, vocabularies: VOC(["obligation", "notice"]),
   ...over,
 });
 const MEMBER = () => ENV({ member_view: true, actions: [], permissions: READER, vocabularies: VOC([]), stored: [] });
@@ -95,7 +95,8 @@ test("cash01: the entity table flags the ILIT while the household is covered", (
   assert.ok(out.includes("ILIT Fixture") && out.includes("1.2 months") && out.includes("Premium, ~$60,000.00, 2026-12-15"), out);
   assert.ok(out.includes("Below its minimum coverage (srv) · Uncovered within 90 days (srv)"), out);
   assert.ok(out.includes("beyond 2028-11-09"));
-  assert.deepEqual(buttons(h(EntityTable, { env: ENV() })), ["Set minimum", "Set minimum"]);
+  // CASH02 retired the direct "Set minimum" control: the minimum moved into the cash policy (maker-checker)
+  assert.deepEqual(buttons(h(EntityTable, { env: ENV() })), []);
 });
 
 test("cash01: the calendar and list — derived lines name their source; a superseded projection is not counted", () => {

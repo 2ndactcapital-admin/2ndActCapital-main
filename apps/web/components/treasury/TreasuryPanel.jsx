@@ -4,8 +4,9 @@
  * TreasuryPanel — Household → Treasury (CASH01): the coverage card (months, covered through, next gap), the
  * per-entity coverage table with flags, the obligations calendar and list (filter by entity / certainty / source;
  * derived items name their source and why), the lines of credit shown SEPARATELY (never counted), what is not
- * estimated, and — for a writer only — add / edit / end a manual obligation, record a capital-call notice and set a
- * minimum. A member envelope renders read-only with the estimate labels from the disclosure library. Every control
+ * estimated, and — for a writer only — add / edit / end a manual obligation and record a capital-call notice. CASH02:
+ * the cash policy (the three sleeves, the questionnaire, maker-checker approval) renders in PolicyPanel, inside this
+ * tab; the minimum coverage is edited there (it moved into the policy). A member envelope renders read-only with the estimate labels from the disclosure library. Every control
  * renders only from lib/treasury.mjs (fails closed). Light / cream; read-only on money.
  */
 
@@ -14,6 +15,7 @@ import {
   certaintyOptions, controls, coveredText, estimateLabel, filterObligations, flagLabels, gapText, labelOf, money,
   monthsText, noticeBody, obligationBody, originText, payerOptions, sourceOptions, taxLabel, vocab,
 } from "@/lib/treasury.mjs";
+import PolicyPanel from "@/components/treasury/PolicyPanel";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-4";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -50,23 +52,21 @@ export function CoverageCard({ env }) {
   );
 }
 
-export function EntityTable({ env, onMinimum }) {
+export function EntityTable({ env }) {
   const rows = Array.isArray(env?.entities) ? env.entities : [];
-  const c = controls(env);
   if (!rows.length) return <p className="text-sm text-text-muted">No entity of this household has cash or obligations yet.</p>;
   return (
     <table className="w-full text-sm" aria-label="Coverage by entity">
       <thead className="text-left text-text-muted"><tr><th className="py-1">Entity</th><th>Liquid</th><th>Months</th>
-        <th>Covered through</th><th>Next gap</th><th>Flags</th>{c.setMinimum ? <th /> : null}</tr></thead>
+        <th>Covered through</th><th>Next gap</th><th>Flags</th></tr></thead>
       <tbody>{rows.map((r) => (
         <tr key={r.entity_id} className="border-t border-[#ece8dd] align-top">
           <td className="py-1">{r.display_name}</td>
           <td>{r.has_cash ? money(r.liquid) : "No cash"}</td>
-          <td>{monthsText(r)} <span className="block text-xs text-text-muted">min {r.min_months}</span></td>
+          <td>{monthsText(r)} <span className="block text-xs text-text-muted">min {r.min_months}{r.min_basis ? ` (${r.min_basis})` : ""}</span></td>
           <td>{r.covered_beyond_horizon ? `beyond ${r.covered_through}` : r.covered_through}</td>
           <td>{r.next_gap ? `${r.next_gap.name}, ~${money(r.next_gap.amount)}, ${r.next_gap.date}` : "—"}</td>
           <td className="text-[#9B2335]">{flagLabels(env, r.flags).join(" · ")}</td>
-          {c.setMinimum ? <td><button type="button" className={secondary} onClick={() => onMinimum?.(r)}>Set minimum</button></td> : null}
         </tr>))}
       </tbody>
     </table>
@@ -188,15 +188,11 @@ export default function TreasuryPanel({ initialEnvelope }) {
   const endIt = async (o) => {
     try { await call(`obligations/${o.obligation_id}/end`, "POST", { reason: "ended on Treasury" }); await reload(); } catch (e) { setMsg(e.message); }
   };
-  const setMinimum = async (r) => {
-    const months = typeof window !== "undefined" ? window.prompt(`Minimum months of coverage for ${r.display_name}`, r.min_months) : null;
-    if (months === null || months === undefined) return;
-    try { await call(`households/${env.household.id}/minimums`, "PUT", { scope_type: "entity", entity_id: r.entity_id, months }); await reload(); } catch (e) { setMsg(e.message); }
-  };
   return (
     <div className="space-y-4">
       <CoverageCard env={env} />
-      <section className={card}><h3 className="mb-2 font-semibold text-navy">By entity</h3><EntityTable env={env} onMinimum={setMinimum} /></section>
+      <PolicyPanel env={env} onReload={reload} />
+      <section className={card}><h3 className="mb-2 font-semibold text-navy">By entity</h3><EntityTable env={env} /></section>
       <section className={card}>
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <h3 className="mr-auto font-semibold text-navy">Obligations</h3>

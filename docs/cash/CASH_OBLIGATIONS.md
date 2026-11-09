@@ -79,7 +79,8 @@ Valid axis: nothing references an obligation's id (a to-do keys on `lineage_id`)
   - Household: on the household total, over every reached entity's obligations at the household's share of that
     entity.
 - **Flags:**
-  - `below_minimum` — months < the entity's / household's minimum (`cash_coverage_minimums`, default 6);
+  - `below_minimum` — months < the minimum: since CASH02 the `min_coverage_months` of the scope's ACTIVE cash
+    policy (`cash_policies`; an entity override, else the household's), default 6 (`cash_coverage_minimums` is retired);
   - `uncovered_90d` — the next gap within 90 days;
   - `no_payer_cash` — obligations but no cash position at all.
 
