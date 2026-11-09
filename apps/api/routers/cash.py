@@ -49,6 +49,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StrictInt
 
 from routers.entities import get_org_id
@@ -767,13 +768,16 @@ async def generate_proposals_route(request: Request, household_id: UUID):
         await _household(conn, org_id, household_id)
         await _visible_members(conn, org_id, household_id, scope)
     try:
-        return await CPR.propose_household(pool, org_id=org_id, household_id=household_id, actor_id=p.user_id,
-                                           today=today(), scope=scope)
+        out = await CPR.propose_household(pool, org_id=org_id, household_id=household_id, actor_id=p.user_id,
+                                          today=today(), scope=scope)
     except Exception as exc:  # noqa: BLE001
         mapped = _proposal_err(exc)
         if mapped is None:
             raise
         raise mapped from exc
+    if out.get("empty"):      # cash04 fix 1: nothing to propose — 200 with the empty state, nothing created
+        return JSONResponse(status_code=200, content=out)
+    return out
 
 
 @router.post("/cash/proposals/{proposal_id}/adopt")

@@ -42,6 +42,9 @@ policy, obligation, account, workflow definition / trigger and the real security
 are fingerprinted before and after.
 
 --self-checks-only: git / route / static self-checks only. --cleanup-only: the teardown and the leftover check only.
+--only=<a,b,…>: the one-off path (cash04 fix 1) — teardown, prefix guard, real fingerprints, schema read, seed, then
+ONLY the named fixture sections (seed | builder | approval | refusals | waterfall | app | empty; 'app' pulls in 'approval' and
+'waterfall', 'waterfall' pulls in 'approval'), then the full teardown + leftover + real-row checks; no regression.
 With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
 """
 
@@ -722,12 +725,18 @@ async def api(uid, method, path, body=None, timeout=300.0):
     kw = {"headers": {"Authorization": f"Bearer {token_for(uid)}", "User-Agent": "verify_cash04"}}
     if body is not None:
         kw["json"] = body
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app, raise_app_exceptions=False),
+    # cash04 fix 1: raise_app_exceptions=True so a 500 PRINTS the server's traceback (it used to be swallowed into
+    # {"raw": "Internal Server Error"}); the call still answers 500 with the exception named — never a pass
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app, raise_app_exceptions=True),
                                  base_url="http://verify", timeout=timeout) as client:
         try:
             res = await asyncio.wait_for(client.request(method, path, **kw), timeout)
         except asyncio.TimeoutError:
             return 599, {}
+        except Exception as exc:  # noqa: BLE001 — the app raised: a 500, with its traceback
+            print(f"[INFO] {method} {path} raised in the app (a 500):")
+            traceback.print_exc()
+            return 500, {"raw": "Internal Server Error", "exc": f"{type(exc).__name__}: {exc}"[:2000]}
     raw = res.content.decode("utf-8", "replace")
     try:
         return res.status_code, json.loads(raw or "{}")
@@ -1269,11 +1278,11 @@ async def y_approval(conn):
     check(c2 == 200 and (b2.get("proposal") or {}).get("status") == "pending_approval",
           "the maker submits it through the EXISTING route (POST /proposals/{id}/submit) → awaiting approval",
           f"{c2} {dumps(b2)[:300]}")
-    before = int(await platform(conn, "SELECT count(*) FROM sod_decisions WHERE item_id = $1::uuid AND outcome = "
-                                      "'refused'", pid, fetch="fetchval"))
+    before = int(await platform(conn, "SELECT count(*) FROM sod_decisions WHERE item_id = $1::text AND outcome = "
+                                      "'refused'", str(pid), fetch="fetchval"))
     c3, b3 = await api(U_ADV, "POST", f"/api/v1/proposals/{pid}/approve", {"note": "self"})
-    after = int(await platform(conn, "SELECT count(*) FROM sod_decisions WHERE item_id = $1::uuid AND outcome = "
-                                     "'refused'", pid, fetch="fetchval"))
+    after = int(await platform(conn, "SELECT count(*) FROM sod_decisions WHERE item_id = $1::text AND outcome = "
+                                     "'refused'", str(pid), fetch="fetchval"))
     st = await scoped(conn, ORG_A, "SELECT status FROM public.rebalance_proposals WHERE id = $1::uuid AND system_to "
                                    "IS NULL", pid, fetch="fetchval")
     check(c3 == 403 and after == before + 1 and st == "pending_approval",
@@ -1496,8 +1505,9 @@ async def y_waterfall(conn):
 
 
 # ── App: visibility, isolation, member view ───────────────────────────────────────────────────────────────────
-async def treasury(uid, hh):
-    return await api(uid, "GET", f"/api/v1/cash/households/{hh}/treasury")
+async def treasury(uid, hh, horizon=None):
+    q = f"?horizon_months={horizon}" if horizon else ""
+    return await api(uid, "GET", f"/api/v1/cash/households/{hh}/treasury{q}")
 
 
 async def y_app(conn):
@@ -1562,6 +1572,78 @@ async def y_app(conn):
     check([r["routed_via"] for r in routed] == ["manual"] and ALTRUIST_CALLS == [],
           "NOTHING was routed to a real custodian: every fixture instruction is routed_via manual; the Altruist adapter "
           "was never called", f"{[r['routed_via'] for r in routed]} {ALTRUIST_CALLS}")
+
+
+#: cash04 fix 1 — the commit whose services/cash_ladder.py still had the zero-par IndexError (the reproduction)
+PRE_FIX_REF = "ec6efd4"
+
+
+def _prefix_ladder_module():
+    """services/cash_ladder.py as of PRE_FIX_REF, loaded as a separate module (never replaces the live one)."""
+    import types
+
+    src = subprocess.run(["git", "-C", str(REPO), "show", f"{PRE_FIX_REF}:apps/api/services/cash_ladder.py"],
+                         capture_output=True, text=True, timeout=60, check=True).stdout
+    mod = types.ModuleType("cash_ladder_prefix_cash04fix1")
+    exec(compile(src, "cash_ladder@" + PRE_FIX_REF, "exec"), mod.__dict__)  # noqa: S102 — the repo's own file
+    return mod
+
+
+async def y_empty(conn):
+    section("[Y] Empty states (cash04 fix 1): no policy → 200 everywhere; a zero-par ladder → 200 (was a 500)")
+    # 1 — reproduce the ORIGINAL failure (the pre-fix _finish), then show the fix resolves it
+    zero = {"rungs": [{"par": ZERO, "yield": {"estimated": True, "yield_pct": Decimal("4.05"), "as_of": date(2026, 11, 6)}}
+                      for _ in range(3)]}
+    try:
+        old = _prefix_ladder_module()
+        try:
+            old._finish({k: (list(v) if isinstance(v, list) else v) for k, v in zero.items()})
+            repro = "no exception"
+        except IndexError as exc:
+            repro = f"IndexError: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        repro = f"could not load the pre-fix module: {type(exc).__name__}: {exc}"
+    check(repro.startswith("IndexError"), f"REPRODUCED: the pre-fix cash_ladder._finish ({PRE_FIX_REF}) raises on 3 "
+          "rungs that all carry a yield but hold ZERO par (org B's household: no Long-term obligation, an empty "
+          "sleeve) — the 500", repro)
+    try:
+        fixed = CL._finish({k: (list(v) if isinstance(v, list) else v) for k, v in zero.items()})
+        y = fixed["yield"]
+        ok, det = y.get("estimated") is False and "holds no par" in (y.get("text") or ""), f"{y}"
+    except Exception as exc:  # noqa: BLE001
+        ok, det = False, f"{type(exc).__name__}: {exc}"
+    check(ok, "FIXED: the same input → not estimated, 'the ladder holds no par' (no exception)", det)
+    # 2 — org B's own household (the zero-par ladder, through the real plan): the Treasury GET is 200 with NO plan error
+    c, env = await treasury(U_B, HB)
+    plan = env.get("plan") or {}
+    lad = [(sc.get("ladder") or {}).get("yield") for sc in plan.get("scopes") or []]
+    check(c == 200 and "error" not in plan and "error" not in (env.get("proposals") or {}) and len(lad) == 1
+          and "holds no par" in ((lad[0] or {}).get("text") or ""),
+          "org B's own household: GET /treasury answers 200, its plan built (no 'error' — the envelope used to hide "
+          "the IndexError as a plan error), the ladder 'holds no par'", f"{c} {dumps(lad)[:300]} "
+                                                                       f"{dumps(plan.get('error'))[:200]}")
+    # 3 — a household with NO active cash policy (H2): every cash GET is 200; generating is 200 with the empty state
+    n_pol = int(await platform(conn, "SELECT count(*) FROM public.cash_policies WHERE household_id = $1::uuid AND "
+                                     "status = 'active'", str(H2), fetch="fetchval"))
+    check(n_pol == 0, "the fixture premise: H2 holds NO active cash policy", f"{n_pol}")
+    c1, b1 = await api(U_ADV, "GET", "/api/v1/cash/households")
+    c2, e2 = await treasury(U_ADV, H2)
+    p2 = e2.get("plan") or {}
+    check(c1 == 200 and c2 == 200 and "error" not in p2 and p2.get("scopes") == []
+          and "error" not in (e2.get("proposals") or {}) and (e2.get("proposals") or {}).get("proposals") == [],
+          "every cash GET answers 200 for the no-policy household: GET /cash/households, GET /treasury (no plan scopes, "
+          "no plan error, an empty proposals panel)", f"{c1} {c2} {dumps(p2)[:200]}")
+    c3, e3 = await treasury(U_ADV, H2, horizon=60)
+    check(c3 == 200 and "error" not in (e3.get("plan") or {}), "GET /treasury?horizon_months=60 (no policy) → 200",
+          f"{c3}")
+    before = int(await platform(conn, "SELECT count(*) FROM public.rebalance_proposals WHERE org_id = $1::uuid",
+                                str(ORG_A), fetch="fetchval"))
+    c4, b4 = await api(U_ADV, "POST", f"/api/v1/cash/households/{H2}/proposals", {})
+    after = int(await platform(conn, "SELECT count(*) FROM public.rebalance_proposals WHERE org_id = $1::uuid",
+                               str(ORG_A), fetch="fetchval"))
+    check(c4 == 200 and b4.get("empty") == CPR.NO_ACTIVE_POLICY and b4.get("made") == [] and before == after,
+          "generating for the no-policy household → 200 'no active cash policy — nothing to propose'; nothing written",
+          f"{c4} {dumps(b4)[:300]} {before}→{after}")
 
 
 async def y_loaders(conn):
@@ -1677,7 +1759,27 @@ async def cleanup_only(conn) -> int:
 
 
 FIXTURE_SECTIONS = (("builder (db)", y_builder_db), ("approval", y_approval), ("refusals", y_refusals),
-                    ("waterfall", y_waterfall), ("app + visibility", y_app))
+                    ("waterfall", y_waterfall), ("app + visibility", y_app), ("empty states", y_empty))
+#: --only=<names> (cash04 fix 1): short name → FIXTURE_SECTIONS name; a section that reads another's state pulls it
+#: in (ordered). 'app' reads S["pid"] / S["instruction_ids"] (approval) and the waterfall's history (H3).
+ONLY_NAMES = {"builder": "builder (db)", "approval": "approval", "refusals": "refusals", "waterfall": "waterfall",
+              "app": "app + visibility", "empty": "empty states"}
+ONLY_NEEDS = {"app + visibility": ("approval", "waterfall"), "waterfall": ("approval",)}
+
+
+def only_sections() -> list[str] | None:
+    """None = the full run; [] = seed only; else the FIXTURE_SECTIONS names to run, in their own order."""
+    arg = next((a for a in sys.argv[1:] if a.startswith("--only=")), None)
+    if arg is None:
+        return None
+    want = {x.strip() for x in arg.split("=", 1)[1].split(",") if x.strip()}
+    bad = want - set(ONLY_NAMES) - {"seed"}
+    if bad:
+        raise SystemExit(f"--only: unknown section(s) {sorted(bad)}; known: seed, {', '.join(ONLY_NAMES)}")
+    names = {ONLY_NAMES[w] for w in want if w != "seed"}
+    for _ in range(3):
+        names |= {n for x in list(names) for n in ONLY_NEEDS.get(x, ())}
+    return [n for n, _fn in FIXTURE_SECTIONS if n in names]
 
 
 async def main_async() -> int:
@@ -1692,6 +1794,9 @@ async def main_async() -> int:
     install_stubs()
     if "--cleanup-only" in sys.argv:
         return await cleanup_only(conn)
+    only = only_sections()
+    if only is not None:
+        print(f"[INFO] --only: seed + {only or '(seed only)'}")
     pre = None
     try:
         await run("pre-teardown", teardown_retrying)
@@ -1701,20 +1806,24 @@ async def main_async() -> int:
             return 1
         pre = await counts(conn)
         S["real"] = await real_fingerprints(conn)
-        await run("task 1", y_task1, conn)
+        if only is None:
+            await run("task 1", y_task1, conn)
         await run("schema", y_schema, conn)
-        await run("builder (pure)", y_builder_pure, conn)
+        if only is None:
+            await run("builder (pure)", y_builder_pure, conn)
         if S.get("schema_ok"):
             await run("seed", seed, conn)
+        chosen = [(n, fn) for n, fn in FIXTURE_SECTIONS if only is None or n in only]
         if S.get("seeded"):
-            for name, fn in FIXTURE_SECTIONS:
+            for name, fn in chosen:
                 await run(name, fn, conn)
         else:
-            for name, _fn in FIXTURE_SECTIONS:
+            for name, _fn in chosen:
                 check(False, f"{name}: not run — the schema read or the seed failed (never skipped silently)")
-        await run("loaders", y_loaders, conn)
-        await run("routes", y_routes, conn)
-        await run("front end", y_front_end, conn)
+        if only is None:
+            await run("loaders", y_loaders, conn)
+            await run("routes", y_routes, conn)
+            await run("front end", y_front_end, conn)
         check(NETWORK_CALLS == [] and MODEL_CALLS == [], "no network call and no model call during the whole run",
               f"{NETWORK_CALLS[:3]} {MODEL_CALLS[:3]}")
     finally:
@@ -1746,7 +1855,9 @@ async def main_async() -> int:
         await close_conn(conn)
         if S.get("no_teardown"):
             print(total_line())
-    if os.environ.get("VERIFY_NESTED") == "1":
+    if only is not None:
+        print("[INFO] --only: no regression (the one-off path)")
+    elif os.environ.get("VERIFY_NESTED") == "1":
         print("[SKIP] nested run")
     else:
         try:

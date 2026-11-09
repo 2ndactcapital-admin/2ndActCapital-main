@@ -291,6 +291,11 @@ def _finish(out: dict) -> dict:
                         "basis": "par-weighted rung yields", "source": "ladder"}
     elif not rungs:
         out["yield"] = {"estimated": False, "text": "no ladder — no Long-term obligations or rungs"}
+    elif len(est) == len(rungs):
+        # cash04 fix 1: every rung has a yield but the ladder holds no par (no Long-term obligations and an empty
+        # sleeve) — this case fell into the branch below and indexed an EMPTY miss list (IndexError → a 500)
+        out["yield"] = {"estimated": False, "text": "not estimated — the ladder holds no par (the Long-term sleeve "
+                                                    "is empty)"}
     else:
         miss = [r for r in rungs if not r["yield"].get("estimated")]
         out["yield"] = {"estimated": False, "text": f"not estimated — {len(miss)} of {len(rungs)} rungs have no yield "

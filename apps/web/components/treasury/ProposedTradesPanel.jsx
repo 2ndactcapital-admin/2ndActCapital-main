@@ -95,7 +95,7 @@ export default function ProposedTradesPanel({ env, onReload }) {
     } catch (e) { setMsg(e.message); } finally { setBusy(false); }
   };
   const generate = () => post(`/api/cash/households/${env.household.id}/proposals`,
-    (d) => `${(d.made || []).length} draft proposal(s); ${(d.skipped || []).length} account(s) skipped.`);
+    (d) => d.empty || `${(d.made || []).length} draft proposal(s); ${(d.skipped || []).length} account(s) skipped.`);
   const adopt = (id) => post(`/api/cash/proposals/${id}/adopt`, () => "Adopted and submitted — a different person approves it.");
   return (
     <div className="space-y-3" aria-label="Proposed trades">

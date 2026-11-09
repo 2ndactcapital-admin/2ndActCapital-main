@@ -754,6 +754,10 @@ async def build_household(conn, org_id, household_id, today: date, *, scope=None
     return out
 
 
+#: cash04 fix 1 — the generate route's empty state (no ACTIVE cash policy → no scope plan → no account to propose for)
+NO_ACTIVE_POLICY = "no active cash policy — nothing to propose"
+
+
 async def propose_household(pool, *, org_id, household_id, actor_id, today: date | None = None, scope=None) -> dict:
     """``POST /cash/households/{id}/proposals`` — a person's DRAFT cash proposal per account (trigger manual), each
     through :func:`write_proposal`; audited once per household (``cash.proposals.generated``)."""
@@ -761,6 +765,10 @@ async def propose_household(pool, *, org_id, household_id, actor_id, today: date
     async with pool.acquire() as conn:
         await HT.assert_human(conn, actor_id, org_id)
         recs = await build_household(conn, org_id, household_id, today, scope=scope)
+    if not recs:
+        # cash04 fix 1: a household with no ACTIVE cash policy (or no account in one) — a clear empty state, nothing
+        # written (the route answers 200, not 201)
+        return {"made": [], "skipped": [], "today": today.isoformat(), "empty": NO_ACTIVE_POLICY}
     made, skipped = [], []
     for rec in recs:
         a = rec["account"]

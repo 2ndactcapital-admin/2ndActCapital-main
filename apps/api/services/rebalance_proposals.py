@@ -1355,10 +1355,13 @@ async def execute(pool, *, org_id, proposal_id, actor_id, manual: bool = False) 
                 await conn.execute(
                     f"""INSERT INTO {T_T} (org_id, proposal_id, line_no, global_security_id, side, quantity, notional,
                             price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                            wash_sale, instruction_id, lot_method, short_leg)
+                            wash_sale, instruction_id, lot_method, short_leg, option_leg, cash_leg)
                         SELECT org_id, proposal_id, line_no, global_security_id, side, quantity, notional, price,
                                price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                               wash_sale, $2::uuid, lot_method, short_leg FROM {T_T} WHERE id = $1""", t["id"], iid)
+                               wash_sale, $2::uuid, lot_method, short_leg, option_leg, cash_leg FROM {T_T}
+                        WHERE id = $1""", t["id"], iid)
+                # cash04 fix 1: the routing restatement carries EVERY leg column (short / option / cash) — it used to
+                # drop cash_leg, so an approved cash proposal's lines lost their sleeve, limit and warning
             new = await _update(conn, p["id"], {"execution": {
                 "instruction_ids": ids, "routing": result.as_dict(), "executor_type": executor,
                 "held_by_wash_sale": held,
