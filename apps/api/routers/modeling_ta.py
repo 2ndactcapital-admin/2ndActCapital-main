@@ -350,85 +350,16 @@ async def _resolve_commitment_state(
     strategy_key: str | None, periods_per_year: int | None,
     entity_scope: list[str] | None = None,
 ) -> dict:
+    """CASH01 — the body moved to services.ta_state.resolve_commitment_state (the cash obligations ledger reads the
+    SAME state); its TAStateError maps back to the identical HTTPException here."""
+    from services.ta_state import TAStateError, resolve_commitment_state
+
     try:
-        commitment = await get_commitment(conn, org_id=org_id, commitment_id=str(commitment_id))
-    except CommitmentError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if commitment is None:
-        raise HTTPException(status_code=404, detail="commitment not found")
-    if entity_scope is not None:
-        # BUGFIX3 — a member projects only their own family's commitment; another family's = the SAME 404
-        owner = await conn.fetchval(
-            "SELECT owner_entity_id::text FROM portfolio.positions WHERE id = $1::uuid AND org_id = $2::uuid",
-            str(commitment["position_id"]), str(org_id))
-        if owner is None or owner not in set(entity_scope):
-            raise HTTPException(status_code=404, detail="commitment not found")
-
-    settings = await get_all_settings(conn, org_id)  # fetched ONCE
-
-    override = await get_active_params(conn, org_id=org_id, commitment_id=str(commitment_id))
-    if override is not None:
-        params = override["params"]
-        ta_strategy_key = override["ta_strategy_key"]
-        source = override["source"]
-    else:
-        if not strategy_key:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "this commitment has no TA parameter override set — pass "
-                    "?strategy_key=<one of "
-                    f"{TA_STRATEGY_KEYS}> to project against a strategy default"
-                ),
-            )
-        try:
-            params = params_for_strategy(strategy_key, settings, periods_per_year=periods_per_year)
-        except (TAConfigError, TAModelError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        ta_strategy_key = strategy_key
-        source = None
-
-    position = await conn.fetchrow(
-        """
-        SELECT p.market_value, p.ownership_basis, p.ownership_pct, p.quantity, p.asset_id::text AS asset_id
-        FROM portfolio.positions p
-        JOIN portfolio.commitments c ON c.position_id = p.id AND c.org_id = p.org_id
-        WHERE c.id = $1::uuid AND c.org_id = $2::uuid
-          AND p.valid_to IS NULL AND p.system_to IS NULL
-          AND c.valid_to IS NULL AND c.system_to IS NULL
-        """,
-        str(commitment_id), org_id,
-    )
-
-    committed = commitment["commitment_amount"] or Decimal(0)
-    called = commitment["called_to_date"] or Decimal(0)
-    distributed = commitment["distributed_to_date"] or Decimal(0)
-    # PORTENTRY1 (GAP-PORT-04) — a private investment entered on the CRM record carries its NAV as a VALUATION on
-    # a percent position (market_value NULL): read it through the same position_current_value the rollup and the
-    # grid use. A stored market_value is returned first by that function, so existing commitments are unchanged.
-    resolved = None
-    if position is not None:
-        from services.portfolio_rollup import position_current_value
-
-        resolved, _ = await position_current_value(conn, org_id, dict(position), None)
-    if resolved is not None:
-        current_nav = Decimal(resolved)
-    else:
-        current_nav = called - distributed
-        if current_nav < 0:
-            current_nav = Decimal(0)
-
-    return {
-        "commitment_id": str(commitment_id),
-        "ta_strategy_key": ta_strategy_key,
-        "source": source,
-        "params": params,
-        "settings": settings,
-        "current_nav": current_nav,
-        "committed_capital": committed,
-        "called_to_date": called,
-        "distributed_to_date": distributed,
-    }
+        return await resolve_commitment_state(conn, org_id=org_id, commitment_id=commitment_id,
+                                              strategy_key=strategy_key, periods_per_year=periods_per_year,
+                                              entity_scope=entity_scope)
+    except TAStateError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
 
 
 def _project(state: dict, *, horizon_periods: int) -> list:

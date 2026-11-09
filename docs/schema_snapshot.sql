@@ -800,6 +800,51 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY borrow_rates_pkey: (id)
 
+-- ===== cash_coverage_minimums =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   entity_id                                uuid
+--   household_id                             uuid
+--   min_months                               numeric NOT NULL
+--   reason                                   text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cash_coverage_minimums_pkey: (id)
+
+-- ===== cash_obligations =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   lineage_id                               uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   source_type                              text NOT NULL
+--   name                                     text NOT NULL
+--   amount                                   numeric NOT NULL
+--   currency_code                            text NOT NULL DEFAULT 'USD'::text
+--   due_date                                 date NOT NULL
+--   rrule                                    text
+--   end_date                                 date
+--   certainty                                text NOT NULL
+--   source_ref_type                          text
+--   source_ref_id                            uuid
+--   owner_user_id                            uuid
+--   notes                                    text
+--   external_key                             text
+--   as_of                                    date NOT NULL DEFAULT CURRENT_DATE
+--   change_reason                            text
+--   end_reason                               text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cash_obligations_pkey: (id)
+
 -- ===== charitable_donees =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL

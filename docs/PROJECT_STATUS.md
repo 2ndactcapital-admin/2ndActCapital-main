@@ -344,6 +344,47 @@ This file starts with the email item below.
 ---
 
 
+## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CASH01 — the cash track begins: CASH00 discovery folded in + the OBLIGATIONS LEDGER and CASH COVERAGE (months, covered-through, next gap; per entity and per household; flags + to-dos); read-only on money; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
+
+Branch cash01-work. Read-only on money: no transfers, no instructions, no sleeves (cash02+). Docs: `docs/cash/CASH00_DISCOVERY.md` (decisions 1a–1f, reuse inventory) and `docs/cash/CASH_OBLIGATIONS.md` (sources, derivation, formulas). `docs/cash/CASH_TREASURY_DESIGN_v1.md` is mirrored.
+
+- **[FIND]** `CASH_TREASURY_ADDENDUM_v1.1_EXECUTION_ADAPTERS.md` and `CASH_TRACK_PLAN_v1.2.md` were not available to the sprint (not in the repo or in Downloads). They are not mirrored. The v1.2 §2 decisions the prompt carried are recorded in CASH00 1e as given. **Operator: copy them into docs/cash/.**
+- **CASH00 decisions.**
+  - 1a: two books, no overlap on any live row. `portfolio.commitments` is the book for third-party funds; `spv_subscriptions` / `spv_transactions` for house SPVs; the SPV ledger wins via `assets.internal_spv_id`. A noticed call is a `cash_obligations` row matched to its commitment; a paid call is the ledger transaction.
+  - 1b: liabilities have no payment schedule. Debt service is a stored schedule, or an interest-only estimate from a fixed rate, or "needs payment terms" (SOFR-indexed lines).
+  - 1c: the liquid balance is the net-worth core's Cash & Equivalents buckets; there is no second formula.
+  - 1d: six CRM detail fields added for dated trust, insurance and charitable payments.
+  - 1e: the reuse inventory, plus the recorded payment-instruction, adapter and bank-detail decisions (nothing built).
+  - 1f: Altruist returns balances, but no cash rate, no sweep split and no MMF menu.
+- **Schema.** `docs/cash01_part1.sql` APPLIED (`_apply_cash01.py --all`: SCHEMA OK). Snapshot refreshed (only the two tables changed).
+  - `cash_obligations`: stored items only; bi-temporal on the valid axis (`lineage_id`); CHECKs (a projected call cannot be stored); `live_uq` / `external_key_uq`; RLS on every op; the demo delete guard.
+  - `cash_coverage_minimums`: per entity or household; default 6.
+- **Services.**
+  - `services/cash_obligations.py` — the ledger writers, the RRULE expansion (month-end and leap day clamp from the anchor) and ONE merged read: stored + projected calls (TA) with notice supersession (counted once) + debt service + CRM payments.
+  - `services/cash_coverage.py` — pure coverage functions, the household / entity report, minimums and the alert sync.
+  - `services/ta_state.py` — the TA commitment-state resolution, moved out of `routers/modeling_ta` (behaviour unchanged).
+  - New disclosure key `cash.coverage_estimate`.
+- **Routes** (`routers/cash.py`, 8). Reads are gated `any(view_portfolio|manage_portfolio)` + member / visibility scope; writes `internal + manage_portfolio`. AUTHZ1_ROUTES / VISIBILITY1_ROUTES regenerated.
+- **Web.**
+  - The Household → Treasury tab and the member `/treasury` page.
+  - `components/treasury/TreasuryPanel.jsx` and `lib/treasury.mjs` (fails closed).
+  - The `/api/cash/*` proxies.
+  - `tests/cash01` (6). `node --test tests/`: 670 tests, 669 pass, 0 fail.
+- **Demo (operator).** `docs/demo/olivo/data/obligations.csv` (18 rows: quarterly federal + CT taxes, per-property carrying, ILIT premium, GRAT annuity through 2027, foundation 5%, tuition, lifestyle). `scripts/load_olivo_obligations.py --dry-run` RAN and wrote nothing:
+  - household liquid $33,004,800.00 → 25.7 months, covered beyond the horizon;
+  - BUT the ILIT, GRAT and every property LLC hold no cash (below minimum, uncovered within 90 days);
+  - the foundation ($1.3M) cannot pay its $2,247,500 payout on 2026-12-31;
+  - the two Olivo commitments need a TA strategy (0 live overrides);
+  - the two SOFR lines need payment terms and an approved limit.
+  - **Operator step:** run the loader with `--operator-email`.
+- **Verify.** `apps/api/scripts/verify_cash01.py` WRITTEN, NOT RUN; added to scripts/regression_set.txt. Its regression is verify_rollup2.py: once, flat, after teardown, VERIFY_NESTED=1, 2700 s.
+- **Not done / next.**
+  - SPV call transactions are not yet wired into the ledger (no live call transaction exists).
+  - Chancery-extracted notices and invoices are recorded manually for now.
+  - A dedicated line-limit column.
+  - A SOFR / index series for floating debt service.
+  - Coverage alerts re-sync on writes only; a nightly sweep is cash02+.
+
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. S29B — WORKFLOW MANAGER WAVE 4: unattended write steps under S30 (classes, switches OFF, shadow, delegate + idempotency, limits, kill switches, events) + Task 0 self-grant floor ON everywhere; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
 
 Branch s29b-work. The rules are in docs/WORKFLOW_AUTONOMY.md, the discovery (verb table, engine path, triggers, what was reused) in docs/S29B_DISCOVERY.md. **Money movement is excluded until counsel (cash stage C).**

@@ -265,8 +265,14 @@ out to build them. Check first.
 - ⬜ **S27 TaskRouter** may be mostly built already: the fallback chain, the
   per-call decision log, and model / cost / latency tracking all landed through
   the LiteLLM phases.
-- ⬜ Does TA Model's read-time obligation ledger resolve the cash module's
-  flagged overlap with SPV commitment tracking? Gates `cash00`.
+- ✅ Does TA Model's read-time obligation ledger resolve the cash module's
+  flagged overlap with SPV commitment tracking? ANSWERED by CASH01 (cash00 folded in,
+  2026-11-08): two books, no overlap on any live row — `portfolio.commitments` for third-party
+  funds, the SPV ledger for house SPVs (it wins via `assets.internal_spv_id`); see
+  docs/cash/CASH00_DISCOVERY.md 1a.
+- ⬜ CASH01 operator steps: run `load_olivo_obligations.py --operator-email …` (after its
+  `--dry-run`); copy CASH_TREASURY_ADDENDUM_v1.1 / CASH_TRACK_PLAN_v1.2 into docs/cash/ (not
+  available to the sprint); set TA strategies on the Olivo commitments; run verify_cash01.py.
 - ⬜ Do capital calls and distributions post real journal lines? Gates the
   `v_capital_accounts` fix.
 - ⬜ `investment_profile_questions` vs `udf_definitions` — is one retirable?

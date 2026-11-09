@@ -1,5 +1,5 @@
 {
- "app_route_count": 978,
+ "app_route_count": 986,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -17662,6 +17662,176 @@
    "name": "autonomy_platform_kill_switch",
    "note": "",
    "path": "/api/v1/admin/workflow-autonomy/platform-kill-switch",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(view_portfolio|manage_portfolio); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash",
+   "name": "cash_households_route",
+   "note": "",
+   "path": "/api/v1/cash/households",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_portfolio|manage_portfolio); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash",
+   "name": "treasury_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/treasury",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_portfolio)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "create_obligation_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/obligations",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_portfolio)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "revise_obligation_route",
+   "note": "",
+   "path": "/api/v1/cash/obligations/{obligation_id}/revise",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_portfolio)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "end_obligation_route",
+   "note": "",
+   "path": "/api/v1/cash/obligations/{obligation_id}/end",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_portfolio)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "record_notice_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/notices",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_portfolio)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.cash",
+   "name": "set_minimum_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/minimums",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_portfolio)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "sync_alerts_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/alerts/sync",
    "public": false,
    "write": true
   },
