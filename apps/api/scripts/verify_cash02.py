@@ -14,8 +14,9 @@ call. REAL: the app through an ASGI transport, services.cash_policy / cash_cover
 sod / human_tasks / bulk_approvals / market_data.read_service / tax_profiles, RLS and the live database. The script's
 own connection does not bypass RLS (rolbypassrls = false, asserted). TIME IS INJECTED: routers.cash's "today" is
 TODAY. FRED IS NEVER READ LIVE: the yield proxies are re-pointed (``CP.YIELD_PROXIES``, same shape — asserted) at
-fixture series ``cash02vfy.*`` (source_provider 'none' so no nightly job ever fetches them), read through the real
-read_service.
+fixture series ``cash02vfy.*`` (series source_provider 'none', which no adapter serves, so no nightly job ever
+fetches them; observations source_provider NULL = "the series' own provider", exactly what the real fred.* rows carry —
+cash02 fix 1), read through the real read_service.
 
 FIXTURES: two orgs 99000000-0000-0000-0000-0000cac20001 / 0002 (is_test = true, asserted; org A has VISIBILITY1
 enforcement ON); users with real user_roles grants — the app's decision on each asserted:
@@ -29,14 +30,19 @@ H1's obligations (hand-computed below) are recorded through the cash01 API. Rese
 sign-in tag 'cash02verify', names 'CASH02 VERIFY%', series keys 'cash02vfy.%') are checked absent from real rows
 first.
 
-TEARDOWN (start and end): ``_verify_cleanup.cleanup`` on the operator DSN, keyed by this run's fixture ids (the global
+TEARDOWN (start and end, one function): ``_verify_cleanup.cleanup`` on the operator DSN with the documented teardown GUC
+``execution.teardown`` (rep6's tax_inputs_guard deletes the fixture tax profile only under it — cash02 fix 1), keyed by
+this run's fixture ids (the global
 fixture series and observations by their materialised ids); every touched table re-read for its exact pre-test count,
 counted BY FIXTURE IDS ONLY (live activity writes audit_log, sod_decisions, member_todos and workflow runs). Real rows
 (every non-fixture cash_policies / cash_obligations / tax_profiles row, the Olivo demo's, the SoD catalog's cash
 policy rows) are fingerprinted before and after.
 
 --self-checks-only: git / route / static self-checks only (no Doppler, database, npm). --cleanup-only: the teardown and
-the leftover check only. With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
+the leftover check only (per-table fixture counts printed). --only=<a,b,…>: the one-off path — teardown, schema read,
+seed, then ONLY the named fixture sections (seed | calculation | yields | maker-checker | minimum | inbox | visibility;
+'visibility' pulls in 'maker-checker', whose v2 policy it reads), then the full teardown + leftover + real-row checks;
+no Olivo / routes / front end / regression. With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
 """
 
 from __future__ import annotations
@@ -223,6 +229,15 @@ SERIES_PREFIX = "cash02vfy."
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 FIXTURE_ID_PREFIX = "99000000-0000-0000-0000-0000cac2"
 TODAY = date(2026, 11, 9)       # the injected "today"
+#: the fixture series' registry provider: no adapter serves 'none', so the nightly job never fetches a fixture series
+SERIES_PROVIDER = "none"
+#: the fixture observations' per-row provider. NULL = "the series' own provider" (services/market_data/splice.py) — what
+#: every real fred.* observation carries; 'none' is NOT allowed by indicator_obs_source_provider_chk (cash02 fix 1)
+OBS_PROVIDER = None
+#: the documented teardown GUCs this script's fixtures need beyond _verify_cleanup's own 'sod.teardown':
+#: public.execution_teardown_allowed() (read by rep6's tax_inputs_guard on tax_profiles) checks
+#: current_setting('execution.teardown') = 'fixture' AND current_user <> 'app_service' (cash02 fix 1)
+TEARDOWN_GUCS = ("execution.teardown",)
 ZERO = Decimal(0)
 
 
@@ -322,6 +337,51 @@ SEED_CHECK_LITERALS = (
     ("market_data.indicator_series", "indicator_series_status_chk", ("active",)),
     ("public.delegate_grants", "delegate_grants_scope_check", ("view_only",)),
 )
+#: every row SHAPE seed() inserts by raw SQL — its literals verbatim, its parameters at a representative fixture value.
+#: y_schema evaluates EVERY CHECK constraint on each table against these rows in the database itself
+#: (jsonb_populate_record → the constraint's own expression), so a literal the catalog refuses (cash02 fix 1: 'none'
+#: into indicator_obs_source_provider_chk) fails the pre-check instead of crashing the seed. A static check asserts
+#: every quoted literal in seed()'s source is one of these values (or a non-column literal in SEED_NON_COLUMN).
+_U, _O, _E, _H = "99000000-0000-0000-0000-0000cac20010", "99000000-0000-0000-0000-0000cac20001", \
+    "99000000-0000-0000-0000-0000cac20040", "99000000-0000-0000-0000-0000cac20030"
+SEED_ROWS = {
+    "public.organizations": [{"id": _O, "name": "CASH02 Verify Org A", "slug": "cash02verify-a", "is_test": True}],
+    "public.users": [{"id": _U, "org_id": _O, "email": "cash02verify-adv@test.local", "full_name": "CASH02 ADV",
+                      "auth0_sub": "auth0|cash02verify-adv", "role": "member", "status": "active", "is_active": True,
+                      "is_test": True}],
+    "public.entities": [{"id": _E, "org_id": _O, "display_name": "CASH02 VERIFY Dynasty", "status": "active",
+                         "entity_type": "trust", "sub_type": "Dynasty"}],
+    "public.households": [{"id": _H, "org_id": _O, "name": "CASH02 VERIFY Policy family"}],
+    "public.delegate_grants": [{"org_id": _O, "principal_entity_id": _E, "delegate_user_id": _U, "scope": "view_only",
+                                "effective_from": "2026-11-08T00:00:00+00:00"}],
+    "public.staff_assignments": [{"org_id": _O, "entity_id": _E, "assigned_to_user_id": _U,
+                                  "role_label": "Lead adviser"}],
+    "public.org_settings": [{"org_id": _O, "setting_key": "staff_visibility.enforced", "setting_value": True,
+                             "category": "general"}],
+    "portfolio.assets": [{"id": _E, "org_id": _O, "name": "CASH02 VERIFY cash", "asset_class": "financial",
+                          "asset_type": "cash", "ownership_basis": "value", "valuation_method": "amortized_cost",
+                          "currency_code": "USD", "default_taxonomy_key": "taxonomy_mc_8_1"}],
+    "portfolio.positions": [{"id": _E, "org_id": _O, "owner_entity_id": _E, "asset_id": _E, "as_of_date": "2026-11-08",
+                             "ownership_basis": "value", "market_value": "1000000.00", "authority": "stated",
+                             "source_system": "manual"}],
+    "portfolio.transactions": [{"org_id": _O, "position_id": _E, "transaction_type_code": "call_investment",
+                                "trade_date": "2026-10-01", "gross_amount": "60000.00", "net_amount": "60000.00",
+                                "currency_code": "USD", "authority": "stated", "source_system": "manual"}],
+    "public.tax_profiles": [{"org_id": _O, "subject_type": "household", "subject_id": _H, "tax_year": 2026,
+                             "version_no": 1, "filing_status": "married_filing_jointly", "federal_ordinary_rate": "0.37",
+                             "federal_lt_rate": "0.20", "niit_applies": True, "niit_rate": "0.038",
+                             "state_rate": "0.0685", "city_rate": "0.03876", "as_of": "2026-11-09", "source": "adviser",
+                             "source_note": "verify fixture", "status": "approved", "entered_by": _U,
+                             "checker_id": "99000000-0000-0000-0000-0000cac20012",
+                             "decided_at": "2026-11-09T00:00:00+00:00"}],
+    "market_data.indicator_series": [{"series_key": "cash02vfy.t10", "name": "CASH02 VERIFY cash02vfy.t10",
+                                      "category": "Rates & credit", "frequency": "daily", "cost_tier": "free",
+                                      "source_provider": SERIES_PROVIDER, "ingest_status": "active"}],
+    "market_data.indicator_observations": [{"series_id": _E, "obs_date": "2026-11-05", "value": "4.80",
+                                            "source_provider": OBS_PROVIDER}],
+}
+#: quoted literals in seed()'s source that are not a column value (set_config names / values, casts, intervals)
+SEED_NON_COLUMN = {"app.is_super_admin", "true", "1 day"}
 UNIQUES = ("cash_policies_active_household_uq", "cash_policies_active_entity_uq", "cash_policies_open_household_uq",
            "cash_policies_open_entity_uq", "cash_policies_version_uq", "assets_cash_active_uniq",
            "indicator_series_key_uq", "org_settings_org_id_setting_key_key", "tax_profiles_approved_uq")
@@ -530,7 +590,7 @@ async def teardown() -> list[str]:
             "market_data.indicator_series": ("id = ANY($1::uuid[])", [sids]),
         }
         res = await VC.cleanup(op, orgs=FIXTURE_ORGS, users=ALL_USERS, user_sub_like=f"%{TAG}%", plan=plan,
-                               label="verify_cash02")
+                               gucs=TEARDOWN_GUCS, label="verify_cash02")
         return res["log"]
     finally:
         await close_conn(op)
@@ -676,6 +736,45 @@ async def y_schema(conn):
             bad.append((table, name, miss))
     check(got == len(SEED_CHECK_LITERALS) and got > 0 and not bad,
           f"{got} CHECK constraints read; every literal the seeds and bodies use is one the database allows", f"{bad}")
+    # cash02 fix 1: EVERY CHECK on every raw-seeded table, evaluated by the database on the seed's own row shapes
+    n_chk, refused = await seed_rows_vs_checks(conn)
+    check(n_chk > 0 and not refused, f"{n_chk} CHECK constraints on the {len(SEED_ROWS)} raw-seeded tables evaluated "
+          "by the database against the seed's exact row shapes — none refuses a seeded value (e.g. the observations' "
+          "source_provider)", f"{refused}")
+    # reproduce the run-1 crash in the pre-check itself: the old literal 'none' must be REFUSED by the same evaluation
+    _keep = SEED_ROWS["market_data.indicator_observations"]
+    SEED_ROWS["market_data.indicator_observations"] = [dict(_keep[0], source_provider="none")]
+    try:
+        _n, old_refused = await seed_rows_vs_checks(conn)
+    finally:
+        SEED_ROWS["market_data.indicator_observations"] = _keep
+    check(("market_data.indicator_observations", "indicator_obs_source_provider_chk", 0) in old_refused,
+          "the pre-check is not vacuous: run 1's observation literal 'none' is refused by the same evaluation "
+          "(indicator_obs_source_provider_chk — the CheckViolationError the seed crashed on)", f"{old_refused}")
+    lits = seed_literals()
+    vals = {str(v) for rows in SEED_ROWS.values() for r in rows for v in r.values() if v is not None}
+    undeclared = sorted(lits - vals - SEED_NON_COLUMN)
+    check(bool(lits) and not undeclared, f"every quoted literal in seed()'s source ({len(lits)}) is a value of SEED_ROWS "
+          "(so the CHECK evaluation above covers it) or a declared non-column literal", f"{undeclared}")
+    obs_def = await platform(conn, "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = "
+                                   "'indicator_obs_source_provider_chk' AND conrelid = "
+                                   "'market_data.indicator_observations'::regclass", fetch="fetchval")
+    real_obs = await platform(conn, "SELECT DISTINCT o.source_provider FROM market_data.indicator_observations o "
+                                    "JOIN market_data.indicator_series s ON s.id = o.series_id WHERE s.series_key = "
+                                    "ANY($1::text[]) AND o.valid_to IS NULL AND o.system_to IS NULL",
+                              ["fred.dgs10", "fred.t10y3m", "fred.dgs2"], fetch="fetch")
+    real_ser = {r["series_key"]: r["source_provider"] for r in await platform(
+        conn, "SELECT series_key, source_provider FROM market_data.indicator_series WHERE series_key = ANY($1::text[])",
+        ["fred.dgs10", "fred.t10y3m", "fred.dgs2"])}
+    from services.market_data import adapters as MDA
+    check(bool(obs_def) and "source_provider IS NULL" in obs_def and "'none'" not in obs_def
+          and [r["source_provider"] for r in real_obs] == [OBS_PROVIDER]
+          and set(real_ser.values()) == {"fred"} and SERIES_PROVIDER not in MDA.REAL_PROVIDERS,
+          "the fixture series mirror the real FRED proxies: real fred.dgs10 / t10y3m / dgs2 rows are registered "
+          "'fred' and their observations carry source_provider NULL (= the series' own provider), as the fixture's do; "
+          f"the fixture series' provider {SERIES_PROVIDER!r} has no adapter, so no nightly job fetches it",
+          f"chk={obs_def} real obs={[r['source_provider'] for r in real_obs]} series={real_ser} "
+          f"adapters={MDA.REAL_PROVIDERS}")
     mc = await platform(conn, "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = "
                               "'public.cash_policies'::regclass AND conname = 'cash_policies_maker_checker_chk'",
                         fetch="fetchval")
@@ -732,6 +831,33 @@ async def y_schema(conn):
           "docs/schema_snapshot.sql", f"{badc}")
     S["schema_ok"] = bool(got == len(SEED_CHECK_LITERALS) and not bad and len(idx) == len(UNIQUES) and by is False
                           and not badc and gone is None)
+
+
+def seed_literals() -> set[str]:
+    """Every single-quoted literal in seed()'s own source (code only — comments stripped)."""
+    src = _code_only(inspect.getsource(seed))
+    return set(re.findall(r"'([^'$%{}]+)'", src))
+
+
+async def seed_rows_vs_checks(conn) -> tuple[int, list]:
+    """Each CHECK on each SEED_ROWS table, evaluated in the database on each row shape (absent columns NULL, as a
+    CHECK sees them). Returns (constraints evaluated, [(table, constraint, row index)] refused)."""
+    n, refused = 0, []
+    for table, rows in SEED_ROWS.items():
+        defs = await platform(conn, "SELECT conname, pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE contype = "
+                                    "'c' AND conrelid = $1::regclass ORDER BY conname", table)
+        for d in defs:
+            m = re.fullmatch(r"CHECK \((.*)\)( NOT VALID)?", d["d"], re.S)
+            if not m:
+                refused.append((table, d["conname"], "unparsed"))
+                continue
+            n += 1
+            for i, row in enumerate(rows):
+                ok = await platform(conn, f"SELECT ({m.group(1)}) IS NOT FALSE FROM jsonb_populate_record(NULL::{table}, "
+                                          "$1::jsonb) AS t", json.dumps(row), fetch="fetchval")
+                if ok is not True:
+                    refused.append((table, d["conname"], i))
+    return n, refused
 
 
 async def guard_prefix(conn) -> bool:
@@ -822,11 +948,11 @@ async def seed(conn) -> None:
             for key, pts in SERIES.items():
                 sid = await op.fetchval(
                     "INSERT INTO market_data.indicator_series (series_key, name, category, frequency, cost_tier, "
-                    "source_provider, ingest_status) VALUES ($1, $2, 'Rates & credit', 'daily', 'free', 'none', "
-                    "'active') RETURNING id", key, NAME + key)
+                    "source_provider, ingest_status) VALUES ($1, $2, 'Rates & credit', 'daily', 'free', $3, "
+                    "'active') RETURNING id", key, NAME + key, SERIES_PROVIDER)
                 for d, v in pts:
                     await op.execute("INSERT INTO market_data.indicator_observations (series_id, obs_date, value, "
-                                     "source_provider) VALUES ($1, $2, $3, 'none')", sid, d, Decimal(v))
+                                     "source_provider) VALUES ($1, $2, $3, $4)", sid, d, Decimal(v), OBS_PROVIDER)
     finally:
         await close_conn(op)
     us = {r["id"] for r in await platform(conn, "SELECT id FROM users WHERE id = ANY($1::uuid[]) AND is_test",
@@ -898,6 +1024,13 @@ def body(**over) -> dict:
     return {k: v for k, v in b.items() if v is not None}
 
 
+def policy_fields(**over) -> dict:
+    """What the ROUTE hands CP.normalise: the body through routers.cash.PolicyIn.fields() (which drops scope_type /
+    entity_id / reason / questionnaire) — cash02 fix 1: the pure checks passed the raw route body, and normalise
+    rightly refuses a non-policy field."""
+    return RC.PolicyIn(**body(**over)).fields()
+
+
 async def preview(uid, hh, **over):
     return await api(uid, "POST", f"/api/v1/cash/households/{hh}/policy/preview", body(**over))
 
@@ -940,14 +1073,14 @@ async def y_calc(conn):
           f"{code} {dumps(d2)}")
     # an EMPTY Reserve window (N=4, R=8: [2027-03-09, 2027-07-09) holds nothing) — pure, Decimal
     lines = CC.scope_lines(S["report"], "household")
-    e = CP.evaluate(CP.normalise(body(near_months=4, reserve_months=8)), lines, Decimal("1010000.00"), {}, None, TODAY)
+    e = CP.evaluate(CP.normalise(policy_fields(near_months=4, reserve_months=8)), lines, Decimal("1010000.00"), {}, None, TODAY)
     er = next(s for s in e["sleeves"] if s["key"] == "reserve")
     en = next(s for s in e["sleeves"] if s["key"] == "near_term")
     check(er["amount"] == Decimal("0") and er["count"] == 0 and er["months"] == 4 and en["amount"] == Decimal("210000.00"),
           "an empty Reserve window (N=4, R=8) reads 0 with no obligations; Near-term holds 210,000 (Decimal compared)",
           f"{er['amount']} {er['count']} {en['amount']}")
     # the horizon SHORTER than R (H=9, R=12): Reserve cut at the horizon, Long-term empty — both say so
-    e = CP.evaluate(CP.normalise(body(horizon_months=9)), lines, Decimal("1010000.00"), {}, None, TODAY)
+    e = CP.evaluate(CP.normalise(policy_fields(horizon_months=9)), lines, Decimal("1010000.00"), {}, None, TODAY)
     hr = next(s for s in e["sleeves"] if s["key"] == "reserve")
     hl = next(s for s in e["sleeves"] if s["key"] == "long_term")
     check(hr["months"] == 6 and hr["until"] == add_months(TODAY, 9) and hr["amount"] == Decimal("50000.00")
@@ -1418,7 +1551,36 @@ async def report_for_calc(conn) -> None:
         reset_rls_context(tokens)
 
 
+async def print_fixture_counts(conn, when: str) -> int:
+    """Every COUNTED table's fixture rows (by fixture ids / reserved prefixes) + every org_id table holding any."""
+    c = await counts(conn)
+    extra = await org_table_counts()
+    for t in sorted(set(c) | set(extra)):
+        n = c.get(t, extra.get(t, 0))
+        if n or t in c:
+            print(f"[INFO] {when}: {t} = {n}")
+    return sum(c.values()) + sum(v for t, v in extra.items() if t not in c)
+
+
+async def org_table_counts() -> dict:
+    op = await operator_conn()
+    try:
+        out = {}
+        for r in await op.fetch(
+                "SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped "
+                "WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition AND n.nspname NOT IN ('pg_catalog', "
+                "'information_schema')"):
+            n = int(await op.fetchval(f"SELECT count(*) FROM {r['t']} WHERE org_id = ANY($1::uuid[])", FIXTURE_ORGS))
+            if n:
+                out[r["t"]] = n
+        return out
+    finally:
+        await close_conn(op)
+
+
 async def cleanup_only(conn) -> int:
+    await print_fixture_counts(conn, "before cleanup")
     try:
         log = await teardown_retrying()
         print(f"[INFO] teardown removed: {log}")
@@ -1427,6 +1589,8 @@ async def cleanup_only(conn) -> int:
         traceback.print_exc()
     left = await leftovers(conn)
     print(f"LEFTOVERS: {left}")
+    after = await print_fixture_counts(conn, "after cleanup")
+    check(after == 0, "every touched table (and every org_id table) holds zero fixture rows", f"{after}")
     check(left == 0, "zero fixture rows remain", f"{left}")
     await close_conn(conn)
     print(total_line())
@@ -1435,6 +1599,24 @@ async def cleanup_only(conn) -> int:
 
 FIXTURE_SECTIONS = (("calculation", y_calc), ("yields", y_yields), ("maker-checker", y_maker_checker),
                     ("minimum", y_minimum), ("inbox + bulk", y_inbox), ("visibility + isolation", y_visibility))
+#: --only=<names>: short name → FIXTURE_SECTIONS name; a section that reads another's state pulls it in (ordered)
+ONLY_NAMES = {"calculation": "calculation", "yields": "yields", "maker-checker": "maker-checker",
+              "minimum": "minimum", "inbox": "inbox + bulk", "visibility": "visibility + isolation"}
+ONLY_NEEDS = {"visibility + isolation": ("maker-checker",)}    # it approves / reads S["p2"]
+
+
+def only_sections() -> list[str] | None:
+    """None = the full run; [] = seed only; else the FIXTURE_SECTIONS names to run, in their own order."""
+    arg = next((a for a in sys.argv[1:] if a.startswith("--only=")), None)
+    if arg is None:
+        return None
+    want = {x.strip() for x in arg.split("=", 1)[1].split(",") if x.strip()}
+    bad = want - set(ONLY_NAMES) - {"seed"}
+    if bad:
+        raise SystemExit(f"--only: unknown section(s) {sorted(bad)}; known: seed, {', '.join(ONLY_NAMES)}")
+    names = {ONLY_NAMES[w] for w in want if w != "seed"}
+    names |= {n for x in list(names) for n in ONLY_NEEDS.get(x, ())}
+    return [n for n, _fn in FIXTURE_SECTIONS if n in names]
 
 
 async def main_async() -> int:
@@ -1450,6 +1632,9 @@ async def main_async() -> int:
     if "--cleanup-only" in sys.argv:
         return await cleanup_only(conn)
     pre = None
+    only = only_sections()
+    if only is not None:
+        print(f"[INFO] one-off run: seed + {only or 'no section'} (no Olivo / routes / front end / regression)")
     try:
         await run("pre-teardown", teardown_retrying)
         check(await leftovers(conn) == 0, "pre-run cleanup: zero fixture rows before seeding")
@@ -1458,20 +1643,24 @@ async def main_async() -> int:
             return 1
         pre = await counts(conn)
         S["real"] = await real_fingerprints(conn)
-        await run("task 1", y_task1, conn)
+        if only is None:
+            await run("task 1", y_task1, conn)
         await run("schema", y_schema, conn)
         if S.get("schema_ok"):
             await run("seed", seed, conn)
         if S.get("seeded"):
             await run("report", report_for_calc, conn)
             for name, fn in FIXTURE_SECTIONS:
-                await run(name, fn, conn)
+                if only is None or name in only:
+                    await run(name, fn, conn)
         else:
             for name, _fn in FIXTURE_SECTIONS:
-                check(False, f"{name}: not run — the schema read or the seed failed (never skipped silently)")
-        await run("olivo", y_olivo, conn)
-        await run("routes", y_routes, conn)
-        await run("front end", y_front_end, conn)
+                if only is None or name in only:
+                    check(False, f"{name}: not run — the schema read or the seed failed (never skipped silently)")
+        if only is None:
+            await run("olivo", y_olivo, conn)
+            await run("routes", y_routes, conn)
+            await run("front end", y_front_end, conn)
         check(NETWORK_CALLS == [] and MODEL_CALLS == [], "no network call and no model call during the whole run",
               f"{NETWORK_CALLS[:3]} {MODEL_CALLS[:3]}")
     finally:
@@ -1502,7 +1691,9 @@ async def main_async() -> int:
         await close_conn(conn)
         if S.get("no_teardown"):
             print(total_line())
-    if os.environ.get("VERIFY_NESTED") == "1":
+    if only is not None:
+        print("[SKIP] regression (one-off run)")
+    elif os.environ.get("VERIFY_NESTED") == "1":
         print("[SKIP] nested run")
     else:
         try:
