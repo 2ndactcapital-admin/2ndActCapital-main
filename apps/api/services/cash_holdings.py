@@ -53,10 +53,11 @@ CUTOFF_RX = re.compile(r"^([01]?\d|2[0-3]):[0-5]\d$")
 NO_CASH_RATE = "not estimated — needs the custodian's cash rate (the custodian feed does not return it)"
 NO_YIELD_SOURCE = "not estimated — no yield source is registered for this holding"
 NO_PROSPECTUS = "prospectus: not recorded in the security master"
-#: CASH05 — reserved for cash07 (the sweep rate); registered in the disclosure library, NOT shown by any cash05 screen
+#: CASH05 — registered for cash07 (the sweep rate); CASH07 shows it on a MEMBER's Treasury overview (routers/cash.py).
+#: The fallback is the ADV Item 5 text (Joe, 2026-11-08); a library version, once a second Super Admin publishes it,
+#: replaces it.
 SWEEP_RATE_KEY = "cash.sweep_rate"
-SWEEP_RATE_ESTIMATE = ("Estimate — the sweep rate is the custodian's published rate for the program your cash is "
-                       "swept into; it can change at any time and may differ from money-market fund yields.")
+SWEEP_RATE_ESTIMATE = "The cash sweep rate and any spread are disclosed in our Form ADV."
 
 
 class ScopeNotFound(Exception):

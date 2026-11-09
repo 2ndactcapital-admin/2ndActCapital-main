@@ -66,6 +66,7 @@ from routers.workflow_templates import router as workflow_templates_router  # WF
 from routers.sod import router as sod_router  # S30 — segregation of duties
 from routers.workflow_autonomy import router as workflow_autonomy_router  # S29B — unattended workflow writes
 from routers.cash import router as cash_router  # CASH01 — Household → Treasury: obligations + coverage
+from routers.payments import router as payments_router  # CASH07 — Treasury → Payments (stage A, manual)
 from routers.tax import router as tax_router
 from routers.held_away import router as held_away_router
 from routers.xray import router as xray_router
@@ -699,6 +700,7 @@ app.include_router(workflow_templates_router, prefix="/api/v1")  # WFTEMPLATES1 
 app.include_router(sod_router, prefix="/api/v1")  # S30 — segregation of duties (Admin → Segregation of duties)
 app.include_router(workflow_autonomy_router, prefix="/api/v1")  # S29B — Admin → Workflows → Autonomy
 app.include_router(cash_router, prefix="/api/v1")  # CASH01 — obligations ledger + cash coverage
+app.include_router(payments_router, prefix="/api/v1")  # CASH07 — payment instructions (same owner, manual)
 app.include_router(tax_router, prefix="/api/v1")
 app.include_router(held_away_router, prefix="/api/v1")
 app.include_router(xray_router, prefix="/api/v1")

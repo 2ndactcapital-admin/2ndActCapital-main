@@ -49,6 +49,9 @@ MONEY_MOVEMENT_ACTIONS: dict[str, dict] = {
     "spv.record_transaction": {"third_party": True},
     # subscribing commits capital within the member's own investment context
     "spv.subscribe": {"third_party": False},
+    # CASH07 — a payment instruction between a family's OWN accounts (same household, same owner): no third party, so
+    # 'limited' suffices (never 'inquiry'); third-party payees are cash08 and will need 'full'
+    "cash.payment_instruction": {"third_party": False},
 }
 
 

@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 992 · guarded 220 · sql-scope 53 · body-check 15 · legacy-rule 3
+Routes: 1001 · guarded 229 · sql-scope 53 · body-check 15 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -261,6 +261,15 @@ Routes: 992 · guarded 220 · sql-scope 53 · body-check 15 · legacy-rule 3
 | POST | `/api/v1/cash/households/{household_id}/notices` | cash | guard:household_id, body-check, scrub |
 | POST | `/api/v1/cash/households/{household_id}/obligations` | cash | guard:household_id, body-check, scrub |
 | GET | `/api/v1/cash/households/{household_id}/overview` | cash | guard:household_id, sql-scope, scrub |
+| GET | `/api/v1/cash/households/{household_id}/payments` | payments | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payments` | payments | guard:household_id, scrub |
+| GET | `/api/v1/cash/households/{household_id}/payments/options` | payments | guard:household_id, scrub |
+| GET | `/api/v1/cash/households/{household_id}/payments/{payment_id}` | payments | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payments/{payment_id}/approve` | payments | guard:household_id, scrub |
+| GET | `/api/v1/cash/households/{household_id}/payments/{payment_id}/matches` | payments | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payments/{payment_id}/reject` | payments | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payments/{payment_id}/sheet` | payments | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payments/{payment_id}/{action}` | payments | guard:household_id, scrub |
 | POST | `/api/v1/cash/households/{household_id}/plan/regenerate` | cash | guard:household_id, sql-scope, body-check, scrub |
 | POST | `/api/v1/cash/households/{household_id}/policies` | cash | guard:household_id, body-check, scrub |
 | POST | `/api/v1/cash/households/{household_id}/policies/{policy_id}/approve` | cash | guard:household_id, scrub |

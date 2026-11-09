@@ -136,6 +136,9 @@ SITES = {
     "fee_runs.approve": "services/fee_runs.py",
     "spv_carry_runs.approve": "services/spv_carry_runs.py",
     "trading_authority.approve_money_movement": "services/trading_authority.py",
+    "payments.decide": "services/payments.py",          # CASH07 — payment instructions (floor)
+    "payments._precheck": "services/payments.py",
+    "payments._apply": "services/payments.py",
     "sod_admin.decide_rule": "services/sod_admin.py",
     "role_grant:": "services/sod_admin.py",
     "workflow_autonomy.decide_setting": "services/workflow_autonomy.py",  # S29B: autonomy switch / version opt-in
@@ -168,6 +171,13 @@ RAW_ALLOWED = (
     (re.compile(r'recipients = '), "a notification recipient list"),
     (re.compile(r'is_maker = p\["maker_id"\] is not None and str\(p\["maker_id"\]\) == principal\.user_id'),
      "routers/long_short.py: the REVERSE rule's display (only the maker acknowledges)"),
+    # CASH07 (2026-11-09) — two false positives cash02 introduced (verify_s30 was 1 FAIL at cash05's merge): a
+    # comprehension ITERATING the maker list (to name it, normalise it, or hand it to services.sod) and the "add the
+    # actor to the item's own maker list" book-keeping. Neither compares anyone; a real check (`if x in r["maker_ids"]`)
+    # is still flagged.
+    (re.compile(r'\bfor \w+ in \w+\["maker_ids"\]'), "iterating the maker list (naming / normalising / passing it to sod)"),
+    (re.compile(r'\(\[aid\] if aid not in \w+\["maker_ids"\] else \[\]\)'),
+     "adds the actor to the item's own maker list (book-keeping, not a check)"),
 )
 
 

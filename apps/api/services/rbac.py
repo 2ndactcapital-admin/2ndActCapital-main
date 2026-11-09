@@ -257,6 +257,10 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("view_execution", "execution", "view"),
     ("manage_execution", "execution", "manage"),
     ("approve_execution", "execution", "approve"),
+    # CASH07 — payment instructions (stage A): initiate (draft / submit / mark sent / reconcile) and approve (the S30
+    # floor: always a different person). Kept in step with docs/cash07_part1.sql §1.
+    ("initiate_payment", "payments", "initiate"),
+    ("approve_payment", "payments", "approve"),
     # rep3 — model management (Replication Studio models, uploads, library).
     ("view_models", "models", "view"),
     ("manage_models", "models", "manage"),

@@ -149,16 +149,20 @@ def self_static(check, find):
     check("resolve_assignment_for_account(" in ce and "fee_run_lines" in _src("apps/api/services/cash_earnings.py")
           and "fee_calc" not in ce, "cash_earnings reads the fee engine's own records (assignment, posted lines) and "
                                     "never re-prices")
-    rc = _code_only(_src("apps/api/routers/cash.py"))
+    # CASH07 (2026-11-09): these three are SINCE-BASE facts about what cash05 itself did, so they read cash05's OWN end
+    # point (VS.own_text / VS.own_diff), never the working tree — cash07 adds payment routes in their own router, shows
+    # cash.sweep_rate on a MEMBER's overview (routers/cash.py) and adds docs/cash07_part1.sql, each on purpose.
+    rc = _code_only(VS.own_text(SPRINT_KEY, "apps/api/routers/cash.py") or "")
     tail = rc[rc.find("CASH05_LABELS"):]
-    check("@router.post" not in tail and tail.count("@router.get(") == 6,
-          "routers/cash.py: the CASH05 block declares six GET routes and no write")
-    d = _src("apps/api/services/disclosures.py")
-    check('"cash.sweep_rate"' in d and '"cash.sweep_rate"' not in _code_only(_src("apps/api/routers/cash.py"))
-          and "SWEEP_RATE_KEY" not in "".join(_code_only(_src(f)) for f in SERVICES if not f.endswith("holdings.py")),
-          "cash.sweep_rate is RESERVED in the disclosure library and never resolved by a cash05 read")
-    code, out, _ = VS.git("diff", "--name-only", BEFORE_REF, "--", "docs/*.sql", "apps/api/migrations")
-    check(code == 0 and not out.strip(), "no migration: no .sql file changed since cash05's base (no new table)",
+    check(bool(rc) and "@router.post" not in tail and tail.count("@router.get(") == 6,
+          "routers/cash.py at cash05's own end point: the CASH05 block declares six GET routes and no write")
+    d = VS.own_text(SPRINT_KEY, "apps/api/services/disclosures.py") or ""
+    own_services = "".join(_code_only(VS.own_text(SPRINT_KEY, f) or "") for f in SERVICES if not f.endswith("holdings.py"))
+    check('"cash.sweep_rate"' in d and '"cash.sweep_rate"' not in rc and "SWEEP_RATE_KEY" not in own_services,
+          "cash.sweep_rate was RESERVED by cash05 in the disclosure library and never resolved by a cash05 read "
+          "(cash05's own end point; cash07 shows it to members on purpose)")
+    code, out, _ = VS.own_diff(BEFORE_REF, SPRINT_KEY, "docs/*.sql", "apps/api/migrations", args=("--name-only",))
+    check(code == 0 and not out.strip(), "no migration: cash05's own diff changed no .sql file (no new table)",
           out.strip()[:200])
     notes = NOTES.read_text(encoding="utf-8") if NOTES.exists() else ""
     for sec_ in ("## 1.", "## 2.", "## 3.", "## 4.", "## 5.", "## 6.", "## 7.", "## 8.", "## 9.", "## 10."):
@@ -1727,9 +1731,13 @@ async def y_visibility(conn):
     leaks = [n for n in FULL_NUMBERS.values() if n in allb] + [h for h in (f"{TAG}-hash-",) if h in allb]
     check(bool(BODIES) and not leaks, f"no full account number (seeded in custodian_account_id) and no account hash in "
           f"ANY of the {len(BODIES)} cash05 responses — last four only", f"{leaks}")
-    check("cash.sweep_rate" not in allb and DS.fallback_text("cash.sweep_rate") is not None
-          and "cash.sweep_rate" in DS.KEYS, "cash.sweep_rate is RESERVED (registered with its fallback) and never "
-                                            "shown in any cash05 response")
+    # CASH07 (2026-11-09): the sweep-rate disclosure is now shown on a MEMBER's overview (and nowhere else) on purpose
+    staff_b = "\n".join(b for w, b in BODIES if not (w.startswith(f"{USERS[U_MEM][2]} ") and "/overview" in w))
+    mem_ov = [b for w, b in BODIES if w.startswith(f"{USERS[U_MEM][2]} ") and "/overview" in w]
+    check(DS.fallback_text("cash.sweep_rate") is not None and "cash.sweep_rate" in DS.KEYS
+          and "cash.sweep_rate" not in staff_b and bool(mem_ov) and all("cash.sweep_rate" in b for b in mem_ov),
+          "cash.sweep_rate is registered with its fallback and shown ONLY on a member's overview (CASH07), in no other "
+          "cash05 response", f"member overviews {len(mem_ov)}")
 
 
 async def y_no_writes(conn, before: dict):

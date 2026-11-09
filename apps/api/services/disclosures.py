@@ -121,11 +121,15 @@ KEYS: dict[str, dict] = {
     "cash.tax_estimate": {"title": "Cash after-tax estimates", "category": "tax", "audience": "both",
                           "description": "What an after-tax yield in the instrument plan means (the owner's tax "
                                          "profile and the instrument's exemptions)."},
-    # CASH05 — RESERVED for cash07 (the custodian sweep rate). Registered so a firm can publish its text ahead of
-    # time; no cash05 screen resolves or shows it.
+    # CASH05 — registered for cash07 (the custodian sweep rate, ADV Item 5). CASH07 shows it on a MEMBER's Treasury
+    # overview (routers/cash.py); the platform default ships as a DRAFT (a second Super Admin publishes it).
     "cash.sweep_rate": {"title": "Cash sweep rate", "category": "other", "audience": "both",
-                        "description": "What the custodian's sweep rate on uninvested cash means (reserved for "
-                                       "cash07 — not shown yet)."},
+                        "description": "What the custodian's sweep rate on uninvested cash means, and that the rate "
+                                       "and any spread are disclosed in the firm's Form ADV (Item 5)."},
+    # CASH07 — carried by every payment instruction screen and the printable payment sheet
+    "cash.payments": {"title": "Payments between your accounts", "category": "risk", "audience": "both",
+                      "description": "What a payment instruction is and is not: ACH return risk, provisional "
+                                     "settlement, value dates on business days, and that the custodian moves the money."},
     "prices.internal_use_notice": {"title": "Price data — internal use only", "category": "licence",
                                    "audience": "staff",
                                    "description": "The free end-of-day price source is licensed for internal use "
@@ -257,6 +261,12 @@ def _fallback_sweep_rate() -> str:
     return CH.SWEEP_RATE_ESTIMATE
 
 
+def _fallback_payments() -> str:
+    from services import payments as PS
+
+    return PS.PAYMENTS_DISCLOSURE
+
+
 def _fallback_member_notice() -> str:
     from services import model_provider as PM
 
@@ -272,6 +282,7 @@ FALLBACK_SOURCES = {
     "cash.yield_estimate": _fallback_yield,
     "cash.tax_estimate": _fallback_tax_estimate,
     "cash.sweep_rate": _fallback_sweep_rate,
+    "cash.payments": _fallback_payments,
     "prices.internal_use_notice": _fallback_prices,
     "replica.fund_affiliation": _fallback_replica,
 }

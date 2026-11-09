@@ -176,3 +176,17 @@ with cash07); `self_approval_capable = false` (the table's CHECK forbids `approv
 `cash_policy.decide` (gate, refusals recorded) → `human_tasks.complete_task` (kind `cash_policy_approval`, the decision
 recorded) → `cash_policy._apply` (inner gate). Bulk approve (`bulk_approvals` type `cash_policy`) calls the same
 `cash_policy.decide` per item. See docs/cash/CASH_POLICY.md.
+
+## CASH07 — payment instructions (a FLOOR item type)
+
+Item type `payment_instruction`, floor class **`transfer`** (with `gift_proposal`, `section351_plan`,
+`money_movement`): money between a family's own accounts (`payment_instructions`). Maker duty `initiate_payment`,
+checker duty `approve_payment` (permissions of the same names). Platform rules `floor:payment_instruction` and
+`policy:payment_instruction` (never; enforce_floor true). **No self-approval, ever** — no organization setting (an org
+policy turning self-approval on is ignored for a floor item) and no role, Super Admin included. Makers = the drafter,
+every editor and the submitter (`maker_ids`); the DB CHECK `payment_instructions_maker_checker_chk` backs it, and a
+manual reconciliation must be by someone other than the sender (`payment_instructions_reconciler_chk`). Sites:
+`payments.decide` (gate, refusals recorded) → `human_tasks.complete_task` (kind `payment_instruction_approval`) →
+`payments._precheck` (every maker, before the engine commits) → `payments._apply` (inner gate). Bulk approve (type
+`payment`) calls `payments.decide` per item. An org with one eligible checker (2nd Act today) waits — by design.
+See docs/cash/CASH07_NOTES.md §4.

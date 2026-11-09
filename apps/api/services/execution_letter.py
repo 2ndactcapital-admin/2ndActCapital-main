@@ -133,3 +133,89 @@ def build_letter(d: dict, *, org_name: str, account_number=None, prepared_by: st
     c.showPage()
     c.save()
     return buf.getvalue()
+
+
+# ── CASH07 — the PAYMENT SHEET: the execution-letter variant the manual payment adapter "sends" ─────────────────────
+#: The sheet shows the two accounts by their stored MASK only (``****1234``). Unlike the letter of instruction there is
+#: NO full-number option: a payment sheet never carries a full account number (asserted by verify_cash07).
+RAIL_LABELS = {"ach": "ACH", "wire": "Wire", "journal": "Journal between accounts", "check": "Check"}
+
+
+def payment_sheet_rows(d: dict) -> list[tuple[str, str]]:
+    """The (label, value) lines of the payment sheet — also what the verify reads back. ``d`` is
+    services.payments.detail's instruction (masked accounts, names, Decimal amount as fixed-point text)."""
+    src, dst = d.get("source") or {}, d.get("destination") or {}
+
+    def acct(a: dict) -> str:
+        parts = [a.get("account_number_masked") or "", a.get("owner_name") or "", a.get("custodian_label") or ""]
+        return " — ".join(x for x in parts if x)
+
+    rows = [
+        ("From account", acct(src)),
+        ("To account", acct(dst)),
+        ("Amount", f"{d['amount']} {d.get('currency_code') or 'USD'}"),
+        ("Rail", RAIL_LABELS.get(d["rail"], d["rail"])),
+        ("Value date", d["value_date"]),
+        ("Purpose", d.get("purpose") or ""),
+        ("Approved by", f"{d.get('approved_by_name') or ''}" + (f" on {d['approved_at'][:10]}" if d.get("approved_at")
+                                                               else "")),
+        ("Reference", d["id"]),
+    ]
+    if d.get("purpose_ref_label"):
+        rows.insert(6, ("Linked to", d["purpose_ref_label"]))
+    return rows
+
+
+def build_payment_sheet(d: dict, *, org_name: str, prepared_by: str = "", disclosure: str | None = None) -> bytes:
+    """A printable PDF payment sheet the operator sends to the custodian (CASH07, ManualPaymentAdapter). Never stored:
+    the instruction row is the record; this is a rendering of it on request."""
+    from reportlab.lib.utils import simpleSplit
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H), pageCompression=1)
+    c.setTitle(_safe(f"Payment instruction {d['id']}"))
+    width = PAGE_W - 2 * MARGIN
+    y = PAGE_H - MARGIN
+
+    def line(text, font="Helvetica", size=10, color=(0, 0, 0), x=MARGIN, w=width, gap=13):
+        nonlocal y
+        c.setFillColorRGB(*color)
+        c.setFont(font, size)
+        for ln in simpleSplit(_safe(text), font, size, w) or [""]:
+            if y < MARGIN + 40:
+                c.showPage()
+                y = PAGE_H - MARGIN
+                c.setFillColorRGB(*color)
+                c.setFont(font, size)
+            c.drawString(x, y, ln)
+            y -= gap
+
+    line(org_name, "Times-Bold", 13, NAVY, gap=18)
+    line("Payment instruction — between the client's own accounts", "Times-Roman", 17, NAVY, gap=24)
+    line(f"Date: {datetime.now(timezone.utc).date().isoformat()}", color=MUTED, gap=22)
+    line("Please move the amount below from the first account to the second on the value date, by the rail shown. "
+         "Both accounts have the same owner. Reply with your reference once it is accepted, and confirm when it "
+         "settles.", gap=14)
+    y -= 8
+    for label, value in payment_sheet_rows(d):
+        top = y
+        c.setFillColorRGB(*MUTED)
+        c.setFont("Helvetica", 9)
+        c.drawString(MARGIN, y, _safe(label))
+        line(str(value), x=MARGIN + _LABEL_W, w=width - _LABEL_W)
+        y = min(y, top - 15)
+    y -= 12
+    if disclosure:
+        line("Disclosure", "Helvetica-Bold", 9, NAVY, gap=12)
+        line(disclosure, size=8, color=MUTED, gap=11)
+        y -= 6
+    line("This sheet is generated from the instruction record on request and is not itself a record. Account numbers "
+         "are shown masked (last four only).", size=8, color=MUTED, gap=11)
+    y -= 24
+    line("Authorised signature ______________________________", gap=16)
+    if prepared_by:
+        line(f"Prepared by {prepared_by}", size=9, color=MUTED)
+    c.showPage()
+    c.save()
+    return buf.getvalue()
