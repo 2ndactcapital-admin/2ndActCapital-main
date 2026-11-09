@@ -344,6 +344,60 @@ This file starts with the email item below.
 ---
 
 
+## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CASH05 — the TREASURY OVERVIEW and what a family sees day to day: the liquid balance over time (the net-worth core as of each day, transfer markers, pending in / out), the blended net and after-tax yield with its method note, cash01's coverage card, HOLDINGS per sleeve with every ladder rung, the ACTIVITY ledger (six types, pending guidance, a detail drawer whose every link resolves), EARNINGS reconciled to the ledger to the cent (fee on cash from the fee engine), DOCUMENTS in Eastern time; READ-ONLY, no new table; verify WRITTEN, not yet run (2026-11-09)
+
+Branch cash05-work. Nothing here writes a row (no transfer, instruction or proposal). Docs: `docs/cash/CASH05_NOTES.md`
+(Task 1: where a balance history comes from, the type mapping, pending, coupon / discount data, the fee engine's read,
+document types per account, prospectus links, the reuse inventory, decisions D1–D10) and
+`docs/cash/CASH_TREASURY_SCREENS.md` (sources and formulas per screen, the ledger mapping, the earnings method).
+
+- **[FIND]** No daily balance series exists (`account_balances_daily` is empty and account-level). The series is DERIVED:
+  THE net-worth core evaluated AS OF each sampled day (positions are statements as of their date), narrowed to the
+  liquid rows. `networth.value_lines` / `networth.load` gained an additive `keep` (which rows are valued, never how)
+  and `edges` (read once per series); every existing caller is unchanged.
+- **[FIND]** `transaction_types` has no deposit / withdrawal, maturity or credit code. Mapping (every code → exactly
+  one type): transfer = buy / sell / calls / capital distributions; maturity = a Treasury sell on or after its
+  maturity date; dividend = dividend / dist_income / dist_gain; interest; fee = fee_expense / call_mgmt_fee; credit =
+  adjustment; `valuation` excluded (moves no money).
+- **[FIND]** A note's coupon, a fund's cut-off time and any prospectus URL are not recorded in the security master. A
+  note shows its auction yield; the cut-off is the new org setting `cash.mmf_cutoff_et` (no table); the prospectus
+  reads "not recorded in the security master".
+- **[FIND]** Chancery's `doc_category` list has no statement / confirmation / 1099. A document's role for an account is
+  its link's record type (`account_statement`, `held_away_account`, `account_confirmation`, `portfolio_transaction`,
+  `account_tax_form`) — a Python vocabulary on the polymorphic column; cash05 writes no link.
+- **[FIND]** In the readable database there are 0 fee runs and 0 fee assignments — real families read "fee on cash: not
+  estimated — no fee schedule is assigned". A POSTED fee run can never be deleted (`fee_runs_immutable_once_posted`),
+  so the verify proves the charged path in a rolled-back transaction.
+- **Liquid** (one rule, `cash_holdings.is_liquid`): cash01's Cash & Equivalents keys + the sleeve instruments (a fund
+  with an N-MFP category, a Treasury with a maturity) + `kind = cash` assets, each position once.
+- **Services** (reads only): `cash_overview.py` (series, markers, pending, blended / after-tax yield, coverage
+  passthrough), `cash_holdings.py` (scope, the liquid rule, sleeves via cash02's windows + cash04's classify, yields on
+  their own basis, liquidity wording, months covered, every rung incl. cash03's planned rungs and the obligation each
+  serves), `cash_activity.py` (ledger, filters, drawer with links named by the API path that opens them, offered only
+  when the caller's own permissions open them), `cash_earnings.py` (cash-basis breakdown reconciling to the ledger;
+  fee on cash from `resolve_assignment_for_account` + `cash_treatment` + posted `fee_run_lines`), `cash_documents.py`
+  (cash accounts' documents, America/New_York dates, the download route's own visibility rule).
+- **Routes** (`routers/cash.py`, +6, all GET, the treasury read gate + member / VISIBILITY1 scope; another family's
+  household or an unreached entity → 404): `/cash/households/{id}/overview | holdings | activity |
+  activity/{entry_id} | earnings | documents`. AUTHZ1_ROUTES and VISIBILITY1_ROUTES regenerated (`--check` CURRENT).
+- **Disclosures.** `cash.sweep_rate` RESERVED for cash07 (key + fallback registered); no cash05 read resolves or shows
+  it. Members get `cash.coverage_estimate` / `cash.yield_estimate` / `cash.tax_estimate`.
+- **Web.** The EXISTING Household → Treasury tab (and `/treasury`) opens with `TreasuryDaily`: entity filter, Overview
+  (`TreasuryOverview.jsx`: SVG step chart with the app's `lib/market/scales.mjs`, range chips, markers, tooltip; yields;
+  cash01's card, moved unchanged into `CoverageCard.jsx` and re-exported), Holdings (`TreasuryHoldings.jsx`, rungs
+  expand), Activity + drawer + Earnings dialog (`TreasuryActivity.jsx`), Documents (`TreasuryDocuments.jsx`). Pure
+  logic `lib/cashTreasury.mjs` (fails closed; read-only — no write control). Proxies
+  `app/api/cash/households/[id]/{overview,holdings,activity,activity/[entryId],earnings,documents}`. Anchors
+  `#treasury-policy` / `#treasury-proposals` / `#treasury-documents` for the overview's actions. Tests:
+  `tests/cash05` (8, passing); `tests/cash01–04` still pass (32 / 32 together).
+- **Verify.** `apps/api/scripts/verify_cash05.py` WRITTEN, NOT RUN; added to scripts/regression_set.txt. Its regression:
+  verify_cash04.py once, flat, after teardown, VERIFY_NESTED=1, 2700 s.
+  - What the sprint ran: every new SQL statement PREPAREd against the live schema (no execution, no write); the pure
+    functions on hand cases; `node --test` for tests/cash01–05; eslint on the new files; `authz1_routes.py` /
+    `visibility1_routes.py` regenerated and `--check` CURRENT; the verify's static self-checks extracted offline.
+  - NOT run (WSL memory): the full verify_cash05.py, its nested verify_cash04.py, npm run build.
+
+
 ## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CASH04 — from PLAN to ORDERS: a CASH PROPOSAL per account (a KIND of rebalance proposal — sells over target in withdrawal order with the early-sale warning, buys of the chosen funds by notional and of the ladder rungs by par with a limit, the shortfall never borrowed, non-cash never sold); approval → execution instructions through Replication Studio's own path (services.sod, route_trade_list → create_instructions, Manual route); the MONTHLY MATURITY WATERFALL as a platform job that only DRAFTS (S29b draft-only), shipped switched off; catalog APPLIED; verify WRITTEN, not yet run (2026-11-09)
 
 Branch cash04-work. No money moves between accounts (cash07). Docs: `docs/cash/CASH04_NOTES.md` (Task 1: how a rebalance

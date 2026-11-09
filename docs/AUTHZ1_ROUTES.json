@@ -1,5 +1,5 @@
 {
- "app_route_count": 993,
+ "app_route_count": 999,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -17981,6 +17981,138 @@
    "path": "/api/v1/cash/proposals/{proposal_id}/adopt",
    "public": false,
    "write": true
+  },
+  {
+   "after": "any(view_portfolio|manage_portfolio); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash",
+   "name": "cash_overview_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/overview",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_portfolio|manage_portfolio); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash",
+   "name": "cash_holdings_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/holdings",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_portfolio|manage_portfolio); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash",
+   "name": "cash_activity_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/activity",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_portfolio|manage_portfolio); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash",
+   "name": "cash_activity_entry_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/activity/{entry_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_portfolio|manage_portfolio); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash",
+   "name": "cash_earnings_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/earnings",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_portfolio|manage_portfolio); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash",
+   "name": "cash_documents_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/documents",
+   "public": false,
+   "write": false
   },
   {
    "after": "authz view_tax",

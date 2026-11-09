@@ -151,14 +151,19 @@ async def listed_prices(conn, org_id: str, rows: list, as_of: date, purpose: str
 
 
 async def value_lines(conn, org_id: str, as_of: date, owner_ids: list[str] | None, *,
-                      price_purpose: str = DEFAULT_PRICE_PURPOSE) -> tuple[list[dict], list[dict]]:
+                      price_purpose: str = DEFAULT_PRICE_PURPOSE, keep=None) -> tuple[list[dict], list[dict]]:
     """(valued, skipped) for the live positions of ``owner_ids`` (None = every owner in the org). PRICES1: a listed
     units position with an allowed, fresher end-of-day close is valued quantity × close (basis "price", with the
-    source and as-of); otherwise bugfix4's entered value / the valuation ladder, unchanged."""
+    source and as-of); otherwise bugfix4's entered value / the valuation ladder, unchanged.
+
+    CASH05 — ``keep`` (optional predicate over each ``_current_positions`` row) narrows WHICH rows are valued, never
+    HOW: the balance series values only its liquid rows, through these same functions, on every sampled day."""
     from services.portfolio_rollup import _current_positions, position_current_value
 
     valued, skipped = [], []
     rows = await _current_positions(conn, str(org_id), as_of, owner_ids)
+    if keep is not None:
+        rows = [r for r in rows if keep(r)]
     px = await listed_prices(conn, str(org_id), rows, as_of, price_purpose)
     for r in rows:
         base = {"position_id": r["position_id"], "owner_entity_id": r["owner_entity_id"], "asset_id": r["asset_id"],
@@ -180,15 +185,18 @@ async def value_lines(conn, org_id: str, as_of: date, owner_ids: list[str] | Non
     return valued, skipped
 
 
-async def load(conn, org_id, roots, *, as_of: date | None = None, price_purpose: str = DEFAULT_PRICE_PURPOSE) -> Ctx:
-    """Read the edges, value every live position of every entity the roots reach, and the liabilities."""
+async def load(conn, org_id, roots, *, as_of: date | None = None, price_purpose: str = DEFAULT_PRICE_PURPOSE,
+               keep=None, edges: list | None = None) -> Ctx:
+    """Read the edges, value every live position of every entity the roots reach, and the liabilities. CASH05:
+    ``keep`` narrows the valued rows (:func:`value_lines`); ``edges`` reuses an already-read edge list (a series of
+    days reads them once)."""
     org = str(org_id)
     ctx = Ctx(org_id=org, as_of=as_of or date.today())
-    ctx.edges = await load_edges(conn, org)
+    ctx.edges = edges if edges is not None else await load_edges(conn, org)
     reach = list(shares({str(r) for r in roots}, ctx.edges))
     if not reach:
         return ctx
-    ctx.lines, ctx.skipped = await value_lines(conn, org, ctx.as_of, reach, price_purpose=price_purpose)
+    ctx.lines, ctx.skipped = await value_lines(conn, org, ctx.as_of, reach, price_purpose=price_purpose, keep=keep)
     ctx.liabilities = [(r["o"], r["current_balance"] or ZERO) for r in await conn.fetch(
         "SELECT owner_entity_id::text AS o, current_balance FROM portfolio.liabilities WHERE org_id = $1::uuid "
         "AND owner_entity_id = ANY($2::uuid[]) AND valid_to IS NULL AND system_to IS NULL AND as_of <= $3",
