@@ -6,7 +6,7 @@ import { labelFor } from "@/lib/menuVisibility";
 import BulkApprove from "@/components/approvals/BulkApprove";
 
 // BULKAPPROVE1 — Approvals → Bulk approve: the pending maker-checker items a
-// second person decides (authority & custody changes, held-away entries),
+// second person decides (authority & custody changes, held-away entries, cash policies — CASH02),
 // many at once — each one still its own decision through the single path.
 // The first tab's envelope is fetched here so the first paint carries the
 // server's own flags; ?type= picks the tab (the server validates it).
@@ -33,7 +33,7 @@ export default async function ApprovalsPage({ searchParams }) {
       <div className="mt-6">
         {error === "forbidden" ? (
           <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">
-            Approvals are open to staff with authority or held-away access.
+            Approvals are open to staff with authority, held-away or cash-policy access.
           </div>
         ) : error ? (
           <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">

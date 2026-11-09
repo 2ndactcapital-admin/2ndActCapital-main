@@ -26,8 +26,13 @@ are checked absent from real rows first.
 
 TEARDOWN (start and end): ``_verify_cleanup.cleanup`` on the operator DSN, keyed by this run's fixture ids; every
 touched table re-read for its exact pre-test count, counted BY FIXTURE IDS ONLY (live activity writes audit_log and
-member_todos). Real rows (every non-fixture cash_obligations / cash_coverage_minimums row, the Olivo demo's) are
+member_todos). Real rows (every non-fixture cash_obligations / cash_policies row, the Olivo demo's) are
 fingerprinted before and after.
+
+CASH02 (2026-11-08) moved the minimum coverage into the cash POLICY (maker-checker): cash01's cash_coverage_minimums
+table and its PUT …/minimums route are RETIRED (docs/cash02_part1.sql). This script now proves the minimum through
+the policy path (a draft by U_STAFF, approved by a DIFFERENT holder of manage_cash_policy, U_OA) and reads the
+retired route as cash02's documented removal — never as drift.
 
 --self-checks-only: git / route / static self-checks only (no Doppler, database, npm). --cleanup-only: the teardown and
 the leftover check only. With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
@@ -90,6 +95,11 @@ def _src(rel: str) -> str:
     return p.read_text(encoding="utf-8") if p.exists() else ""
 
 
+#: routes cash01 added that a LATER sprint retired on purpose (asserted absent today, never read as drift)
+RETIRED_LATER = {("PUT", "/api/v1/cash/households/{household_id}/minimums"): "cash02 (the minimum moved into the "
+                                                                              "cash policy)"}
+
+
 def self_routes(check, find):
     """cash01's own routes: BEFORE_REF → its own end point (HEAD while unmerged); each exists today with that gate."""
     o = VS.own_routes(BEFORE_REF, SPRINT_KEY)
@@ -102,8 +112,14 @@ def self_routes(check, find):
     bad = [(k, (by.get(k) or {}).get("after")) for k, g in ROUTES.items() if k not in by or g not in str(by[k].get("after"))]
     check(not bad, f"each of the {len(ROUTES)} names exactly its gate at cash01's own end point", f"{bad[:4]}")
     keys = [k for k in o.new if any((m, k[1]) in ROUTES for m in k[0])]
-    drift = VS.still_gated(o, keys)
-    check(not drift, "cash01's routes all still exist today with the same gate", f"{drift[:4]}")
+    retired = [k for k in keys if any((m, k[1]) in RETIRED_LATER for m in k[0])]
+    drift = VS.still_gated(o, [k for k in keys if k not in retired])
+    check(not drift, "cash01's routes all still exist today with the same gate (except the ones a later sprint retired)",
+          f"{drift[:4]}")
+    gone = [k for k in retired if k not in o.today]
+    check(len(retired) == len(RETIRED_LATER) and gone == retired,
+          "the route(s) a later sprint retired are absent today, as that sprint documented", f"{retired} {gone} "
+          f"{list(RETIRED_LATER.values())}")
 
 
 def self_static(check, find):
@@ -196,10 +212,10 @@ DOC = _id(90)
 TEAM = _id(91)
 
 PERMS = {
-    "advisor": {"view_portfolio", "manage_portfolio", "view_members"},
+    "advisor": {"view_portfolio", "manage_portfolio", "view_members", "manage_cash_policy"},
     "compliance": {"view_portfolio"},
     "member": set(C.MEMBER_PERMS),
-    "org_admin": {"manage_org_settings", "manage_members", "view_portfolio", "view_members"},
+    "org_admin": {"manage_org_settings", "manage_members", "view_portfolio", "view_members", "manage_cash_policy"},
     "support_staff": {"view_portfolio", "manage_portfolio", "view_members"},
 }
 # uid → (org, users.role mirror, short, role granted)
@@ -242,7 +258,7 @@ COUNTED = (
     "public.entities", "public.households", "public.household_memberships", "public.entity_attributes",
     "public.delegate_grants", "public.staff_assignments", "public.teams", "public.team_members", "public.org_settings",
     "portfolio.assets", "portfolio.positions", "portfolio.commitments", "portfolio.liabilities",
-    "portfolio.ta_model_params", "public.documents", "public.cash_obligations", "public.cash_coverage_minimums",
+    "portfolio.ta_model_params", "public.documents", "public.cash_obligations", "public.cash_policies",
     "public.audit_log", "public.member_todos",
 )
 SEED_CHECK_LITERALS = (
@@ -251,7 +267,8 @@ SEED_CHECK_LITERALS = (
       "property_carrying", "tuition", "lifestyle_recurring", "one_off", "vendor_invoice")),
     ("public.cash_obligations", "cash_obligations_certainty_chk", ("firm", "estimated")),
     ("public.cash_obligations", "cash_obligations_ref_chk", ("commitment", "liability", "document")),
-    ("public.cash_coverage_minimums", "cash_coverage_minimums_scope_chk", ("entity", "household")),
+    ("public.cash_policies", "cash_policies_scope_chk", ("entity", "household")),
+    ("public.cash_policies", "cash_policies_preset_chk", ("custom",)),
     ("portfolio.positions", "positions_authority_chk", ("stated",)),
     ("portfolio.positions", "positions_source_chk", ("manual",)),
     ("portfolio.positions", "positions_basis_chk", ("value",)),
@@ -260,8 +277,8 @@ SEED_CHECK_LITERALS = (
     ("portfolio.liabilities", "liabilities_kind_chk", ("mortgage", "securities_backed_line", "term_loan")),
     ("public.delegate_grants", "delegate_grants_scope_check", ("view_only",)),
 )
-UNIQUES = ("cash_obligations_live_uq", "cash_obligations_external_key_uq", "cash_coverage_minimums_entity_uq",
-           "cash_coverage_minimums_household_uq", "assets_cash_active_uniq")
+UNIQUES = ("cash_obligations_live_uq", "cash_obligations_external_key_uq", "cash_policies_active_entity_uq",
+           "cash_policies_active_household_uq", "assets_cash_active_uniq")
 
 S: dict = {}
 NETWORK_CALLS: list[str] = []
@@ -379,8 +396,8 @@ async def real_fingerprints(conn) -> dict:
     return {
         "cash_obligations (every real org, the Olivo demo's included)": await fingerprint(
             conn, "SELECT * FROM public.cash_obligations WHERE NOT (org_id = ANY($1::uuid[]))", orgs),
-        "cash_coverage_minimums (real)": await fingerprint(
-            conn, "SELECT * FROM public.cash_coverage_minimums WHERE NOT (org_id = ANY($1::uuid[]))", orgs),
+        "cash_policies (real)": await fingerprint(
+            conn, "SELECT * FROM public.cash_policies WHERE NOT (org_id = ANY($1::uuid[]))", orgs),
         "ta_model_params (real)": await fingerprint(
             conn, "SELECT * FROM portfolio.ta_model_params WHERE NOT (org_id = ANY($1::uuid[]))", orgs),
         "liabilities (real, demo included)": await fingerprint(
@@ -601,13 +618,14 @@ async def y_schema(conn):
     idx = {r["indexname"]: r["indexdef"] for r in await platform(
         conn, "SELECT indexname, indexdef FROM pg_indexes WHERE indexname = ANY($1::text[])", list(UNIQUES))}
     check(len(idx) == len(UNIQUES) and all("UNIQUE" in v for v in idx.values()),
-          f"{len(idx)} unique indexes read (one live version per lineage, one live loader key, one minimum per scope, "
+          f"{len(idx)} unique indexes read (one live version per lineage, one live loader key, one ACTIVE policy per "
+          "scope (the minimum's home since cash02), "
           "one cash asset per org + currency)", f"missing={sorted(set(UNIQUES) - set(idx))}")
     fks = int(await platform(conn, "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND conrelid = ANY($1::"
-                                   "regclass[])", ["public.cash_obligations", "public.cash_coverage_minimums"],
+                                   "regclass[])", ["public.cash_obligations", "public.cash_policies"],
                              fetch="fetchval"))
     check(fks >= 6, "the new tables' foreign keys are read (org, entity, household, users)", f"{fks}")
-    for t in ("cash_obligations", "cash_coverage_minimums"):
+    for t in ("cash_obligations", "cash_policies"):
         ops = {r["cmd"] for r in await platform(conn, "SELECT cmd FROM pg_policies WHERE schemaname = 'public' AND "
                                                      "tablename = $1", t)}
         check(ops == {"SELECT", "INSERT", "UPDATE", "DELETE"}, f"{t}: a policy for every operation", f"{sorted(ops)}")
@@ -1013,18 +1031,33 @@ async def y_coverage(conn):
           "below-minimum and uncovered-within-90-days each raise ONE to-do per author; a second sync refreshes, never "
           "duplicates; the covered entity and household raise none", f"{len(t_min)} {len(t_gap)} → {len(t_min2)} "
           f"{len(t_gap2)} others={others} {dumps(b2)}")
-    code, b = await api(U_STAFF, "PUT", f"/api/v1/cash/households/{H3}/minimums",
-                        {"scope_type": "entity", "entity_id": str(E_C2), "months": "4", "reason": "verify: lower"})
+    # CASH02: the minimum lives in the entity's cash POLICY — a draft moves nothing; a second person's approval does
+    pol = {"scope_type": "entity", "entity_id": str(E_C2), "preset": "custom", "near_months": 3, "reserve_months": 12,
+           "horizon_months": 24, "rung_count": 8, "buffer_months": "0", "objective_score": 3,
+           "min_coverage_months": "4", "reason": "verify: lower the minimum"}
+    code, b = await api(U_STAFF, "POST", f"/api/v1/cash/households/{H3}/policies", pol)
+    pid = (b.get("policy") or {}).get("id")
+    code_s, bs = await api(U_STAFF, "POST", f"/api/v1/cash/households/{H3}/policies/{pid}/submit")
+    code_e, env_d = await treasury(U_STAFF, H3)
+    check(code == 201 and code_s == 200 and set(ent_row(env_d, E_C2).get("flags") or []) == {"below_minimum",
+                                                                                           "uncovered_90d"}
+          and ent_row(env_d, E_C2).get("min_months") == "6",
+          "a policy DRAFT awaiting approval moves no minimum (still 6, still below it)",
+          f"{code} {dumps(b)} {code_s} {dumps(bs)} {dumps(ent_row(env_d, E_C2))}")
+    code, b = await api(U_OA, "POST", f"/api/v1/cash/households/{H3}/policies/{pid}/approve", {"note": "verify"})
     t_min3, t_gap3 = await todos("cash_below_minimum"), await todos("cash_uncovered_90d")
-    mins = await scoped(conn, ORG_A, "SELECT min_months, valid_to FROM cash_coverage_minimums WHERE entity_id = $1",
-                        E_C2)
+    mins = await scoped(conn, ORG_A, "SELECT min_coverage_months, status FROM cash_policies WHERE entity_id = $1 AND "
+                                     "system_to IS NULL", E_C2)
     check(code == 200 and t_min3 and all(t["status"] == "done" for t in t_min3) and t_gap3
-          and all(t["status"] == "open" for t in t_gap3) and len(mins) == 1 and mins[0]["min_months"] == Decimal("4"),
-          "a resolved flag closes its to-do (kept, status done); the still-uncovered premium's to-do stays open",
-          f"{code} {dumps(b)} {[dict(t) for t in t_min3]}")
+          and all(t["status"] == "open" for t in t_gap3) and len(mins) == 1
+          and mins[0]["min_coverage_months"] == Decimal("4") and mins[0]["status"] == "active",
+          "approved by a different person, the policy's minimum (4) is in force: the resolved flag closes its to-do "
+          "(kept, status done); the still-uncovered premium's to-do stays open",
+          f"{code} {dumps(b)} {[dict(t) for t in t_min3]} {[dict(m) for m in mins]}")
     code, env = await treasury(U_STAFF, H3)
     check(set(ent_row(env, E_C2).get("flags") or []) == {"uncovered_90d"} and ent_row(env, E_C2).get("min_months") == "4",
-          "the minimum is editable per entity (4.5 months is no longer below it)", f"{dumps(ent_row(env, E_C2))}")
+          "the minimum is set per entity through its policy (4.5 months is no longer below it)",
+          f"{dumps(ent_row(env, E_C2))}")
     code, b = await api(U_STAFF, "POST", f"/api/v1/cash/obligations/{(S.get('unmatched') or {}).get('id')}/end",
                         {"reason": "verify: matched by hand"})
     rows = await scoped(conn, ORG_A, "SELECT status FROM member_todos WHERE id = ANY($1::uuid[])",
@@ -1101,7 +1134,7 @@ async def y_access(conn):
           "a view-only staff member reads it with no write control (editable EMPTY)", f"{code}")
     code, env = await treasury(U_STAFF, H1)
     check(code == 200 and (env.get("permissions") or {}).get("can_write") is True
-          and set((env.get("vocabularies") or {}).get("editable") or []) == {"obligation", "notice", "minimum"},
+          and set((env.get("vocabularies") or {}).get("editable") or []) == {"obligation", "notice"},
           "the author's envelope lists the write controls", f"{code} {dumps(env.get('permissions'))}")
     section("[Y] Org isolation both directions (rolbypassrls = false)")
     code, b = await treasury(U_B, H1)

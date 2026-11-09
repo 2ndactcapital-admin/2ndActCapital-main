@@ -6,8 +6,16 @@
     POST /api/v1/cash/obligations/{obligation_id}/revise           a new version (bi-temporal)    (manage_portfolio)
     POST /api/v1/cash/obligations/{obligation_id}/end              end it (kept as history)       (manage_portfolio)
     POST /api/v1/cash/households/{household_id}/notices            record a capital-call notice   (manage_portfolio)
-    PUT  /api/v1/cash/households/{household_id}/minimums           minimum months (entity / hh)   (manage_portfolio)
     POST /api/v1/cash/households/{household_id}/alerts/sync        open / close the coverage to-dos (manage_portfolio)
+
+CASH02 — cash POLICIES (the three sleeves; a target, never a trade; maker-checker on every save):
+    POST /api/v1/cash/households/{household_id}/policy/preview                 derived sleeves for an unsaved edit
+    POST /api/v1/cash/households/{household_id}/policies                       save a DRAFT (household / entity)
+    POST /api/v1/cash/households/{household_id}/policies/{policy_id}/submit    → awaiting approval (human task)
+    POST /api/v1/cash/households/{household_id}/policies/{policy_id}/approve   a DIFFERENT person → active
+    POST /api/v1/cash/households/{household_id}/policies/{policy_id}/reject    with a reason
+  all ``require_internal_permission(manage_cash_policy)``; the policy block itself rides in the treasury envelope
+  (the read gate above). cash01's PUT …/minimums is RETIRED: the minimum lives in the policy (services.cash_policy).
 
 GATES (services.authz, one Principal; Super Admin first). READ: ``view_portfolio`` (a member holds it) or
 ``manage_portfolio``, then the ONE visibility rule ``authz.member_entity_scope`` — a member reads only their own
@@ -22,16 +30,18 @@ audited. ``org_id`` comes from the verified session only (Rule 6); every body mo
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictInt
 
 from routers.entities import get_org_id
 from services import authz
 from services import cash_coverage as CC
 from services import cash_obligations as OB
+from services import cash_policy as CP
 from services.audit import write_audit_log
 from services.authz import require_internal_permission
 from services.database import get_pool
@@ -91,12 +101,35 @@ class NoticeIn(BaseModel):
     notes: str | None = None
 
 
-class MinimumIn(BaseModel):
+class QuestionnaireIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    outflow_12m: str | None = None
+
+
+class PolicyIn(BaseModel):
+    """A cash policy body. Months / rungs / the objective score are whole numbers; buffer and minimum are text."""
     model_config = ConfigDict(extra="forbid")
     scope_type: str
     entity_id: UUID | None = None
-    months: str | None = None
+    preset: str
+    near_months: StrictInt | None = None
+    reserve_months: StrictInt | None = None
+    horizon_months: StrictInt | None = None
+    rung_count: StrictInt | None = None
+    buffer_months: str | None = None
+    objective_score: StrictInt | None = None
+    min_coverage_months: str | None = None
     reason: str | None = None
+    questionnaire: QuestionnaireIn | None = None
+
+    def fields(self) -> dict:
+        return {k: v for k, v in self.model_dump(exclude={"scope_type", "entity_id", "reason", "questionnaire"}).items()
+                if v is not None}
+
+
+class DecisionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    note: str | None = None
 
 
 def _can_write(p) -> bool:
@@ -112,6 +145,33 @@ def _err(exc: Exception):
     if isinstance(exc, OB.ObligationNotFound):
         return HTTPException(status_code=404, detail=str(exc))
     return HTTPException(status_code=422, detail=str(exc))
+
+
+def _can_author(p) -> bool:
+    """The exact rule of require_internal_permission(manage_cash_policy), for the envelope (fails closed)."""
+    if p is None or not p.admitted or not p.is_active:
+        return False
+    if p.is_super_admin or p.is_staff:
+        return True
+    return bool(p.is_internal and CP.PERMISSION in p.permissions)
+
+
+def _policy_err(exc: Exception):
+    import asyncpg
+    from services import human_tasks as HTK
+
+    if isinstance(exc, (CP.PolicyNotFound, HTK.HumanTaskNotFound)):
+        return HTTPException(status_code=404, detail=str(exc) or "Not found")
+    if isinstance(exc, (CP.MakerCheckerViolation, HTK.MakerCheckerError, PermissionError,
+                        HTK.HumanTaskPermissionError)):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, (CP.PolicyConflict, HTK.HumanTaskConflict, asyncpg.UniqueViolationError)):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, asyncpg.CheckViolationError):
+        return HTTPException(status_code=422, detail=f"refused by the database: {exc.constraint_name}")
+    if isinstance(exc, (CP.PolicyError, HTK.HumanTaskError)):
+        return HTTPException(status_code=422, detail=str(exc))
+    return None
 
 
 async def _household(conn, org_id, household_id) -> str:
@@ -200,9 +260,14 @@ async def treasury_route(request: Request, household_id: UUID,
         if can_write:
             stored = [OB.row_json(r) for r in await OB.stored_rows(conn, org_id, [e["entity_id"]
                                                                                    for e in report.entities])]
+        can_author = _can_author(p) and not member
+        labels[CP.YIELD_KEY] = D.public(await D.resolve_safe(conn, CP.YIELD_KEY, org_id=org_id,
+                                                             household_id=household_id))
+        policy = await _policy_block(conn, org_id, household_id, report, t, report_horizon=horizon_months,
+                                     member=member, can_author=can_author, user_id=p.user_id, scope=scope)
     names = report.names
     lines = [ln.to_json(names) for ln in report.lines]
-    actions = ["add_obligation", "record_notice", "set_minimum", "sync_alerts"] if can_write else []
+    actions = ["add_obligation", "record_notice", "sync_alerts"] if can_write else []
     return {
         "household": {"id": str(household_id), "name": name},
         "today": t.isoformat(), "horizon_months": horizon_months, "until": report.until.isoformat(),
@@ -213,11 +278,13 @@ async def treasury_route(request: Request, household_id: UUID,
         "lines_of_credit": [{**x, "payer_name": names.get(x["payer_entity_id"])} for x in report.lines_of_credit],
         "unmatched_notices": report.unmatched_notices if not member else [],
         "stored": stored,
+        "policy": policy,
         "labels": labels,
         "member_view": member,
         "actions": actions,
         "permissions": {"can_read": True, "can_write": can_write, "is_super_admin": bool(p.is_super_admin),
-                        "read_permission": CC.READ_PERMISSION, "write_permission": CC.WRITE_PERMISSION},
+                        "read_permission": CC.READ_PERMISSION, "write_permission": CC.WRITE_PERMISSION,
+                        "can_author_policy": can_author, "policy_permission": CP.PERMISSION},
         "vocabularies": {**OB.vocabularies(can_write=can_write), **CC.vocabularies(),
                          "payers": [{"entity_id": e["entity_id"], "display_name": e["display_name"]}
                                     for e in report.entities] if can_write else []},
@@ -342,36 +409,6 @@ async def record_notice_route(request: Request, household_id: UUID, body: Notice
             "candidates": len(cands), "alerts": alerts}
 
 
-@router.put("/cash/households/{household_id}/minimums")
-async def set_minimum_route(request: Request, household_id: UUID, body: MinimumIn):
-    p = require_internal_permission(request, "manage_portfolio")  # = CC.WRITE_PERMISSION
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    await require_visible(request, pool, entity_ids=[body.entity_id] if body.entity_id else [],
-                          household_ids=[household_id])
-    async with pool.acquire() as conn:
-        await _household(conn, org_id, household_id)
-        if body.scope_type == "entity":
-            if body.entity_id is None or str(body.entity_id) not in await _reach(conn, org_id, household_id):
-                raise HTTPException(status_code=422, detail="name an entity of this household")
-            sid = body.entity_id
-        elif body.scope_type == "household":
-            if body.entity_id is not None:
-                raise HTTPException(status_code=422, detail="a household minimum names no entity")
-            sid = household_id
-        else:
-            raise HTTPException(status_code=422, detail="the minimum is set for an entity or a household")
-        try:
-            out = await CC.set_minimum(conn, org_id=org_id, actor_id=p.user_id, scope_type=body.scope_type,
-                                       scope_id=sid, months=body.months, reason=body.reason)
-        except OB.ObligationError as exc:
-            raise _err(exc) from exc
-        await write_audit_log(org_id=org_id, action="cash.minimum.set", table_name="cash_coverage_minimums",
-                              record_id=str(sid), new=out, actor=p.user_id)
-        alerts = await _sync(pool, conn, org_id, household_id)
-    return {"minimum": out, "alerts": alerts}
-
-
 @router.post("/cash/households/{household_id}/alerts/sync")
 async def sync_alerts_route(request: Request, household_id: UUID):
     require_internal_permission(request, "manage_portfolio")  # = CC.WRITE_PERMISSION
@@ -381,3 +418,176 @@ async def sync_alerts_route(request: Request, household_id: UUID):
     async with pool.acquire() as conn:
         await _household(conn, org_id, household_id)
         return {"alerts": await _sync(pool, conn, org_id, household_id)}
+
+
+# ═══ CASH02 — cash policies ════════════════════════════════════════════════════════════════════════════════════
+async def _policy_report(conn, org_id, household_id, t: date, *, horizon: int, scope=None):
+    return await CC.household_report(conn, org_id, household_id, today=t, member_scope=scope,
+                                     horizon_months=max(horizon, OB.DEFAULT_HORIZON_MONTHS))
+
+
+async def _policy_block(conn, org_id, household_id, report, t: date, *, report_horizon: int, member: bool,
+                        can_author: bool, user_id, scope) -> dict:
+    """The envelope's policy block; the schedule is re-read only when a policy's horizon is beyond the report's."""
+    rows = await CP.live_rows(conn, org_id, household_id=household_id, entity_ids=list(report.shares))
+    want = CP.max_horizon(rows, OB.DEFAULT_HORIZON_MONTHS)
+    rep = report if want <= report_horizon else await _policy_report(conn, org_id, household_id, t, horizon=want,
+                                                                     scope=scope)
+    return await CP.household_block(conn, org_id, household_id, report=rep, today=t, member=member,
+                                    can_author=can_author, user_id=user_id)
+
+
+async def _scope_view(conn, org_id, household_id, t: date, *, scope_type: str, entity_id, fields: dict) -> dict:
+    """(lines, liquid, reads, profile, scope label) for one scope, on a schedule that covers ``fields``' horizon."""
+    report = await _policy_report(conn, org_id, household_id, t, horizon=fields["horizon_months"])
+    sid = str(household_id) if scope_type == "household" else str(entity_id)
+    return {"report": report,
+            "lines": CC.scope_lines(report, scope_type, None if scope_type == "household" else sid),
+            "liquid": CC.scope_liquid(report, scope_type, None if scope_type == "household" else sid),
+            "reads": await CP.read_yields(conn, t),
+            "profile": await CP.subject_profile(conn, org_id, scope_type, sid, t),
+            "label": "The household" if scope_type == "household" else (report.names.get(sid) or "An entity")}
+
+
+async def _policy_of_household(conn, org_id, household_id, policy_id) -> dict:
+    row = await CP.load(conn, org_id, policy_id)
+    if row["scope_type"] == "household":
+        if str(row["household_id"]) != str(household_id):
+            raise HTTPException(status_code=404, detail="cash policy not found")
+    elif str(row["entity_id"]) not in await _reach(conn, org_id, household_id):
+        raise HTTPException(status_code=404, detail="cash policy not found")
+    return row
+
+
+@router.post("/cash/households/{household_id}/policy/preview")
+async def policy_preview_route(request: Request, household_id: UUID, body: PolicyIn):
+    """The derived sleeves, yields and coverage for an UNSAVED edit (the editor's live view) + every preset + the
+    questionnaire's cross-check. Writes nothing."""
+    require_internal_permission(request, "manage_cash_policy")  # = CP.PERMISSION
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    await require_visible(request, pool, entity_ids=[body.entity_id] if body.entity_id else [],
+                          household_ids=[household_id])
+    t = today()
+    async with pool.acquire() as conn:
+        await _household(conn, org_id, household_id)
+        try:
+            st, sid = await CP.check_scope(conn, org_id, household_id, body.scope_type, body.entity_id,
+                                           await _reach(conn, org_id, household_id))
+            fields = CP.normalise(body.fields())
+        except CP.PolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        v = await _scope_view(conn, org_id, household_id, t, scope_type=st, entity_id=body.entity_id, fields=fields)
+        rows = await CP.live_rows(conn, org_id, household_id=household_id if st == "household" else None,
+                                  entity_ids=[sid] if st == "entity" else [])
+        active = next((r for r in rows if r["scope_type"] == st and r["status"] == "active"), None)
+        entered = None
+        if body.questionnaire and body.questionnaire.outflow_12m not in (None, ""):
+            try:
+                entered = OB.parse_money(body.questionnaire.outflow_12m, "The 12-month outflow")
+            except OB.ObligationError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        weights = v["report"].shares if st == "household" else {sid: Decimal(1)}
+        sched = sum((ln["amount"] for ln in v["lines"] if ln.get("counted", True)
+                     and t <= ln["date"] < OB.add_months(t, 12)), CP.ZERO)
+        q = CP.questionnaire(entered, sched, await CP.trailing_outflows(conn, org_id, weights, t))
+    derived = CP.render(CP.evaluate(fields, v["lines"], v["liquid"], v["reads"], v["profile"], t))
+    return {"scope_type": st, "scope_id": sid, "label": v["label"], "fields": CP._as_body(fields),
+            "derived": derived, "draft_label": "draft — not saved",
+            "presets": CP.presets_view({**CP._as_body(fields), "objective": None}, v["lines"], v["liquid"], v["reads"],
+                                       v["profile"], t),
+            "questionnaire": q, "diff": CP.diff(active, fields) if active else [],
+            "active_id": str(active["id"]) if active else None}
+
+
+@router.post("/cash/households/{household_id}/policies", status_code=201)
+async def save_policy_route(request: Request, household_id: UUID, body: PolicyIn):
+    """Save a DRAFT (a new version, or an edit of the open draft). Never activates anything."""
+    p = require_internal_permission(request, "manage_cash_policy")  # = CP.PERMISSION
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    await require_visible(request, pool, entity_ids=[body.entity_id] if body.entity_id else [],
+                          household_ids=[household_id])
+    async with pool.acquire() as conn:
+        await _household(conn, org_id, household_id)
+        reach = await _reach(conn, org_id, household_id)
+    answers = body.questionnaire.model_dump() if body.questionnaire else None
+    try:
+        row = await CP.save_draft(pool, org_id=org_id, actor_id=p.user_id, household_id=household_id,
+                                  scope_type=body.scope_type, entity_id=body.entity_id, data=body.fields(),
+                                  reach=reach, reason=(body.reason or "").strip()[:1000] or None,
+                                  questionnaire_answers=answers)
+    except Exception as exc:  # noqa: BLE001 — mapped below; anything unmapped is a real 500
+        mapped = _policy_err(exc)
+        if mapped is None:
+            raise
+        raise mapped from exc
+    return {"policy": row}
+
+
+@router.post("/cash/households/{household_id}/policies/{policy_id}/submit")
+async def submit_policy_route(request: Request, household_id: UUID, policy_id: UUID):
+    """DRAFT → awaiting approval: opens the maker-checker human task (its payload = the derived view as of now)."""
+    p = require_internal_permission(request, "manage_cash_policy")  # = CP.PERMISSION
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    t = today()
+    async with pool.acquire() as conn:
+        await _household(conn, org_id, household_id)
+        try:
+            row = await _policy_of_household(conn, org_id, household_id, policy_id)
+        except CP.PolicyNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        await require_visible(request, pool, entity_ids=[row["entity_id"]] if row["entity_id"] else [],
+                              household_ids=[household_id])
+        fields = CP.fields_of(row)
+        v = await _scope_view(conn, org_id, household_id, t, scope_type=row["scope_type"], entity_id=row["entity_id"],
+                              fields=fields)
+    derived = CP.render(CP.evaluate(fields, v["lines"], v["liquid"], v["reads"], v["profile"], t))
+    try:
+        out = await CP.submit(pool, org_id=org_id, actor_id=p.user_id, policy_id=policy_id, derived=derived,
+                              scope_label=v["label"], household_id=household_id)
+    except Exception as exc:  # noqa: BLE001
+        mapped = _policy_err(exc)
+        if mapped is None:
+            raise
+        raise mapped from exc
+    return {"policy": out, "derived": derived}
+
+
+async def _decide_route(request: Request, household_id: UUID, policy_id: UUID, outcome: str, note: str | None):
+    p = authz.principal_of(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _household(conn, org_id, household_id)
+        try:
+            row = await _policy_of_household(conn, org_id, household_id, policy_id)
+        except CP.PolicyNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await require_visible(request, pool, entity_ids=[row["entity_id"]] if row["entity_id"] else [],
+                          household_ids=[household_id])
+    try:
+        out = await CP.decide(pool, org_id=org_id, actor_id=p.user_id, policy_id=policy_id, outcome=outcome,
+                              note=note)
+    except Exception as exc:  # noqa: BLE001
+        mapped = _policy_err(exc)
+        if mapped is None:
+            raise
+        raise mapped from exc
+    async with pool.acquire() as conn:   # an approved minimum moves the coverage flags: re-sync the to-dos
+        alerts = await _sync(pool, conn, org_id, household_id) if outcome == "approve" else None
+    return {"policy": out, "alerts": alerts}
+
+
+@router.post("/cash/households/{household_id}/policies/{policy_id}/approve")
+async def approve_policy_route(request: Request, household_id: UUID, policy_id: UUID, body: DecisionIn):
+    """A DIFFERENT eligible person approves (services.sod): the policy becomes active, the prior active one retired."""
+    require_internal_permission(request, "manage_cash_policy")  # = CP.PERMISSION
+    return await _decide_route(request, household_id, policy_id, "approve", body.note)
+
+
+@router.post("/cash/households/{household_id}/policies/{policy_id}/reject")
+async def reject_policy_route(request: Request, household_id: UUID, policy_id: UUID, body: DecisionIn):
+    require_internal_permission(request, "manage_cash_policy")  # = CP.PERMISSION
+    return await _decide_route(request, household_id, policy_id, "reject", body.note)

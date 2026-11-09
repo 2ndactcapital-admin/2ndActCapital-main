@@ -273,6 +273,10 @@ out to build them. Check first.
 - ⬜ CASH01 operator steps: run `load_olivo_obligations.py --operator-email …` (after its
   `--dry-run`); copy CASH_TREASURY_ADDENDUM_v1.1 / CASH_TRACK_PLAN_v1.2 into docs/cash/ (not
   available to the sprint); set TA strategies on the Olivo commitments; run verify_cash01.py.
+- ⬜ CASH02 operator steps: `load_olivo_cash_policy.py --dry-run` → `--operator-email …` (a draft
+  submitted for approval) → approve it in the app as a SECOND person; register `fred.dgs3mo` /
+  `fred.dgs6mo` / `fred.dgs1` in the market-data registry seed (Reserve's yield reads "needs" until
+  then); run verify_cash02.py (its regression is verify_cash01.py).
 - ⬜ Do capital calls and distributions post real journal lines? Gates the
   `v_capital_accounts` fix.
 - ⬜ `investment_profile_questions` vs `udf_definitions` — is one retirable?

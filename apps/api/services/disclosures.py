@@ -114,6 +114,9 @@ KEYS: dict[str, dict] = {
     # CASH01 — carried by every member-facing cash coverage figure (Treasury)
     "cash.coverage_estimate": {"title": "Cash coverage estimates", "category": "other", "audience": "both",
                                "description": "What a coverage figure (months, covered through, next gap) means."},
+    # CASH02 — carried by every estimated sleeve yield (Treasury → cash policy)
+    "cash.yield_estimate": {"title": "Cash sleeve yield estimates", "category": "other", "audience": "both",
+                            "description": "What an estimated sleeve yield (a Treasury-curve proxy) means."},
     "prices.internal_use_notice": {"title": "Price data — internal use only", "category": "licence",
                                    "audience": "staff",
                                    "description": "The free end-of-day price source is licensed for internal use "
@@ -227,6 +230,12 @@ def _fallback_coverage() -> str:
     return CC.COVERAGE_ESTIMATE
 
 
+def _fallback_yield() -> str:
+    from services import cash_policy as CP
+
+    return CP.YIELD_ESTIMATE
+
+
 def _fallback_member_notice() -> str:
     from services import model_provider as PM
 
@@ -239,6 +248,7 @@ FALLBACK_SOURCES = {
     "hypothetical.performance": _fallback_hypothetical,
     "tax.estimate_label": _fallback_tax,
     "cash.coverage_estimate": _fallback_coverage,
+    "cash.yield_estimate": _fallback_yield,
     "prices.internal_use_notice": _fallback_prices,
     "replica.fund_affiliation": _fallback_replica,
 }

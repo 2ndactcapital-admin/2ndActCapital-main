@@ -409,10 +409,17 @@ async def tasks_for_user(conn, org_id, *, user_id, permissions, is_super_admin: 
 
     perms = set(permissions or ())
     mine = str(user_id)
-    actionable = [t for t in open_tasks if may_check_display(mine, [t["maker_id"]])
+    actionable = [t for t in open_tasks if may_check_display(mine, task_makers(t))
                   and (is_super_admin or t["eligible_permission"] in perms)]
-    waiting = [t for t in open_tasks if not may_check_display(mine, [t["maker_id"]])]
+    waiting = [t for t in open_tasks if not may_check_display(mine, task_makers(t))]
     return {"actionable": actionable, "waiting_on_others": waiting}
+
+
+def task_makers(task: dict) -> list:
+    """The task's maker plus — CASH02, additive — every co-maker its subject named in the payload (``maker_ids``: a
+    cash policy's editors). A task whose payload names none is exactly as before."""
+    extra = (task.get("payload") or {}).get("maker_ids") or []
+    return [task.get("maker_id"), *[str(m) for m in extra if m]]
 
 
 def can_decide(task: dict, *, user_id, permissions, is_super_admin: bool) -> bool:
@@ -421,7 +428,7 @@ def can_decide(task: dict, *, user_id, permissions, is_super_admin: bool) -> boo
         return False
     from services.sod import may_check_display
 
-    if task.get("maker_checker") and not may_check_display(user_id, [task.get("maker_id")]):
+    if task.get("maker_checker") and not may_check_display(user_id, task_makers(task)):
         return False
     return bool(is_super_admin or task.get("eligible_permission") in set(permissions or ()))
 

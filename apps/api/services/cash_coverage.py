@@ -15,7 +15,8 @@ FORMULAS (docs/cash/CASH_OBLIGATIONS.md; pure functions below, Decimal, determin
   obligation the balance cannot pay in full is the NEXT GAP; covered through = the day before it (no gap → the end of
   the horizon, "covered beyond"). A household walks its total over every reached entity's obligations at the
   household's share of that entity.
-* FLAGS: ``below_minimum`` (months < the entity's / household's minimum, default 6), ``uncovered_90d`` (the next gap
+* FLAGS: ``below_minimum`` (months < the entity's / household's minimum — the ``min_coverage_months`` of its
+  ACTIVE cash policy (CASH02, services.cash_policy), default 6), ``uncovered_90d`` (the next gap
   falls within 90 days), ``no_payer_cash`` (obligations but no cash position at all).
 
 Read-only on money: nothing here moves, instructs or reserves anything (cash02+).
@@ -23,7 +24,7 @@ Read-only on money: nothing here moves, instructs or reserves anything (cash02+)
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
@@ -129,48 +130,20 @@ def render(c: dict, names: dict) -> dict:
             "obligations": c["obligations"], "flags": list(c["flags"])}
 
 
-# ═══ Minimums ══════════════════════════════════════════════════════════════════════════════════════════════════
+# ═══ Minimums — ONE home: the scope's ACTIVE cash policy (CASH02; cash01's cash_coverage_minimums is retired) ═════
 async def minimums(conn, org_id, *, entity_ids=(), household_id=None) -> dict:
+    """{entity_id | "household:<id>": min_coverage_months} from the ACTIVE ``cash_policies`` of the household and of
+    every named entity (an entity override). No active policy → absent (the caller uses the default 6). A draft or a
+    policy awaiting approval never moves a minimum — only an approved (active) one does."""
     rows = await conn.fetch(
-        "SELECT scope_type, entity_id::text AS e, household_id::text AS h, min_months FROM cash_coverage_minimums "
-        "WHERE org_id = $1::uuid AND valid_to IS NULL AND system_to IS NULL AND (entity_id = ANY($2::uuid[]) OR "
+        "SELECT scope_type, entity_id::text AS e, household_id::text AS h, min_coverage_months FROM cash_policies "
+        "WHERE org_id = $1::uuid AND status = 'active' AND system_to IS NULL AND (entity_id = ANY($2::uuid[]) OR "
         "household_id = $3::uuid)", str(org_id), [UUID(str(e)) for e in entity_ids],
         str(household_id) if household_id else None)
     out = {}
     for r in rows:
-        out[r["e"] if r["scope_type"] == "entity" else f"household:{r['h']}"] = r["min_months"]
+        out[r["e"] if r["scope_type"] == "entity" else f"household:{r['h']}"] = r["min_coverage_months"]
     return out
-
-
-async def set_minimum(conn, *, org_id, actor_id, scope_type: str, scope_id, months, reason: str | None) -> dict:
-    """Valid-axis restatement of one scope's minimum; ``months`` None clears it (back to the default)."""
-    if scope_type not in ("entity", "household"):
-        raise OB.ObligationError("the minimum is set for an entity or a household")
-    val = None
-    if months is not None:
-        if isinstance(months, (bool, float)):
-            raise OB.ObligationError("months: send the number as text (e.g. \"6\")")
-        try:
-            val = Decimal(str(months).strip())
-        except Exception:  # noqa: BLE001
-            raise OB.ObligationError(f"months: a number, not '{months}'") from None
-        if not val.is_finite() or val < 0 or val > 120 or val != val.quantize(Decimal("0.01")):
-            raise OB.ObligationError("months: 0–120, at most two decimals")
-    col = "entity_id" if scope_type == "entity" else "household_id"
-    async with conn.transaction():
-        await conn.execute(f"UPDATE cash_coverage_minimums SET valid_to = now() WHERE org_id = $1::uuid AND "
-                           f"scope_type = $2 AND {col} = $3::uuid AND valid_to IS NULL AND system_to IS NULL",
-                           str(org_id), scope_type, str(scope_id))
-        row = None
-        if val is not None:
-            row = await conn.fetchrow(
-                f"INSERT INTO cash_coverage_minimums (org_id, scope_type, {col}, min_months, reason, created_by) "
-                "VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6::uuid) RETURNING id::text AS id, min_months",
-                str(org_id), scope_type, str(scope_id), val, (reason or "")[:500] or None,
-                str(actor_id) if actor_id else None)
-    return {"scope_type": scope_type, "scope_id": str(scope_id),
-            "min_months": format(row["min_months"], "f") if row else None,
-            "default": format(DEFAULT_MIN_COVERAGE_MONTHS, "f"), "id": row["id"] if row else None}
 
 
 # ═══ The read ══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -185,6 +158,11 @@ class Report:
     today: date
     until: date
     names: dict
+    #: CASH02 — exposed so the cash policy sizes its sleeves on exactly these figures (never a second formula):
+    #: each reached entity's household share, the household's liquid (None = no cash position) and each entity's own
+    shares: dict = field(default_factory=dict)
+    household_liquid: Decimal | None = None
+    entity_liquid: dict = field(default_factory=dict)
 
 
 def _line_dict(ln: OB.Line, w: Decimal = ONE) -> dict:
@@ -226,25 +204,53 @@ async def household_report(conn, org_id, household_id, *, today: date, member_sc
         liquid = liquid_from_buckets(own[e]["by_bucket"]) if has_cash[e] else None
         if not lines and liquid is None:
             continue   # an entity with neither cash nor obligations is not a payer here (the household still counts it)
-        c = coverage(liquid, lines, today=today, until=until, min_months=mins.get(e, DEFAULT_MIN_COVERAGE_MONTHS))
+        # CASH02: the entity's own active policy (an override), else the household's active policy, else the default
+        basis = "entity policy" if e in mins else ("household policy" if f"household:{household_id}" in mins
+                                                    else "default")
+        c = coverage(liquid, lines, today=today, until=until,
+                     min_months=mins.get(e, mins.get(f"household:{household_id}", DEFAULT_MIN_COVERAGE_MONTHS)))
         info = ctx.names.get(e) or {}
         rows.append({"entity_id": e, "display_name": info.get("display_name"), "entity_type": info.get("entity_type"),
                      "member": e in members, "household_share": format(share[e], "f"), "as_of": today.isoformat(),
+                     "min_basis": basis,
                      "liquid_basis": "the entity's own Cash & Equivalents (net-worth core)", **render(c, names)})
     hfig = NW.figures(ctx, members)
     h_has_cash = any(is_cash_key(k) for k in hfig["by_bucket"])
-    h_lines = [_line_dict(ln, share.get(ln.payer_entity_id, ZERO)) for ln in sched["lines"]]
-    h_lines = [x for x in h_lines if x["amount"] > 0]
-    hc = coverage(liquid_from_buckets(hfig["by_bucket"]) if h_has_cash else None, h_lines, today=today, until=until,
+    h_lines = household_lines(sched["lines"], share)
+    h_liquid = liquid_from_buckets(hfig["by_bucket"]) if h_has_cash else None
+    hc = coverage(h_liquid, h_lines, today=today, until=until,
                   min_months=mins.get(f"household:{household_id}", DEFAULT_MIN_COVERAGE_MONTHS))
     household = {"household_id": str(household_id), "as_of": today.isoformat(),
+                 "min_basis": "household policy" if f"household:{household_id}" in mins else "default",
                  "liquid_basis": "the household's Cash & Equivalents (net-worth core: look-through, each position "
                                  "once)", "horizon_months": horizon_months, "until": until.isoformat(),
                  **render(hc, names)}
     rows.sort(key=lambda r: (not r["flags"], r["display_name"] or "", r["entity_id"]))
     return Report(household=household, entities=rows, lines=sched["lines"], not_estimated=sched["not_estimated"],
                   lines_of_credit=sched["lines_of_credit"], unmatched_notices=sched["unmatched_notices"], today=today,
-                  until=until, names=names)
+                  until=until, names=names, shares=dict(share), household_liquid=h_liquid,
+                  entity_liquid={e: (liquid_from_buckets(own[e]["by_bucket"]) if has_cash[e] else None)
+                                 for e in ents})
+
+
+def household_lines(lines, share: dict) -> list[dict]:
+    """The household's lines: every reached entity's lines at the household's share of that entity (zero dropped)."""
+    out = [_line_dict(ln, share.get(ln.payer_entity_id, ZERO)) for ln in lines]
+    return [x for x in out if x["amount"] > 0]
+
+
+def scope_lines(report: "Report", scope_type: str, entity_id=None) -> list[dict]:
+    """CASH02 — the lines a policy of this scope sizes its sleeves on: the household's share-weighted lines, or one
+    entity's own lines (the same lines its coverage walks)."""
+    if scope_type == "household":
+        return household_lines(report.lines, report.shares)
+    return [_line_dict(ln) for ln in report.lines if ln.payer_entity_id == str(entity_id)]
+
+
+def scope_liquid(report: "Report", scope_type: str, entity_id=None) -> Decimal | None:
+    if scope_type == "household":
+        return report.household_liquid
+    return report.entity_liquid.get(str(entity_id))
 
 
 def calendar_months(lines, names: dict, today: date, months: int) -> list[dict]:

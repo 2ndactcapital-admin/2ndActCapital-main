@@ -800,22 +800,6 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY borrow_rates_pkey: (id)
 
--- ===== cash_coverage_minimums =====
---   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
---   org_id                                   uuid NOT NULL
---   scope_type                               text NOT NULL
---   entity_id                                uuid
---   household_id                             uuid
---   min_months                               numeric NOT NULL
---   reason                                   text
---   created_by                               uuid
---   created_at                               timestamp with time zone NOT NULL DEFAULT now()
---   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
---   valid_to                                 timestamp with time zone
---   system_from                              timestamp with time zone NOT NULL DEFAULT now()
---   system_to                                timestamp with time zone
---   PRIMARY KEY cash_coverage_minimums_pkey: (id)
-
 -- ===== cash_obligations =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   lineage_id                               uuid NOT NULL
@@ -844,6 +828,47 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY cash_obligations_pkey: (id)
+
+-- ===== cash_policies =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   household_id                             uuid
+--   entity_id                                uuid
+--   version_no                               integer NOT NULL
+--   near_months                              integer NOT NULL
+--   reserve_months                           integer NOT NULL
+--   horizon_months                           integer NOT NULL DEFAULT 24
+--   rung_count                               integer NOT NULL DEFAULT 8
+--   buffer_months                            numeric NOT NULL DEFAULT 0
+--   objective                                text NOT NULL
+--   objective_score                          integer NOT NULL DEFAULT 3
+--   preset                                   text NOT NULL
+--   min_coverage_months                      numeric NOT NULL DEFAULT 6
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_ids                                ARRAY NOT NULL
+--   created_by                               uuid NOT NULL
+--   reason                                   text
+--   questionnaire                            jsonb
+--   submitted_by                             uuid
+--   submitted_at                             timestamp with time zone
+--   approval_task_id                         uuid
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   decision_note                            text
+--   rejected_by                              uuid
+--   rejected_at                              timestamp with time zone
+--   reject_reason                            text
+--   retired_at                               timestamp with time zone
+--   retired_reason                           text
+--   superseded_by                            uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cash_policies_pkey: (id)
 
 -- ===== charitable_donees =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()

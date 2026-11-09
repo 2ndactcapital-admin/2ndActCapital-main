@@ -57,3 +57,4 @@ verify_wftemplates1.py
 apps/api/scripts/verify_s30.py
 apps/api/scripts/verify_s29b.py
 apps/api/scripts/verify_cash01.py
+apps/api/scripts/verify_cash02.py
