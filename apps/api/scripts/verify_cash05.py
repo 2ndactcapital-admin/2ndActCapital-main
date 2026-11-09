@@ -39,6 +39,10 @@ touched table re-read for its exact pre-test count BY FIXTURE IDS ONLY. Real row
 links, fee tables, balances, accounts — the Olivo demo's included) fingerprinted before and after.
 
 --self-checks-only: git / route / static self-checks only. --cleanup-only: the teardown and the leftover check only.
+--only=<a,b,…>: the one-off path (cash05 fix 1) — teardown, prefix guard, real fingerprints, schema read, seed, then
+ONLY the named fixture sections (overview | holdings | activity | drawer | earnings | fee | documents | visibility;
+'holdings' pulls in 'overview'), then the full teardown + leftover + real-row checks; no regression, no routes /
+front-end section.
 With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
 """
 
@@ -1276,7 +1280,7 @@ async def y_overview(conn):
           "settled buy is never pending", f"{[(k, v) for k, v in pend.items() if k >= '2026-11-04']}")
     c30, o30 = await api(U_ADV, "GET", hh_path(H1, "overview", range="30d"))
     p30 = o30.get("points") or []
-    check(c30 == 200 and o30.get("range", {}).get("start") == "2026-10-10" and p30 and p30[0]["date"] == "2026-10-10"
+    check(c30 == 200 and o30.get("range", {}).get("start") == "2026-10-10" and bool(p30) and p30[0]["date"] == "2026-10-10"
           and dec(p30[0]["value"]) == D("169400.00") and [m["id"] for m in o30.get("markers") or []] == [tx("T2")],
           "range boundary: 30d starts 2026-10-10 (inclusive) at 169,400; the 09-15 marker falls outside it",
           f"{c30} {dumps(o30.get('range'))} {p30[:1]}")
@@ -1428,30 +1432,53 @@ async def y_activity(conn):
 
 
 def record_of(kind: str, body: dict) -> str | None:
-    if kind == "transaction":
-        return str((body.get("transaction") or {}).get("id"))
-    if kind == "position":
-        return str((body.get("position") or {}).get("id"))
-    if kind in ("instruction", "proposal"):
-        return str(body.get("id"))
-    if kind == "document":
+    """The record id (or, for a document, the signed URL) a link's GET answered with. Every detail route nests its
+    record under its own kind: {"transaction": {...}}, {"position": {...}}, {"instruction": {...}},
+    {"proposal": {...}} (cash05 fix 1: instruction / proposal were read off the top level, always None)."""
+    if not isinstance(body, dict):
+        return None
+    if kind in ("transaction", "position", "instruction", "proposal"):
+        rid = (body.get(kind) or {}).get("id")
+        return None if rid is None else str(rid)
+    if kind in DOC_LINK_KINDS:
         return body.get("url")
     return None
 
 
-async def resolve_links(uid, links) -> list:
-    bad = []
+#: the drawer names its document link "document"; the Documents screen names its open / download link "download" —
+#: both are GET /documents/{id}/download and must answer with the signed URL of THAT document's own storage key
+DOC_LINK_KINDS = ("document", "download")
+
+
+def expected_of(ln: dict) -> str | None:
+    if ln["kind"] in DOC_LINK_KINDS:
+        key = (DOCS.get(UUID(str(ln["id"]))) or (None,) * 6)[4]
+        return f"https://signed.invalid/{key}?expires=3600" if key else None
+    return None if ln.get("id") is None else str(ln["id"])
+
+
+async def link_results(uid, links) -> list[dict]:
+    """Every link: kind, path, status, expected record, found record, ok — printed in full by the caller."""
+    out = []
     for ln in links:
         c, b = await api(uid, "GET", ln["api"])
-        rec = record_of(ln["kind"], b)
-        if ln["kind"] == "document":
-            key = (DOCS.get(UUID(ln["id"])) or (None,) * 6)[4]
-            right = bool(rec and key and rec == f"https://signed.invalid/{key}?expires=3600")
-        else:
-            right = rec == ln["id"]
-        if c != 200 or not right:
-            bad.append((ln["kind"], ln["api"], c, dumps(b)[:300]))
-    return bad
+        want, got = expected_of(ln), record_of(ln["kind"], b)
+        out.append({"kind": ln["kind"], "api": ln["api"], "status": c, "expected": want, "found": got,
+                    "ok": bool(c == 200 and want is not None and got == want)})
+    return out
+
+
+def print_links(label: str, res: list[dict]) -> None:
+    for r in res:
+        print(f"[INFO] {label}: {'ok ' if r['ok'] else 'BAD'} {r['kind']:<11} {r['status']} {r['api']} "
+              f"expected={r['expected']} found={r['found']}", flush=True)
+
+
+async def resolve_links(uid, links, label: str | None = None) -> list:
+    res = await link_results(uid, links)
+    if label:
+        print_links(label, res)
+    return [(r["kind"], r["api"], r["status"], r["expected"], r["found"]) for r in res if not r["ok"]]
 
 
 async def y_drawer(conn):
@@ -1470,16 +1497,25 @@ async def y_drawer(conn):
           f"{dumps({k: d.get(k) for k in ('account', 'security', 'settlement', 'source')})}")
     check({ln["id"] for ln in links} == {tx("T2"), str(S["pos"]["P_MMF2"]), str(INSTR), str(PROP), str(DOC_C)},
           "each link names the right record id", f"{[(ln['kind'], ln['id']) for ln in links]}")
-    bad = await resolve_links(U_ADV, links)
+    bad = await resolve_links(U_ADV, links, "drawer T2 (adviser)")
+    shapes = {}
+    for ln in links:
+        if ln["kind"] in ("instruction", "proposal"):
+            _c, b_ = await api(U_ADV, "GET", ln["api"])
+            shapes[ln["kind"]] = ("id" in b_, str((b_.get(ln["kind"]) or {}).get("id")))
+    check(shapes == {"instruction": (False, str(INSTR)), "proposal": (False, str(PROP))},
+          "REPRODUCED (cash05 fix 1, verify defect): the instruction / proposal routes nest their record "
+          "({\"instruction\": {id}}, {\"proposal\": {id}}) — the old body[\"id\"] read was None, so a correct "
+          "link failed; record_of now reads body[kind][\"id\"]", f"{shapes}")
     check(not bad and len(links) == 5, "EVERY drawer link resolves: GET its api path → 200 with the same record "
           "(the document → a signed URL for its own storage key)", f"{bad}")
     c3, d3 = await api(U_ADV, "GET", hh_path(H1, f"activity/{tx('T3')}"))
     check(c3 == 200 and sorted(ln["kind"] for ln in d3.get("links") or []) == ["position", "transaction"] and not
-          await resolve_links(U_ADV, d3.get("links") or []), "an entry with nothing linked offers only its own "
+          await resolve_links(U_ADV, d3.get("links") or [], "drawer T3 (adviser)"), "an entry with nothing linked offers only its own "
                                                                "records — each resolves", f"{c3}")
     cv, dv = await api(U_VIEW, "GET", hh_path(H1, f"activity/{tx('T2')}"))
     kv = sorted(ln["kind"] for ln in dv.get("links") or [])
-    check(cv == 200 and kv == ["document", "position", "transaction"] and not await resolve_links(U_VIEW, dv["links"]),
+    check(cv == 200 and kv == ["document", "position", "transaction"] and not await resolve_links(U_VIEW, dv["links"], "drawer T2 (viewer)"),
           "a reader without view_execution / view_proposals is offered NO instruction or proposal link (never a "
           "dead one); what is offered resolves", f"{cv} {kv}")
     c11, _b = await api(U_ADV, "GET", hh_path(H1, f"activity/{tx('T11')}"))
@@ -1605,7 +1641,12 @@ async def y_documents(conn):
           and t.get("type") == "tax_1099" and t.get("links") == [] and t.get("file_text") == "no stored file yet",
           "the confirmation is the pending buy's; the 1099 has no stored file → no link, said so", f"{dumps(cf)} "
                                                                                                    f"{dumps(t)}")
-    bad = await resolve_links(U_ADV, [{**ln, "id": d_["id"]} for d_ in docs.values() for ln in d_.get("links") or []])
+    bad = await resolve_links(U_ADV, [{**ln, "id": d_["id"]} for d_ in docs.values() for ln in d_.get("links") or []],
+                              "documents H1 (adviser)")
+    dkinds = sorted({ln["kind"] for d_ in docs.values() for ln in d_.get("links") or []})
+    check(dkinds == ["download"], "REPRODUCED (cash05 fix 1, verify defect): the Documents screen names its link "
+          "'download' (the drawer's is 'document') — the old resolver knew only 'document' and read None; both kinds "
+          "now compare the signed URL against the document's own storage key", f"{dkinds}")
     check(not bad and len(SIGNED) >= 1, "open / download goes through the existing GET /documents/{id}/download (200, "
           "a signed URL for that document's own key; no new storage)", f"{bad} {SIGNED}")
     ct, dt = await api(U_ADV, "GET", hh_path(H1, "documents", type="tax_1099"))
@@ -1635,14 +1676,24 @@ async def y_visibility(conn):
           "the MEMBER reads their family's overview, holdings, activity, earnings, documents and a drawer — read-only "
           "(member_view, can_write false, editable empty)", f"{[(k, v[0]) for k, v in mem.items()]} {md[0]}")
     lab = (mem["overview"][1].get("labels") or {})
-    check(all((lab.get(k) or {}).get("text") for k in (CI.TAX_KEY, "cash.coverage_estimate", "cash.yield_estimate"))
-          and ((mem["holdings"][1].get("labels") or {}).get("cash.yield_estimate") or {}).get("text"),
+    hlab = (mem["holdings"][1].get("labels") or {})
+    keys = [("overview", k) for k in (CI.TAX_KEY, "cash.coverage_estimate", "cash.yield_estimate")]
+    keys.append(("holdings", "cash.yield_estimate"))
+    got = {(scr, k): ((lab if scr == "overview" else hlab).get(k) or {}) for scr, k in keys}
+    for (scr, k), lb in got.items():
+        text, src, lib = lb.get("text"), lb.get("source"), DS.fallback_text(k)
+        # the library's text: its built-in fallback when no version is in force, else the version in force (named)
+        from_library = (src == "fallback" and lib is not None and text == lib) or \
+                       (src not in (None, "fallback") and bool(lb.get("version_id")) and bool(lb.get("content_sha256")))
+        check(isinstance(text, str) and bool(text.strip()) and lb.get("key") == k and from_library,
+              f"the member's {scr} carries {k} with its disclosure-library text", f"{src} {text!r}")
+    check(all(isinstance(lb.get("text"), str) and bool(lb["text"].strip()) for lb in got.values()),
           "the member's overview carries cash.coverage_estimate / cash.yield_estimate / cash.tax_estimate and holdings "
-          "cash.yield_estimate from the disclosure library", f"{sorted(lab)}")
+          "cash.yield_estimate from the disclosure library", f"{sorted(lab)} {sorted(hlab)}")
     check([a["key"] for a in mem["overview"][1].get("actions") or []] == ["documents"],
           "a member's only action is Documents (no policy editor, no proposed trades)")
     mkinds = sorted(ln["kind"] for ln in md[1].get("links") or [])
-    check(mkinds == ["document", "position", "transaction"] and not await resolve_links(U_MEM, md[1]["links"]),
+    check(mkinds == ["document", "position", "transaction"] and not await resolve_links(U_MEM, md[1]["links"], "drawer T2 (member)"),
           "the member's drawer offers no instruction / proposal link; every link it offers resolves for the member",
           f"{mkinds}")
     mbodies = " ".join(b for who, b in BODIES if who.startswith("mem "))
@@ -1729,7 +1780,7 @@ def regression():
         code, out, err = run_cmd([sys.executable, str(HERE / script)], REPO, timeout=2700, env=env)
         t = VT.nested_total(out, code)
         fails = [ln for ln in out.splitlines() if ln.lstrip().startswith("[FAIL]")]
-        check(t.ok and not fails, f"{script}: 0 FAIL (its own final TOTAL line and exit code)",
+        check(bool(t.ok) and not fails, f"{script}: 0 FAIL (its own final TOTAL line and exit code)",
               f"{t.detail()}; {fails[:3]} {err[-200:] if not t.line else ''}")
 
 
@@ -1776,6 +1827,26 @@ FIXTURE_SECTIONS = (("overview", y_overview), ("holdings", y_holdings), ("activi
                     ("documents", y_documents), ("member + visibility + isolation", y_visibility))
 
 
+ONLY_NAMES = {"overview": "overview", "holdings": "holdings", "activity": "activity", "drawer": "drawer",
+              "earnings": "earnings", "fee": "fee charged (rolled back)", "documents": "documents",
+              "visibility": "member + visibility + isolation"}
+ONLY_NEEDS = {"holdings": ("overview",)}
+
+
+def only_sections() -> list[str] | None:
+    """None = the full run; [] = seed only; else the FIXTURE_SECTIONS names to run, in their own order."""
+    arg = next((a for a in sys.argv[1:] if a.startswith("--only=")), None)
+    if arg is None:
+        return None
+    want = {x.strip() for x in arg.split("=", 1)[1].split(",") if x.strip()}
+    bad = want - set(ONLY_NAMES) - {"seed"}
+    if bad:
+        raise SystemExit(f"--only: unknown section(s) {sorted(bad)}; known: seed, {', '.join(ONLY_NAMES)}")
+    names = {ONLY_NAMES[w] for w in want if w != "seed"}
+    names |= {ONLY_NAMES[n] for w in want for n in ONLY_NEEDS.get(w, ())}
+    return [n for n, _fn in FIXTURE_SECTIONS if n in names]
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1788,6 +1859,9 @@ async def main_async() -> int:
     install_stubs()
     if "--cleanup-only" in sys.argv:
         return await cleanup_only(conn)
+    only = only_sections()
+    if only is not None:
+        print(f"[INFO] --only: seed + {only or '(seed only)'}")
     pre = None
     try:
         await run("pre-teardown", teardown_retrying)
@@ -1797,20 +1871,23 @@ async def main_async() -> int:
             return 1
         pre = await counts(conn)
         S["real"] = await real_fingerprints(conn)
-        await run("task 1", y_task1, conn)
+        if only is None:
+            await run("task 1", y_task1, conn)
         await run("schema", y_schema, conn)
         if S.get("schema_ok"):
             await run("seed", seed, conn)
+        chosen = [(n, fn) for n, fn in FIXTURE_SECTIONS if only is None or n in only]
         if S.get("seeded"):
             seeded = await counts(conn)
-            for name, fn in FIXTURE_SECTIONS:
+            for name, fn in chosen:
                 await run(name, fn, conn)
             await run("no writes", y_no_writes, conn, seeded)
         else:
-            for name, _fn in FIXTURE_SECTIONS:
+            for name, _fn in chosen:
                 check(False, f"{name}: not run — the schema read or the seed failed (never skipped silently)")
-        await run("routes", y_routes, conn)
-        await run("front end", y_front_end, conn)
+        if only is None:
+            await run("routes", y_routes, conn)
+            await run("front end", y_front_end, conn)
         check(NETWORK_CALLS == [] and MODEL_CALLS == [], "no network call and no model call during the whole run",
               f"{NETWORK_CALLS[:3]} {MODEL_CALLS[:3]}")
     finally:
@@ -1842,7 +1919,9 @@ async def main_async() -> int:
         await close_conn(conn)
         if S.get("no_teardown"):
             print(total_line())
-    if os.environ.get("VERIFY_NESTED") == "1":
+    if only is not None:
+        print("[SKIP] regression — --only one-off run")
+    elif os.environ.get("VERIFY_NESTED") == "1":
         print("[SKIP] nested run")
     else:
         try:
