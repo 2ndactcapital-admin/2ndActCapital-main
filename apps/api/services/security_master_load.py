@@ -62,16 +62,26 @@ LIVE = "valid_to IS NULL AND system_to IS NULL"
 REFERENCE_FIELDS = ("exchange", "cik", "sector", "industry", "industry_group", "country", "is_etf", "fund_category",
                     "listing_status", "first_seen", "last_seen",
                     # SECMASTER2 — FinanceDatabase's category_group beside its category; a fund's structure
-                    "fund_category_group", "fund_structure")
+                    "fund_category_group", "fund_structure",
+                    # CASH03 — a Treasury issue's facts (treasury_fiscal) and a money-market fund's category (sec_nmfp)
+                    "maturity_date", "issue_date", "security_term", "treasury_type", "mmf_category")
 #: sources that may CREATE a security when nothing matches
-CREATORS = {"nasdaq_trader", "sec_tickers", "openfigi", "sec_13f_list", "sec_mutual_funds"}
+CREATORS = {"nasdaq_trader", "sec_tickers", "openfigi", "sec_13f_list", "sec_mutual_funds",
+            # CASH03 — Treasury issues (by CUSIP) and money-market fund classes (by SEC class id)
+            "treasury_fiscal", "sec_nmfp"}
 #: sources whose identifiers are ADDED to a matched / new security (FinanceDatabase's only match)
 IDENTIFIER_SOURCES = {"nasdaq_trader": {"ticker"}, "sec_tickers": {"ticker"},
                       "openfigi": {"ticker", "figi", "cusip", "isin"},
                       "sec_13f_list": {"ticker", "figi", "cusip", "isin"}, "finance_database": set(),
-                      "sec_mutual_funds": {"ticker", "sec_series_id", "sec_class_id"}}
+                      "sec_mutual_funds": {"ticker", "sec_series_id", "sec_class_id"},
+                      # CASH03
+                      "treasury_fiscal": {"cusip", "isin"}, "sec_nmfp": {"sec_series_id", "sec_class_id"}}
 #: sources whose security type is a fact rather than a guess (a disagreement is reviewed)
-TYPE_AUTHORITIES = {"openfigi", "sec_13f_list", "finance_database", "sec_mutual_funds"}
+TYPE_AUTHORITIES = {"openfigi", "sec_13f_list", "finance_database", "sec_mutual_funds", "treasury_fiscal",
+                    "sec_nmfp"}
+#: CASH03 — sources that may create a security from its SEC class id alone (a money-market share class need not
+#: carry a ticker; N-MFP names the class, the series and the category — never a ticker)
+CREATE_BY_CLASS_ID = {"sec_nmfp"}
 #: SECMASTER2 — identifiers beyond cusip / figi / isin / ticker (SourceRecord.extra_ids). A UNIQUE one (a share
 #: class) is matched on, after CUSIP / FIGI / ISIN and before the ticker; a SHARED one (a series has many classes)
 #: is added, never matched on, and another security holding it is not a conflict.
@@ -355,7 +365,8 @@ class Matcher:
                 res.unmapped_reasons[guard[1]] = res.unmapped_reasons.get(guard[1], 0) + 1
                 res.by_record[subj] = ("unmapped", None, guard[1])
                 continue
-            if not (rec.ticker or rec.cusip) or (self.key == "sec_tickers" and not rec.exchange):
+            by_class = self.key in CREATE_BY_CLASS_ID and bool((rec.extra_ids or {}).get("sec_class_id"))
+            if not (rec.ticker or rec.cusip or by_class) or (self.key == "sec_tickers" and not rec.exchange):
                 why = "nothing to create it from (no exchange)" if rec.ticker else "no ticker or CUSIP"
                 res.unmapped += 1
                 res.unmapped_reasons[why] = res.unmapped_reasons.get(why, 0) + 1

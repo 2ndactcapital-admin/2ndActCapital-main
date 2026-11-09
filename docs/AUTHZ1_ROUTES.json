@@ -1,5 +1,5 @@
 {
- "app_route_count": 990,
+ "app_route_count": 991,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -17916,6 +17916,27 @@
    "name": "reject_policy_route",
    "note": "",
    "path": "/api/v1/cash/households/{household_id}/policies/{policy_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_cash_policy); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_cash_policy"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash",
+   "name": "regenerate_plan_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/plan/regenerate",
    "public": false,
    "write": true
   },

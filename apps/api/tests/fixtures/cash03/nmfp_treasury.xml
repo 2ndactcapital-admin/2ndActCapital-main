@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nmfpfund">
+  <headerData><submissionType>N-MFP3</submissionType><filerInfo><filer><filerCredentials><cik>0009900301</cik></filerCredentials></filer></filerInfo></headerData>
+  <formData>
+    <generalInfo><reportDate>2026-10-31</reportDate><registrantFullName>CASH03 VERIFY Treasury Trust</registrantFullName><seriesId>S990030001</seriesId><nameOfSeries>CASH03 VERIFY Treasury Obligations Fund</nameOfSeries></generalInfo>
+    <seriesLevelInfo><moneyMarketFundCategory>Treasury</moneyMarketFundCategory><averagePortfolioMaturity>32</averagePortfolioMaturity><averageLifeMaturity>88</averageLifeMaturity></seriesLevelInfo>
+    <classLevelInfo><classesId>C990030001</classesId><classFullName>CASH03 VERIFY Treasury Obligations Fund — Institutional</classFullName>
+      <sevenDayNetYield><sevenDayNetYieldValue>0.0441</sevenDayNetYieldValue><sevenDayNetYieldDate>2026-10-24</sevenDayNetYieldDate></sevenDayNetYield>
+      <sevenDayNetYield><sevenDayNetYieldValue>0.0450</sevenDayNetYieldValue><sevenDayNetYieldDate>2026-10-31</sevenDayNetYieldDate></sevenDayNetYield>
+    </classLevelInfo>
+  </formData>
+</edgarSubmission>

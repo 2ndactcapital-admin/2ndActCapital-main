@@ -59,10 +59,13 @@ operation; an org's uploaded rows are visible to that org only.
 | vendor_slot | vendor | (all) | no | no | **not connected**, no network, in no rank |
 | yahoo_chart | public_api | eod_price | yes | **no** | PRICES1 primary free EOD source (Yahoo terms: personal use — internal under the owner's assumption; a launch blocker) |
 | tiingo | public_api | eod_price | yes | no | PRICES1 fallback — **not connected** until `TIINGO_API_KEY` exists |
+| treasury_fiscal | public_api | index_level, reference | yes | yes | CASH03 — Treasury Fiscal Data auctions (bills / notes: CUSIP, maturity, auction yield); public domain; **not connected** until a Super Admin switches it on |
+| sec_nmfp | regulator_filing | index_level, reference | yes | yes | CASH03 — SEC Form N-MFP (money-market fund 7-day yields, WAM / WAL, category) via the EDGAR index + edgar_fetch; **not connected** until switched on |
 
 Platform rank: eod_price custodian → csv_upload → adviser_entry → platform_entry → yahoo_chart → tiingo (PRICES1);
 corporate_action csv_upload; fund_holdings ssga_spdr → sec_nport; index_level
-fred → csv_upload → adviser_entry; option_quote adviser_entry.
+fred → csv_upload → adviser_entry → treasury_fiscal → sec_nmfp (CASH03); option_quote adviser_entry; reference … →
+sec_mutual_funds → treasury_fiscal → sec_nmfp (CASH03).
 
 ## The rank walk
 
@@ -355,3 +358,34 @@ blocks, gifts and unheld-security pricing already computed from a series — unc
    crash). Read the per-provider summary: found / not found, events, coverage.
 4. Switch the nightly job on: Security master → Platform jobs → "Security data — prices" → On.
 5. Optional: add `TIINGO_API_KEY` to Doppler and set the tiingo row active (the fallback).
+
+## CASH03 (2026-11-09) — two free cash-instrument sources: Treasury Fiscal Data and SEC N-MFP
+
+Registered by `docs/cash03_part1.sql` with licence facts, **switched OFF** (`not_connected`). Reference:
+`docs/cash/CASH_LADDER.md` ("Providers and cadence") and `docs/cash/CASH03_NOTES.md` §2–§4.
+
+- **Code.**
+  - `services/market_data/treasury_fiscal.py`: parser, injected `SourceTransport`, `refresh` and
+    `TreasuryFiscalProvider`.
+  - `services/edgar_nmfp.py`: the N-MFP extractor on the EDGAR pipeline (`edgar_index.parse_index_lines(forms=…)`,
+    sec.gov through `edgar_fetch._get`) and `NmfpProvider`.
+  - Both are in `providers/__init__.build_providers()`.
+- **Stores.** No new table.
+  - Issues and fund classes go to the security master through `security_master_load.Matcher`. Both are creators;
+    N-MFP creates by SEC class id (`CREATE_BY_CLASS_ID`). They bring five new reference fields: `maturity_date`,
+    `issue_date`, `security_term`, `treasury_type`, `mmf_category`.
+  - Yields go to `portfolio.index_levels`: `tfd:<cusip>:yield`, `nmfp:<class>:7d`, `nmfp:<series>:wam|wal`.
+- **Cadence.** The nightly's new `cash_sources` step: Treasury daily, N-MFP monthly from the 8th. It acts only on
+  ACTIVE providers. Neither module has `fetches`, so marketdata1's refresh never calls them.
+- **Staleness.** `nightly.stale_limit`: Treasury 10 days, N-MFP 45 days; every other provider keeps its data type's
+  default.
+- **Fixtures.** `apps/api/tests/fixtures/cash03/`, behind `scripts/_cash03_fixtures.py`.
+
+### CASH03 operator steps (in order)
+
+1. Switch the providers on: Admin → Security data → Providers → `treasury_fiscal`, `sec_nmfp` → Active (Super Admin).
+2. `doppler run -- python3 apps/api/scripts/load_cash_market_data.py --dry-run`. A real fetch, printed; nothing
+   written. Read each parse, above all the first real N-MFP filing's element names and yield scale.
+3. `doppler run -- python3 apps/api/scripts/load_cash_market_data.py --real`. N-MFP reads the CIKs of the
+   money-market classes already in the master (from the `sec_mutual_funds` sync), or `--cik …`.
+4. The nightly then keeps both current.

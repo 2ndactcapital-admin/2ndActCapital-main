@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 983 · guarded 212 · sql-scope 45 · body-check 12 · legacy-rule 2
+Routes: 984 · guarded 213 · sql-scope 46 · body-check 13 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -255,6 +255,7 @@ Routes: 983 · guarded 212 · sql-scope 45 · body-check 12 · legacy-rule 2
 | POST | `/api/v1/cash/households/{household_id}/alerts/sync` | cash | guard:household_id, body-check, scrub |
 | POST | `/api/v1/cash/households/{household_id}/notices` | cash | guard:household_id, body-check, scrub |
 | POST | `/api/v1/cash/households/{household_id}/obligations` | cash | guard:household_id, body-check, scrub |
+| POST | `/api/v1/cash/households/{household_id}/plan/regenerate` | cash | guard:household_id, sql-scope, body-check, scrub |
 | POST | `/api/v1/cash/households/{household_id}/policies` | cash | guard:household_id, body-check, scrub |
 | POST | `/api/v1/cash/households/{household_id}/policies/{policy_id}/approve` | cash | guard:household_id, scrub |
 | POST | `/api/v1/cash/households/{household_id}/policies/{policy_id}/reject` | cash | guard:household_id, scrub |

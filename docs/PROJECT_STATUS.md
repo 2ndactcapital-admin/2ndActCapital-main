@@ -344,6 +344,96 @@ This file starts with the email item below.
 ---
 
 
+## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CASH03 — the OBLIGATION-MATCHED LADDER (Long-term rungs on the dates of large obligations + monthly fillers, business-day maturities, real issues else indicative) and AFTER-TAX INSTRUMENT SELECTION per sleeve × account (Treasury vs muni vs taxable MMF / bills / notes; IRA / trust / foundation treatment; the 133 bp T-bill-vs-CD case); Treasury Fiscal Data + SEC N-MFP registered through the provider registry, SWITCHED OFF; a target, never a trade; catalog APPLIED; verify WRITTEN, not yet run (2026-11-09)
+
+Branch cash03-work. Read-only on money (proposals / orders are cash04). Docs: `docs/cash/CASH03_NOTES.md` (Task 1:
+binding decisions, the provider registration shape, N-MFP and the EDGAR pipeline, Treasury Fiscal Data endpoints and
+licence, account tax treatment, the security-master add path, reuse inventory, decisions D1–D9) and
+`docs/cash/CASH_LADDER.md` (ladder rules, after-tax method, yield bases, providers and cadence, operator steps).
+
+- **FINDs.**
+  - The provider registry with licence facts is `portfolio.data_providers` + `services/security_data`, not
+    `services/market_data/registry.py`, which is the indicator seed loader.
+  - The FULL Treasury curve (DGS1MO…DGS30) already lives in `portfolio.index_levels` (fred, marketdata1). cash02's
+    "no 3m / 6m / 1y" was true only of the indicator registry. cash03 reads `index_levels`.
+  - `fred` is `lic_member_display = not_allowed`, so a member never sees a curve-interpolated yield. cash02 shows its
+    indicator-store proxy to members; recorded, not changed.
+  - The EDGAR pipeline knew no N-MFP (only 424B2 / FWP).
+  - No muni yield source is free.
+  - No holiday calendar existed.
+  - Not recorded anywhere: the state of domicile, a single-state fund's state, a trust's grantor status.
+  - Olivo has 34 open accounts, 0 cash-balance rows, and no policy or tax profile.
+  - `CASH_TRACK_PLAN_v1.2.md` is still absent.
+- **Schema.** `docs/cash03_part1.sql` APPLIED (`_apply_cash03.py --all`: SCHEMA OK).
+  - No table.
+  - The reference-field CHECK gains `maturity_date`, `issue_date`, `security_term`, `treasury_type` and
+    `mmf_category`, plus date / type / category CHECKs.
+  - Providers `treasury_fiscal` (public_api) and `sec_nmfp` (regulator_filing), both **not_connected**, with
+    licence facts (public record: internal, member display allowed, redistribution, keep; attribution; terms;
+    budget).
+  - Platform rank: index_level 4 / 5, reference 7 / 8.
+  - The snapshot is unchanged (no column added; it records no CHECKs).
+- **Providers.**
+  - `services/market_data/treasury_fiscal.py` (auctions_query): a bill's high investment rate, a note's high yield;
+    bad / partial pages refused whole with a reason; a bad row skipped with its reason.
+  - `services/edgar_nmfp.py` on the EDGAR pipeline (`edgar_index.parse_index_lines(forms=N-MFP2/3)`, `edgar_fetch`):
+    7-day net yield (fraction × 100), WAM / WAL and category; a DOCTYPE / no yield / a percent refused. Element names
+    are from the forms' specs; no live filing was fetched.
+  - Both write through `Matcher` (now creators; N-MFP creates by SEC class id) and `upsert_index_levels`.
+  - The nightly's new `cash_sources` step (daily / monthly from the 8th) acts on ACTIVE providers only.
+  - Per-provider staleness: Treasury 10 days, N-MFP 45 days (`nightly.stale_limit`).
+- **Ladder.** `services/cash_ladder.py` (pure plus reads through the rank walk) and `services/us_business_days.py`:
+  - large = ≥ 10 % of the Long-term target, or firm and ≥ $250k;
+  - large obligations on the same date share a rung; at most `rung_count` rungs;
+  - monthly fillers spread evenly;
+  - a maturity is the latest real issue ≤ the date (within 35 days), else indicative on the prior business day;
+  - small obligations are funded by the latest earlier rung;
+  - the leftover is spread across the fillers to the cent;
+  - the yield is the auction's (≤ 35 days old), else the curve interpolated (labelled).
+  - Not stored (D3).
+- **After-tax.** `services/cash_instruments.py`: candidates per sleeve, the exemption table, treatment from
+  `accounts.tax_status`, rates from `tax_profiles.profile_for_account`. Each row gets the choice, why (one sentence),
+  the runner-up and the bp gap. Also the CD hurdle, allocation by `account_balances_daily.cash_value`, and blends
+  Σ value × yield ÷ total. A sleeve with an instrument blend replaces cash02's proxy; the others keep cash02's label.
+- **API.** The treasury envelope gains `plan`: one per scope with an ACTIVE policy; purpose `member_display` for a
+  member; no CUSIP for a member; the providers' status. If the plan fails, the envelope survives and the plan reads
+  `error`. Labels gain `cash.tax_estimate`, a new disclosure key ("After-tax figures use your tax profile and are
+  estimates; have counsel review.").
+- **Route.** `POST /cash/households/{id}/plan/regenerate`: `require_internal_permission(manage_cash_policy)`; audits
+  `cash.plan.regenerated` with the policy versions, rung counts and the plan's fingerprint. AUTHZ1 and VISIBILITY1
+  route docs regenerated; both `--check` CURRENT.
+- **Web.** `components/treasury/LadderPanel.jsx` + `lib/cashPlan.mjs` (fails closed), inside the Treasury tab after
+  the policy panel:
+  - the ladder timeline (targeted vs filler, indicative faded, large obligations marked) and the rung table (holiday
+    moves stated);
+  - the instrument plan per sleeve × account;
+  - blended yields, also on the policy editor (`PlanBlended`);
+  - Regenerate only for an author;
+  - a member's read-only view with the library labels.
+  - The proxy is `/api/cash/households/[id]/plan/regenerate`.
+  - Tests: `tests/cash03` (7). `node --test tests/`: 682 tests, 681 pass, 0 fail, 1 skipped.
+- **Loaders.**
+  - `scripts/load_cash_market_data.py` (`--dry-run [--fixtures]` / `--real`; the real run is refused while switched
+    off). The sprint ran only `--dry-run --fixtures`: 6 auctions / 5 issues / 1 row refused; 3 N-MFP series / 4
+    classes / 1 filing refused.
+  - `scripts/load_olivo_ladder.py --dry-run` (read-only transaction) ran against the demo, from the Recommended
+    policy cash02's loader would draft, with the 18 Olivo obligations in memory:
+    - Long-term target $15,429,450.08 in 8 rungs: 3 targeted (the GRAT annuity, the foundation's 5 % distribution,
+      the ILIT premium) and 5 fillers. All are indicative (Treasury Fiscal Data is off); two weekend maturities moved
+      to the prior business day.
+    - Ladder 4.450 % on the curve. Reserve's indicative bill is 4.273 %.
+    - Near-term chooses nothing: no N-MFP data while switched off.
+    - Every taxable account reads "after-tax: needs a tax profile". The allocation reads "not allocated — needs each
+      account's cash balance".
+- **Verify.** `apps/api/scripts/verify_cash03.py` WRITTEN, NOT RUN; added to scripts/regression_set.txt. Its
+  regression is verify_cash02.py: once, flat, after teardown, VERIFY_NESTED=1, 2700 s. What the sprint did run
+  against it:
+  - its PURE sections offline (Task 1, ladder, after-tax): 45 PASS (the 1 FAIL was CASH_LADDER.md, written since);
+  - its catalog pre-check (`y_schema` + the prefix guard) on a READ-ONLY connection: 12 PASS / 0 FAIL.
+  - `--self-checks-only` of verify_cash01 / cash02 / secmaster1 / secmaster2 / prices1 / marketdata1 / disclosures1
+    after the edits: all 0 FAIL.
+  - NOT run (WSL memory): the full verify_cash03.py, verify_cash02.py, npm run build.
+
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CASH02 — cash POLICIES and the THREE SLEEVES (Near-term / Reserve / Long-term, in months of obligations; derived $ and %; presets; 3-step questionnaire; estimated yields from the FRED curve; maker-checker on every save through S30); a target, never a trade; schema APPLIED; verify WRITTEN, not yet run (2026-11-08)
 
 Branch cash02-work. Read-only on money (proposals / orders are cash04). Docs: `docs/cash/CASH02_NOTES.md` (Task 1: cash01's binding decisions, the SoD / inbox registration paths, FRED series, tax profiles, the minimum's migration, permissions, reuse inventory) and `docs/cash/CASH_POLICY.md` (windows, presets, questionnaire mapping, yield proxies and labels, approval flow).

@@ -17,6 +17,12 @@ CASH02 — cash POLICIES (the three sleeves; a target, never a trade; maker-chec
   all ``require_internal_permission(manage_cash_policy)``; the policy block itself rides in the treasury envelope
   (the read gate above). cash01's PUT …/minimums is RETIRED: the minimum lives in the policy (services.cash_policy).
 
+CASH03 — the obligation-matched LADDER and the after-tax INSTRUMENT PLAN (a target, never a trade; derived, never
+stored) ride in the same treasury envelope as ``plan`` (one per scope with an ACTIVE policy; read with purpose
+'member_display' for a member, 'internal' for staff — THE licence rule):
+    POST /api/v1/cash/households/{household_id}/plan/regenerate    recompute + audit ``cash.plan.regenerated``
+  ``require_internal_permission(manage_cash_policy)`` — cash02's authoring permission reused.
+
 GATES (services.authz, one Principal; Super Admin first). READ: ``view_portfolio`` (a member holds it) or
 ``manage_portfolio``, then the ONE visibility rule ``authz.member_entity_scope`` — a member reads only their own
 family (another family's household is a 404, the same as a missing one), a restricted staff caller of an enforcing
@@ -41,6 +47,8 @@ from routers.entities import get_org_id
 from services import authz
 from services import cash_coverage as CC
 from services import cash_obligations as OB
+from services import cash_instruments as CI
+from services import cash_ladder as CL
 from services import cash_policy as CP
 from services.audit import write_audit_log
 from services.authz import require_internal_permission
@@ -57,6 +65,14 @@ _CLOCK: dict = {"fn": None}
 
 def set_clock(fn) -> None:
     _CLOCK["fn"] = fn
+
+
+#: CASH03 — narrows the plan's issue / fund / curve reads (a verify's own fixture prefixes); None = every real row
+_PLAN_FIXTURE: dict = {"fx": None}
+
+
+def set_plan_fixture(fx) -> None:
+    _PLAN_FIXTURE["fx"] = fx
 
 
 def today() -> date:
@@ -263,8 +279,20 @@ async def treasury_route(request: Request, household_id: UUID,
         can_author = _can_author(p) and not member
         labels[CP.YIELD_KEY] = D.public(await D.resolve_safe(conn, CP.YIELD_KEY, org_id=org_id,
                                                              household_id=household_id))
-        policy = await _policy_block(conn, org_id, household_id, report, t, report_horizon=horizon_months,
-                                     member=member, can_author=can_author, user_id=p.user_id, scope=scope)
+        policy, prep = await _policy_block(conn, org_id, household_id, report, t, report_horizon=horizon_months,
+                                           member=member, can_author=can_author, user_id=p.user_id, scope=scope,
+                                           with_report=True)
+        try:
+            plan = await _plan_block(conn, org_id, household_id, prep, t, member=member, can_author=can_author)
+        except Exception as exc:  # noqa: BLE001 — the cash03 plan never takes cash01's coverage envelope down
+            import logging
+
+            logging.getLogger(__name__).exception("cash03 plan block failed for household %s", household_id)
+            plan = {"scopes": [], "member_view": member, "actions": [], "error":
+                    f"the ladder and instrument plan could not be built ({type(exc).__name__}) — see the API log",
+                    "vocabularies": {**CI.vocabularies(), "editable": [], "inline_editable": []}}
+        labels[CI.TAX_KEY] = D.public(await D.resolve_safe(conn, CI.TAX_KEY, org_id=org_id,
+                                                           household_id=household_id))
     names = report.names
     lines = [ln.to_json(names) for ln in report.lines]
     actions = ["add_obligation", "record_notice", "sync_alerts"] if can_write else []
@@ -279,6 +307,7 @@ async def treasury_route(request: Request, household_id: UUID,
         "unmatched_notices": report.unmatched_notices if not member else [],
         "stored": stored,
         "policy": policy,
+        "plan": plan,
         "labels": labels,
         "member_view": member,
         "actions": actions,
@@ -427,14 +456,67 @@ async def _policy_report(conn, org_id, household_id, t: date, *, horizon: int, s
 
 
 async def _policy_block(conn, org_id, household_id, report, t: date, *, report_horizon: int, member: bool,
-                        can_author: bool, user_id, scope) -> dict:
-    """The envelope's policy block; the schedule is re-read only when a policy's horizon is beyond the report's."""
+                        can_author: bool, user_id, scope, with_report: bool = False):
+    """The envelope's policy block; the schedule is re-read only when a policy's horizon is beyond the report's.
+    ``with_report`` → (block, the report it used) — CASH03's plan sizes on the SAME report."""
     rows = await CP.live_rows(conn, org_id, household_id=household_id, entity_ids=list(report.shares))
     want = CP.max_horizon(rows, OB.DEFAULT_HORIZON_MONTHS)
     rep = report if want <= report_horizon else await _policy_report(conn, org_id, household_id, t, horizon=want,
                                                                      scope=scope)
-    return await CP.household_block(conn, org_id, household_id, report=rep, today=t, member=member,
-                                    can_author=can_author, user_id=user_id)
+    block = await CP.household_block(conn, org_id, household_id, report=rep, today=t, member=member,
+                                     can_author=can_author, user_id=user_id)
+    return (block, rep) if with_report else block
+
+
+CASH_PROVIDERS = ("treasury_fiscal", "sec_nmfp", "fred")
+
+
+async def _plan_block(conn, org_id, household_id, rep, t: date, *, member: bool, can_author: bool) -> dict:
+    """CASH03 — per scope with an ACTIVE policy: the ladder (services.cash_ladder) and the instrument plan
+    (services.cash_instruments), both derived from the policy version, the cash01 schedule of that scope, its
+    accounts and the registered sources. A member gets the same plan, read-only, read with purpose
+    'member_display' (THE licence rule) and without CUSIPs."""
+    from services.security_data import registry as SR
+
+    purpose = "member_display" if member else "internal"
+    rows = await CP.live_rows(conn, org_id, household_id=household_id, entity_ids=list(rep.shares))
+    keys = [("household", str(household_id))] + sorted(
+        {("entity", str(r["entity_id"])) for r in rows if r["scope_type"] == "entity"})
+    reads = await CP.read_yields(conn, t)
+    scopes = []
+    for st, sid in keys:
+        active = next((r for r in rows if r["scope_type"] == st and r["status"] == "active" and str(
+            r["household_id"] if st == "household" else r["entity_id"]) == sid), None)
+        if active is None:
+            continue
+        if st == "entity" and sid not in rep.shares:
+            continue
+        fields = CP.fields_of(active)
+        lines = CC.scope_lines(rep, st, None if st == "household" else sid)
+        liquid = CC.scope_liquid(rep, st, None if st == "household" else sid)
+        profile = await CP.subject_profile(conn, org_id, st, sid, t)
+        view = CP.evaluate(fields, lines, liquid, reads, profile, t)
+        accounts = await CI.scope_accounts(conn, org_id, household_id=household_id if st == "household" else None,
+                                           entity_ids=list(rep.shares) if st == "household" else [sid], today=t)
+        built = await CI.build(conn, org_id, fields=fields, lines=lines, sleeves=view["sleeves"], accounts=accounts,
+                               today=t, purpose=purpose, fixture=_PLAN_FIXTURE["fx"])
+        names = {ln["key"]: ln.get("name") for ln in lines}
+        ladder = CL.render(built["ladder"], names, member=member)
+        instruments = CI.render(built["instruments"], member=member)
+        scopes.append({"scope_type": st, "scope_id": sid,
+                       "label": "The household" if st == "household" else (rep.names.get(sid) or "An entity"),
+                       "policy_id": str(active["id"]), "version_no": active["version_no"],
+                       "rung_count": active["rung_count"], "ladder": ladder, "instruments": instruments,
+                       "sources": built["sources"] if not member else {
+                           "issues": built["sources"]["issues"], "issues_count": built["sources"]["issues_count"],
+                           "funds_count": built["sources"]["funds_count"]},
+                       "fingerprint": CL.fingerprint({"ladder": ladder, "instruments": instruments})})
+    provs = await SR.providers(conn)
+    return {"scopes": scopes, "member_view": member, "purpose": purpose, "today": t.isoformat(),
+            "actions": ["regenerate"] if can_author and not member else [],
+            "providers": [{"key": k, "name": provs[k]["name"], "status": provs[k]["status"],
+                           "attribution": provs[k]["attribution"]} for k in CASH_PROVIDERS if k in provs],
+            "vocabularies": {**CI.vocabularies(), "editable": [], "inline_editable": []}}
 
 
 async def _scope_view(conn, org_id, household_id, t: date, *, scope_type: str, entity_id, fields: dict) -> dict:
@@ -591,3 +673,33 @@ async def approve_policy_route(request: Request, household_id: UUID, policy_id: 
 async def reject_policy_route(request: Request, household_id: UUID, policy_id: UUID, body: DecisionIn):
     require_internal_permission(request, "manage_cash_policy")  # = CP.PERMISSION
     return await _decide_route(request, household_id, policy_id, "reject", body.note)
+
+
+# ═══ CASH03 — the ladder and the instrument plan ═════════════════════════════════════════════════════════════════
+@router.post("/cash/households/{household_id}/plan/regenerate")
+async def regenerate_plan_route(request: Request, household_id: UUID):
+    """Recompute the ladder and the instrument plan of every ACTIVE policy of the household and AUDIT it
+    (``cash.plan.regenerated``: the policy versions, rung counts and the plan's fingerprint). Writes nothing else —
+    the plan is derived (a target; proposals are cash04)."""
+    p = require_internal_permission(request, "manage_cash_policy")  # = CP.PERMISSION
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    await require_visible(request, pool, household_ids=[household_id])
+    scope = await authz.member_entity_scope(request, pool)
+    t = today()
+    async with pool.acquire() as conn:
+        await _household(conn, org_id, household_id)
+        await _visible_members(conn, org_id, household_id, scope)
+        report = await CC.household_report(conn, org_id, household_id, today=t, member_scope=scope)
+        _block, rep = await _policy_block(conn, org_id, household_id, report, t,
+                                          report_horizon=OB.DEFAULT_HORIZON_MONTHS, member=False, can_author=True,
+                                          user_id=p.user_id, scope=scope, with_report=True)
+        plan = await _plan_block(conn, org_id, household_id, rep, t, member=False, can_author=True)
+    summary = {"household_id": str(household_id), "today": t.isoformat(),
+               "scopes": [{"scope_type": s["scope_type"], "scope_id": s["scope_id"], "policy_id": s["policy_id"],
+                           "version_no": s["version_no"], "rungs": len(s["ladder"]["rungs"]),
+                           "indicative": s["ladder"]["indicative_count"], "fingerprint": s["fingerprint"]}
+                          for s in plan["scopes"]]}
+    await write_audit_log(org_id=org_id, action="cash.plan.regenerated", table_name="cash_policies",
+                          record_id=household_id, new=summary, actor=p.user_id)
+    return {"plan": plan, "audit": summary}

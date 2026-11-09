@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nmfpfund">
+  <formData>
+    <generalInfo><reportDate>2026-10-31</reportDate><seriesId>S990030005</seriesId></generalInfo>
+    <seriesLevelInfo><moneyMarketFundCategory>Government</moneyMarketFundCategory></seriesLevelInfo>
+    <classLevelInfo><classesId>C990030005</classesId><classFullName>CASH03 VERIFY No Yield Fund</classFullName></classLevelInfo>
+  </formData>
+</edgarSubmission>

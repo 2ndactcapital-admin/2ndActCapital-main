@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nmfpfund">
+  <headerData><submissionType>N-MFP3</submissionType></headerData>
+  <formData>
+    <generalInfo><reportDate>2026-10-31</reportDate><seriesId>S990030002</seriesId><nameOfSeries>CASH03 VERIFY Government Cash Fund</nameOfSeries></generalInfo>
+    <seriesLevelInfo><moneyMarketFundCategory>Government</moneyMarketFundCategory><averagePortfolioMaturity>41</averagePortfolioMaturity><averageLifeMaturity>97</averageLifeMaturity></seriesLevelInfo>
+    <classLevelInfo><classesId>C990030002</classesId><classFullName>CASH03 VERIFY Government Cash Fund — Retail</classFullName><sevenDayNetYield>0.0450</sevenDayNetYield></classLevelInfo>
+    <classLevelInfo><classesId>C990030003</classesId><classFullName>CASH03 VERIFY Government Cash Fund — Premier</classFullName><sevenDayNetYield>0.0460</sevenDayNetYield></classLevelInfo>
+  </formData>
+</edgarSubmission>

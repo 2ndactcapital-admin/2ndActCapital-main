@@ -16,6 +16,7 @@ import {
   bounds, coverageLabel, diffRows, initialForm, makersText, money, objectiveScale, policyBody, policyControls,
   presetOptions, recommendationBody, scopes, setBoundary, sleeveRows, statusLabel, yieldLabel, yieldText,
 } from "@/lib/cashPolicy.mjs";
+import { planBlendedFor } from "@/lib/cashPlan.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-4";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -228,6 +229,17 @@ export function ApprovalStatus({ env, scope, onDecided }) {
   );
 }
 
+/** CASH03 — the instrument plan's blended yields for this scope, beside cash02's Treasury-curve estimate. */
+export function PlanBlended({ env, scope }) {
+  const b = planBlendedFor(env, scope?.scope_type, scope?.scope_id);
+  if (!b) return null;
+  return (
+    <p className="text-xs text-[#334155]" aria-label="Instrument plan blended yields">
+      Instrument plan: blended {b.net} net, {b.afterTax} after tax; ladder {b.ladder}.
+    </p>
+  );
+}
+
 export function ScopePolicy({ env, scope, onReload }) {
   const c = policyControls(env, scope);
   return (
@@ -236,6 +248,7 @@ export function ScopePolicy({ env, scope, onReload }) {
       {scope.active ? <>
         <PolicySummary version={scope.active} />
         <SleeveTable derived={scope.active.derived} env={env} caption="Active sleeves" />
+        <PlanBlended env={env} scope={scope} />
       </> : <p className="text-sm text-text-muted">No active policy — coverage uses the default minimum.</p>}
       {env?.member_view ? null : <ApprovalStatus env={env} scope={scope} onDecided={onReload} />}
       {c.edit ? <PolicyEditor env={env} scope={scope} onSaved={onReload} /> : null}
