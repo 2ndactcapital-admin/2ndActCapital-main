@@ -248,6 +248,20 @@ async def demo_rows_by_ids(op, plan_ids: dict) -> list[str]:
     return refused
 
 
+def _load_guards() -> dict:
+    import json
+    import pathlib
+    f = pathlib.Path(__file__).resolve().parents[3] / "docs" / "VERIFYFIX1_TEARDOWN_GUARDS.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+#: guarded table -> the teardown GUCs its guard reads (VERIFYFIX1)
+TEARDOWN_GUARDS: dict = _load_guards()
+
+
 async def cleanup(op, *, orgs, users=(), user_sub_like=None, plan=None, gucs=(), cycle_order=(),
                   label="", demo_fixture_orgs=()) -> dict:
     """Delete this script's fixture rows (see the module docstring). ``op`` is an asyncpg connection on the
@@ -351,6 +365,15 @@ async def cleanup(op, *, orgs, users=(), user_sub_like=None, plan=None, gucs=(),
         if demo_ok:
             await q.execute("SELECT set_config('crm.demo_teardown', 'fixture', true)")
 
+        # VERIFYFIX1 fix 1: every teardown GUC a guard on a table in THIS delete set reads (the guard map read from
+        # the live trigger bodies, docs/VERIFYFIX1_TEARDOWN_GUARDS.json), set LOCAL — the FK closure reaches guarded
+        # tables no caller names, and a guard that RETURNs NULL would skip the delete silently. The deletes stay
+        # keyed by fixture ids; crm.demo_teardown keeps its own conditional path above.
+        auto = sorted({g for t in preds for g in TEARDOWN_GUARDS.get(t, ())
+                       if g != "crm.demo_teardown" and g not in ("sod.teardown", *gucs)})
+        for g in auto:
+            await q.execute("SELECT set_config($1, 'fixture', true)", g)
+
         for t in _order(sorted(preds), tuple(cycle_order)):
             where, args = _combine(preds[t])
             status = await q.execute(f"DELETE FROM {qtable(t)} WHERE {where}", *args)
@@ -361,7 +384,8 @@ async def cleanup(op, *, orgs, users=(), user_sub_like=None, plan=None, gucs=(),
     seconds = time.monotonic() - t0
     print(f"[INFO] cleanup{(' ' + label) if label else ''}: {len(preds)} table(s), {rows_total} row(s), "
           f"{q.n} queries in {seconds:.1f} s", flush=True)
-    return {"log": log, "seconds": seconds, "tables": len(preds), "queries": q.n, "demo_fixture_rows": demo_ok}
+    return {"log": log, "seconds": seconds, "tables": len(preds), "queries": q.n, "demo_fixture_rows": demo_ok,
+            "auto_gucs": auto}
 
 
 async def leftover_count(op, *, orgs, users=(), user_sub_like=None, extra=()) -> int:
