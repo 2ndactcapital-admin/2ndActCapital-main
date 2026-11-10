@@ -1,0 +1,14 @@
+{
+  "$id": "generic_envelope_v1",
+  "title": "Counterparty simulator — generic message envelope (cpsim01)",
+  "description": "Every institution type starts with this envelope. A properly formatted message in → the mirrored message out.",
+  "type": "object",
+  "required": ["message_type", "message_id", "as_of", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "message_type": {"type": "string", "minLength": 2, "maxLength": 80, "pattern": "^[a-z][a-z0-9.]*(_[a-z0-9.]+)*$"},
+    "message_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9.:-]+$"},
+    "as_of": {"type": "string", "format": "date-time"},
+    "payload": {"type": "object"}
+  }
+}
