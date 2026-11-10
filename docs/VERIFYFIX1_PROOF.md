@@ -70,3 +70,38 @@ verify_wftemplates1.py | TOTAL: 10 PASS, 0 FAIL | exit 0 | 9s
 
 All 64 (the 63 in the set + verify_verifyfix1): 0 FAIL.
 ```
+
+# VERIFYFIX1 fix 2 — proof tail (2026-11-10)
+
+## verify_verifyfix1.py
+
+- `--only=1,2,3,4,6` (items (1)–(4), (6) and (T)): **TOTAL: 28 PASS, 0 FAIL**, exit 0 — re-run in fix 2.
+- Item (5) NOT re-run in fix 2: the 64 self-checks above total ~27 minutes (verify_portentry1 alone 469 s), past one
+  600 s foreground call. The 64/64, 0 FAIL above (fix 1, 5fef434 / 58d7f95) is recorded instead — and still holds for
+  the current tree: `git diff --stat 58d7f95 HEAD -- apps/api/scripts/ scripts/` touches only `_verify_oneoff.py`,
+  which is not a verify and is not in the set.
+
+## One-offs (`_verify_oneoff.py`, seed + one fixture section + the verify's own teardown, timeout 600)
+
+```
+verify_rep6.py   --section (default) y_profiles   | TOTAL: 24 PASS, 0 FAIL | exit 0
+verify_cash06.py --section=y_validation           | TOTAL: 69 PASS, 0 FAIL | exit 0
+verify_cash06.py (default y_screens — static, not a fixture section; see [FIND]) | TOTAL: 67 PASS, 0 FAIL
+```
+Each ends with "zero fixture rows remain" and "every counted table back at its pre-run count".
+[FIND] the default section is the first `y_` after the seed in main's order; cash06 runs its fixture sections from a
+`FIXTURE_SECTIONS` loop, so pass `--section=` for such verifies.
+
+## --cleanup-only + real rows unchanged
+
+Real rows = `user_roles` whose user and user's org are not `is_test`; `audit_log` rows whose org (and user, if any)
+are not `is_test`, created before a fixed cutoff (2026-11-10 20:18:42 UTC) so unrelated live writes cannot move it.
+Read as app_service inside a transaction with `SET LOCAL app.is_super_admin = 'true'` — a first read WITHOUT it
+returned 0 / 0 (RLS), which would have made the comparison vacuous.
+
+```
+before:  user_roles real 14  md5 bca83edd1d18ccf2f87170c0b0baf141 | audit_log real 813  md5 d0b2a02629ae3573c5ef5afc9ef4af5f
+verify_rep6.py   --cleanup-only | [PASS] zero fixture rows remain — 0 | TOTAL: 1 PASS, 0 FAIL
+verify_cash06.py --cleanup-only | [PASS] every touched table (and every org_id table) holds zero fixture rows; zero fixture rows remain | TOTAL: 2 PASS, 0 FAIL
+after:   user_roles real 14  md5 bca83edd1d18ccf2f87170c0b0baf141 | audit_log real 813  md5 d0b2a02629ae3573c5ef5afc9ef4af5f
+```
