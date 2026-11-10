@@ -1,5 +1,5 @@
 {
- "app_route_count": 1031,
+ "app_route_count": 1048,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -20354,6 +20354,312 @@
    "write": true
   },
   {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "list_counterparties",
+   "note": "",
+   "path": "/api/v1/admin/counterparties",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "create_counterparty",
+   "note": "",
+   "path": "/api/v1/admin/counterparties",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "org_access",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/org-access",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "set_org_access",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/org-access/{target_org_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "get_counterparty",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "edit_counterparty",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "activate_counterparty",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/activate",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "disable_counterparty",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/disable",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "generate_key",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/key/generate",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "rotate_key",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/key/rotate",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "revoke_key",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/key/revoke",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "regenerate_bank",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/bank/regenerate",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "set_fix",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/fix",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "set_behaviour",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/behaviour",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "advance_clock",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/clock/advance",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "request_log",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/requests",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "test_message",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/test-message",
+   "public": false,
+   "write": true
+  },
+  {
    "after": "none beyond auth",
    "before": "\u2014",
    "before_effect": "new route",
@@ -21022,6 +21328,26 @@
    "path": "/debug/user-info",
    "public": true,
    "write": false
+  }
+ ],
+ "simulator_routes": [
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "POST"
+   ],
+   "module": "cpsim.app",
+   "name": "mirror_endpoint",
+   "path": "/cpsim/c/{slug}/mirror"
+  },
+  {
+   "auth": "none (liveness only)",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "health",
+   "path": "/cpsim/health"
   }
  ]
 }

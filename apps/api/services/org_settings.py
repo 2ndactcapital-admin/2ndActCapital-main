@@ -80,6 +80,11 @@ MAX_SETTING_DAYS = 3650
 # that does.
 SECRET_SETTING_KEYS = frozenset({"custody.account_hash_salt"})
 
+# CPSIM01 — keys this generic writer must never set (an org admin may write any OTHER key of their own org here).
+# counterparty_sim.allowed is switched only from Admin → Counterparties (Super Admin, audited); the database refuses it
+# without app.is_super_admin too (docs/cpsim01_part1.sql cpsim_org_setting_guard_trg).
+ADMIN_ROUTER_ONLY_SETTING_KEYS = frozenset({"counterparty_sim.allowed"})
+
 # ── Defaults ──────────────────────────────────────────────────────────────
 # Mirrors the values seeded for 2nd Act Capital. Any org that has not set a
 # given key resolves to the value here. Categories must match the `category`
@@ -714,6 +719,10 @@ async def set_setting(conn, org_id, key: str, value, updated_by, *, principal=No
         role = (principal or {}).get("role") or "unknown"
         raise SettingsPermissionError(
             f"Role '{role}' may not manage settings for org {org_id}"
+        )
+    if key in ADMIN_ROUTER_ONLY_SETTING_KEYS:
+        raise SettingsPermissionError(
+            f"{key} is set only from Admin → Counterparties (Super Admin)"
         )
 
     # Normalise first (the settings editor posts every field as a string), then

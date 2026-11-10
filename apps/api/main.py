@@ -76,6 +76,7 @@ from routers.authority import router as authority_router
 from routers.approvals import router as approvals_router  # BULKAPPROVE1
 from routers.lot_method import router as lot_method_router
 from routers.custodians import router as custodians_router
+from routers.admin_counterparties import router as admin_counterparties_router  # CPSIM01
 from routers.human_tasks import router as human_tasks_router
 from routers.models import router as models_router
 from routers.marketplace import router as marketplace_router
@@ -727,6 +728,7 @@ app.include_router(authority_router, prefix="/api/v1")
 app.include_router(approvals_router, prefix="/api/v1")  # BULKAPPROVE1
 app.include_router(lot_method_router, prefix="/api/v1")
 app.include_router(custodians_router, prefix="/api/v1")
+app.include_router(admin_counterparties_router, prefix="/api/v1")  # CPSIM01 — Admin → Counterparties (Super Admin)
 app.include_router(human_tasks_router, prefix="/api/v1")
 app.include_router(models_router, prefix="/api/v1")
 # Debug router mounted at root so the path is exactly /debug/user-info.

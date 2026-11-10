@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 1024 · guarded 248 · sql-scope 53 · body-check 15 · legacy-rule 3
+Routes: 1041 · guarded 248 · sql-scope 53 · body-check 15 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -39,6 +39,23 @@ Routes: 1024 · guarded 248 · sql-scope 53 · body-check 15 · legacy-rule 3
 | GET | `/api/v1/admin/ai/jobs` | ai_ensembles | scrub |
 | GET | `/api/v1/admin/ai/spend-ceiling` | org_settings | scrub |
 | PUT | `/api/v1/admin/ai/spend-ceiling` | org_settings | scrub |
+| GET | `/api/v1/admin/counterparties` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties` | admin_counterparties | scrub |
+| GET | `/api/v1/admin/counterparties/org-access` | admin_counterparties | scrub |
+| PUT | `/api/v1/admin/counterparties/org-access/{target_org_id}` | admin_counterparties | scrub |
+| GET | `/api/v1/admin/counterparties/{counterparty_id}` | admin_counterparties | scrub |
+| PUT | `/api/v1/admin/counterparties/{counterparty_id}` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/activate` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/bank/regenerate` | admin_counterparties | scrub |
+| PUT | `/api/v1/admin/counterparties/{counterparty_id}/behaviour` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/clock/advance` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/disable` | admin_counterparties | scrub |
+| PUT | `/api/v1/admin/counterparties/{counterparty_id}/fix` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/key/generate` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/key/revoke` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/key/rotate` | admin_counterparties | scrub |
+| GET | `/api/v1/admin/counterparties/{counterparty_id}/requests` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/test-message` | admin_counterparties | scrub |
 | GET | `/api/v1/admin/edgar/bulk/institutions` | edgar_pipeline_admin | scrub |
 | POST | `/api/v1/admin/edgar/bulk/preview` | edgar_pipeline_admin | scrub |
 | GET | `/api/v1/admin/edgar/bulk/runs` | edgar_pipeline_admin | scrub |

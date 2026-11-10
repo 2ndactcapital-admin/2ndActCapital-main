@@ -134,13 +134,48 @@ def _flat(routes, prefix=""):
             yield prefix, r
 
 
+#: CPSIM01 — a sub-app MOUNTED on the API (app.mount) answers with its OWN auth, never a Hollisworks session: its
+#: routes are not Hollisworks routes (main.py's auth middlewares pass the prefix through) and are listed separately.
+SIMULATOR_AUTH = ("own auth — simulator key (Authorization: Bearer cpsim_…, cpsim/auth.py); a Hollisworks session / "
+                  "JWT never authenticates; X-Counterparty-Simulated on every response")
+
+
+def _mount_inner(m):
+    inner = m.app
+    while not hasattr(inner, "routes") and hasattr(inner, "app"):
+        inner = inner.app
+    return inner
+
+
+def simulator_routes():
+    """Routes of every sub-app mounted on main.app (CPSIM01): path, methods, module, name, auth."""
+    import main
+    from fastapi.routing import APIRoute
+    from starlette.routing import Mount
+
+    out = []
+    for m in main.app.routes:
+        if not isinstance(m, Mount):
+            continue
+        for r in getattr(_mount_inner(m), "routes", []):
+            if isinstance(r, APIRoute):
+                public = r.path == "/health"
+                out.append({"path": m.path + r.path, "methods": sorted(set(r.methods) - {"HEAD"}),
+                            "module": r.endpoint.__module__, "name": r.endpoint.__name__,
+                            "auth": "none (liveness only)" if public else SIMULATOR_AUTH})
+    return sorted(out, key=lambda x: (x["path"], x["methods"]))
+
+
 def app_routes():
     import main
     from fastapi.routing import APIRoute
+    from starlette.routing import Mount
 
     out = []
     for prefix, r in _flat(main.app.routes):
         path = prefix + getattr(r, "path", "")
+        if isinstance(r, Mount):
+            continue            # CPSIM01: a mounted sub-app's routes are listed by simulator_routes()
         if not isinstance(r, APIRoute):
             out.append({"path": path, "kind": "docs" if path in DOCS_ROUTES else type(r).__name__})
             continue
@@ -460,6 +495,16 @@ def render(routes, rows) -> str:
             "- `resolve_tab_visibility` (UDF tabs) defaults a tab with no grant row to visible — a "
             "display default, not a capability grant; recorded, not changed.",
             ""]
+    sims = simulator_routes()
+    if sims:
+        out += ["## Simulator routes — own auth (CPSIM01)", "",
+                "Mounted sub-app(s) (`app.mount`), NOT Hollisworks routes: `main.py`'s auth middlewares pass the "
+                "prefix through untouched and the sub-app authenticates with its own simulator keys. Not counted in "
+                "the route total above.", "",
+                "| Path | Method | Module | Auth |", "|---|---|---|---|"]
+        for r in sims:
+            out.append(f"| `{r['path']}` | {','.join(r['methods'])} | {r['module']} | {r['auth']} |")
+        out.append("")
     return "\n".join(out)
 
 
@@ -468,7 +513,8 @@ def main_cli() -> int:
     md = render(routes, rows)
     js = json.dumps({"before_ref": BEFORE_REF, "app_route_count": len(routes),
                      "docs_route_count": sum(1 for r in routes if r.get("kind") == "docs"),
-                     "routes": rows}, indent=1, sort_keys=True, default=sorted) + "\n"
+                     "routes": rows, "simulator_routes": simulator_routes()}, indent=1, sort_keys=True,
+                    default=sorted) + "\n"
     if "--check" in sys.argv:
         stale = (not DOC_MD.exists() or DOC_MD.read_text(encoding="utf-8") != md
                  or not DOC_JSON.exists() or DOC_JSON.read_text(encoding="utf-8") != js)
