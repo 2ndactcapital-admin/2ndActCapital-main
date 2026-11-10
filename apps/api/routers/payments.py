@@ -47,7 +47,8 @@ ACTIONS = ("edit", "submit", "mark_sent", "consent_requested", "acknowledge", "s
 class DraftIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_account_id: UUID
-    destination_account_id: UUID
+    destination_account_id: UUID | None = None
+    destination_payee_id: UUID | None = None        # CASH08 — refused while third-party payments are not enabled
     amount: str
     rail: str
     value_date: date
@@ -84,6 +85,8 @@ def _err(exc: Exception) -> HTTPException | None:
         return HTTPException(status_code=404, detail=str(exc) or "Not found")
     if isinstance(exc, PS.PaymentAuthorityError):
         return HTTPException(status_code=403, detail={"message": str(exc), "reasons": exc.reasons})
+    if isinstance(exc, PS.ThirdPartyRefused) and str(exc) == PS.NOT_ENABLED:
+        return HTTPException(status_code=403, detail=str(exc))   # CASH08 — the switch is off
     if isinstance(exc, (PS.MakerCheckerViolation, PermissionError, HTK.HumanTaskPermissionError, HTK.MakerCheckerError,
                         HTK.AgentActorRefused)):
         return HTTPException(status_code=403, detail=str(exc))

@@ -292,6 +292,17 @@ out to build them. Check first.
   authority is not on the trade path (rep7b authority is); a Treasury position's quantity is assumed
   to be par; a note's buy limit is par (no coupon recorded); a maturity the custodian already removed
   from positions is seen only as cash.
+- ⬜ CASH08 operator steps: run verify_cash08.py (regressions verify_cash06.py + verify_cash01.py). Publish the
+  disclosure DRAFT `cash.third_party` (`load_disclosure_defaults.py --drafter`, then a SECOND Super Admin publishes;
+  until then the built-in text shows). Grant `manage_payees` / `approve_payees` and a SECOND `approve_payees` holder at
+  2nd Act (a payee's creator never approves it). **Counsel review before the third-party switch** — custody, SLOAs,
+  the call-back procedure and the `cash.third_party` text; only after counsel's written sign-off: remove
+  `THIRD_PARTY_RELEASE_LOCKED` (code review), let `payment_instructions` name a payee (schema + the same-owner trigger),
+  wire the SLOA check into the send path and the first-payment gate live, then the two-Super-Admin request with the
+  counsel document (docs/cash/CASH_PAYEES.md "What enabling third-party payments will require"). Open: Chancery has
+  no invoice / SLOA category (documents are tagged through `document_record_links`; a `doc_category` would only feed
+  the classifier); SLOA attach is audited but not maker-checker; a bank change cannot change the call-back number
+  except through the same governed change.
 - ⬜ CASH06 operator steps: run verify_cash06.py (regressions verify_cash07.py + verify_s29b.py). Publish the disclosure
   DRAFT `cash.rules` (`load_disclosure_defaults.py --drafter`, then a SECOND Super Admin publishes; until then the
   built-in text shows). Before a real rule runs unattended: the org switch `workflows.autonomy` ON and the rule's

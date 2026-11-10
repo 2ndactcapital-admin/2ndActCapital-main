@@ -88,6 +88,7 @@ MATCH_BEFORE_BD = 2          # the feed window: value date − 2 business days �
 MATCH_AFTER_BD = 5           # … to value date + 5 business days
 CONSENT_GRACE_BD = 5         # awaiting the member's consent this long past the value date → expired
 THIRD_PARTY = "third-party payments come later"
+NOT_ENABLED = "third-party payments are not enabled"   # CASH08 — the switch (services.cash_payees.NOT_ENABLED)
 
 #: the offline fallback of the disclosure-library key ``cash.payments`` (a library version replaces it once published)
 PAYMENTS_DISCLOSURE = (
@@ -489,9 +490,28 @@ def _need(row: dict, statuses: tuple[str, ...], what: str) -> None:
                               f"{', '.join(STATUS_LABELS[s].lower() for s in statuses)})")
 
 
+async def _third_party_gate(conn, *, org_id, actor_id, payee_id, what: str) -> None:
+    """CASH08 — an instruction that names a PAYEE as its destination asks the third-party switch FIRST, before any
+    account is read (services.cash_payees.third_party_refusal). Off (the default, and locked in this release):
+    "third-party payments are not enabled". Even with the switch on, payment_instructions cannot store a payee yet
+    (destination_account_id is an account) — enabling is its own release, after counsel (CASH08_NOTES §6)."""
+    from services import cash_payees as CPY
+
+    why = await CPY.third_party_refusal(conn, org_id)
+    if why is None:
+        why = ("a payment instruction cannot name a payee yet — third-party payments are enabled for this "
+               "organization but not built (their own release, after counsel)")
+    await _refused(org_id, actor_id, what, [why])
+    raise ThirdPartyRefused(why)
+
+
 async def _validate(pool, conn, *, org_id, actor_id, household_id, data: dict, t: date, what: str) -> dict:
     """Every rule a draft must pass, ALL reasons gathered: the accounts, same owner, the rail, the value date, the
-    purpose link, both authority checks. Returns the normalised fields."""
+    purpose link, both authority checks. Returns the normalised fields. CASH08: a payee destination is refused by the
+    third-party gate before anything else."""
+    if data.get("destination_payee_id"):
+        await _third_party_gate(conn, org_id=org_id, actor_id=actor_id, payee_id=data["destination_payee_id"],
+                                what=what)
     try:
         src = await load_account(conn, org_id, data.get("source_account_id"), t)
         dst = await load_account(conn, org_id, data.get("destination_account_id"), t)
@@ -558,6 +578,11 @@ async def draft(pool, *, org_id, actor_id, household_id, data: dict) -> dict:
 
 async def edit(pool, *, org_id, actor_id, payment_id, changes: dict) -> dict:
     """A DRAFT's terms change (system-axis archive; the editor joins maker_ids — every editor is a maker)."""
+    if changes.get("destination_payee_id"):
+        async with pool.acquire() as conn:
+            actor = await _human(conn, actor_id, org_id)
+            await _third_party_gate(conn, org_id=org_id, actor_id=actor["id"], payee_id=changes["destination_payee_id"],
+                                    what="edit a payment instruction")
     bad = set(changes) - set(EDITABLE)
     if bad:
         raise PaymentError(f"not editable: {sorted(bad)}")
@@ -727,6 +752,15 @@ async def _precheck(pool, task, outcome, actor_id):
         await sod.gate(conn, org_id=task["org_id"], item_type=sod.PAYMENT_INSTRUCTION, checker_id=actor_id,
                        maker_ids=[str(m) for m in row["maker_ids"]], item_id=str(row["id"]),
                        household_id=row["household_id"], site="payments._precheck", refuse=_refuse)
+        if row.get("payee_id"):
+            # CASH08 — DORMANT: no instruction can carry a payee yet (the column does not exist). When one can, the
+            # FIRST payment to a payee needs a checker who is neither the payee's creator nor its approver.
+            from services import cash_payees as CPY
+
+            payee = await CPY.load(conn, task["org_id"], row["payee_id"])
+            await CPY.first_payment_gate(conn, org_id=task["org_id"], payee=payee, checker_id=actor_id,
+                                         instruction_makers=[str(m) for m in row["maker_ids"]], item_id=row["id"],
+                                         household_id=row["household_id"], site="payments._precheck.first_payee")
         reasons = await _checker_refusals(pool, conn, task["org_id"], actor_id, row, today())
     if reasons:
         await _refused(task["org_id"], actor_id, "approve a payment instruction", reasons, row["id"])

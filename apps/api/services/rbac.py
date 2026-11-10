@@ -261,6 +261,9 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     # floor: always a different person). Kept in step with docs/cash07_part1.sql §1.
     ("initiate_payment", "payments", "initiate"),
     ("approve_payment", "payments", "approve"),
+    # CASH08 — payees (create / bank changes / SLOAs; approve — the S30 floor). Kept in step with docs/cash08_part1.sql §1.
+    ("manage_payees", "payees", "manage"),
+    ("approve_payees", "payees", "approve"),
     # rep3 — model management (Replication Studio models, uploads, library).
     ("view_models", "models", "view"),
     ("manage_models", "models", "manage"),

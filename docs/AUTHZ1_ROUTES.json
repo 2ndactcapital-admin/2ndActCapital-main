@@ -1,5 +1,5 @@
 {
- "app_route_count": 1016,
+ "app_route_count": 1031,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -18283,6 +18283,291 @@
    "name": "payment_action_route",
    "note": "",
    "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}/{action}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_payees",
+     "manage_payees",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash_payees",
+   "name": "list_payees_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payees",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_payees",
+     "manage_payees",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash_payees",
+   "name": "payee_detail_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payees/{payee_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_payees; any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "create_payee_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payees",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_payees; any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "approve_payee_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payees/{payee_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_payees; any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "reject_payee_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payees/{payee_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_payees; any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "approve_bank_change_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payees/{payee_id}/bank-change/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_payees; any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "reject_bank_change_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payees/{payee_id}/bank-change/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_payees; any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "payee_action_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payees/{payee_id}/{action}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_payees",
+     "manage_payees",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash_payees",
+   "name": "invoices_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/invoices",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_payees; any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "tag_invoice_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/invoices/tag",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_payees+manage_portfolio; any(view_portfolio|manage_payees|approve_payees); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "record_invoice_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/invoices/record",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash_payees",
+   "name": "third_party_state_route",
+   "note": "",
+   "path": "/api/v1/cash/third-party",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "third_party_request_route",
+   "note": "",
+   "path": "/api/v1/cash/third-party/request",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "third_party_approve_route",
+   "note": "",
+   "path": "/api/v1/cash/third-party/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_payees",
+   "name": "third_party_reject_route",
+   "note": "",
+   "path": "/api/v1/cash/third-party/reject",
    "public": false,
    "write": true
   },
