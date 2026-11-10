@@ -43,4 +43,30 @@ verify_rep10.py | TOTAL: 5 PASS, 0 FAIL | exit 0 | 7s
 verify_rep11.py | TOTAL: 5 PASS, 0 FAIL | exit 0 | 10s
 verify_rep12.py | TOTAL: 8 PASS, 0 FAIL | exit 0 | 12s
 verify_rep13.py | TOTAL: 12 PASS, 0 FAIL | exit 0 | 13s
+verify_rep14.py | TOTAL: 11 PASS, 0 FAIL | exit 0 | 12s
+verify_rep15.py | TOTAL: 10 PASS, 0 FAIL | exit 0 | 11s
+verify_rep2.py | TOTAL: 7 PASS, 0 FAIL | exit 0 | 10s
+verify_rep3.py | TOTAL: 7 PASS, 0 FAIL | exit 0 | 9s
+verify_rep4.py | TOTAL: 4 PASS, 0 FAIL | exit 0 | 7s
+verify_rep5.py | TOTAL: 5 PASS, 0 FAIL | exit 0 | 8s
+verify_rep6.py | TOTAL: 7 PASS, 0 FAIL | exit 0 | 14s
+verify_rep7.py | TOTAL: 5 PASS, 0 FAIL | exit 0 | 8s
+verify_rep7b.py | TOTAL: 13 PASS, 0 FAIL | exit 0 | 30s
+verify_rep8.py | TOTAL: 4 PASS, 0 FAIL | exit 0 | 5s
+verify_rep9.py | TOTAL: 6 PASS, 0 FAIL | exit 0 | 10s
+verify_rollup2.py | TOTAL: 49 PASS, 0 FAIL | exit 0 | 29s
+verify_s28.py | TOTAL: 16 PASS, 0 FAIL | exit 0 | 11s
+verify_s29b.py | TOTAL: 15 PASS, 0 FAIL | exit 0 | 11s
+verify_s30.py | TOTAL: 12 PASS, 0 FAIL | exit 0 | 26s
+verify_secmaster1.py | TOTAL: 8 PASS, 0 FAIL | exit 0 | 8s
+verify_secmaster2.py | TOTAL: 18 PASS, 0 FAIL | exit 0 | 13s
+verify_staffroles1.py | TOTAL: 19 PASS, 0 FAIL | exit 0 | 53s
+verify_usermgmt1.py | TOTAL: 1 PASS, 0 FAIL | exit 0 | 5s
+verify_verifyfix1.py | TOTAL: 14 PASS, 0 FAIL | exit 0 | 13s
+verify_vhk1.py | TOTAL: 2 PASS, 0 FAIL | exit 0 | 11s
+verify_vhk2.py | TOTAL: 41 PASS, 0 FAIL | exit 0 | 27s
+verify_visibility1.py | TOTAL: 56 PASS, 0 FAIL | exit 0 | 14s
+verify_wftemplates1.py | TOTAL: 10 PASS, 0 FAIL | exit 0 | 9s
+
+All 64 (the 63 in the set + verify_verifyfix1): 0 FAIL.
 ```
