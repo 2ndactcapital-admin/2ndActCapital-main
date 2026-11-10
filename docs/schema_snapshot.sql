@@ -5015,6 +5015,131 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY xray_runs_pkey: (id)
 
+-- ===== cpsim.counterparties =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   slug                                     text NOT NULL
+--   name                                     text NOT NULL
+--   institution_type                         text NOT NULL
+--   is_simulated                             boolean NOT NULL DEFAULT true
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   destination_path                         text NOT NULL
+--   notes                                    text
+--   created_by                               uuid
+--   updated_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   archived_from_id                         uuid
+--   PRIMARY KEY counterparties_pkey: (id)
+
+-- ===== cpsim.counterparty_bank_details =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   kind                                     text NOT NULL
+--   bank_name                                text NOT NULL
+--   aba_wire                                 text
+--   aba_ach                                  text
+--   account_number                           text
+--   bic                                      text
+--   iban                                     text
+--   intermediary_bank_name                   text
+--   intermediary_bic                         text
+--   intermediary_aba                         text
+--   beneficiary_name                         text
+--   beneficiary_address                      text
+--   created_by                               uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY counterparty_bank_details_pkey: (id)
+
+-- ===== cpsim.counterparty_behaviour =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   default_outcome                          text NOT NULL DEFAULT 'accept'::text
+--   reject_reason                            text
+--   partial_pct                              numeric
+--   delay_seconds                            integer
+--   ach_return_code                          text
+--   ach_return_after_days                    integer
+--   webhooks_enabled                         boolean NOT NULL DEFAULT false
+--   created_by                               uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY counterparty_behaviour_pkey: (id)
+
+-- ===== cpsim.counterparty_clock =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   business_date                            date NOT NULL
+--   reason                                   text NOT NULL
+--   set_by                                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY counterparty_clock_pkey: (id)
+
+-- ===== cpsim.counterparty_credentials =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   kind                                     text NOT NULL
+--   key_prefix                               text NOT NULL
+--   key_hash                                 text NOT NULL
+--   salt                                     text NOT NULL
+--   last4                                    text NOT NULL
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   rotated_at                               timestamp with time zone
+--   revoked_at                               timestamp with time zone
+--   revoked_by                               uuid
+--   replaced_by                              uuid
+--   PRIMARY KEY counterparty_credentials_pkey: (id)
+
+-- ===== cpsim.counterparty_fix_sessions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   begin_string                             text NOT NULL
+--   sender_comp_id                           text NOT NULL
+--   target_comp_id                           text NOT NULL
+--   host                                     text NOT NULL
+--   port                                     integer NOT NULL
+--   heartbt_int                              integer NOT NULL DEFAULT 30
+--   reset_on_logon                           boolean NOT NULL DEFAULT true
+--   username                                 text
+--   password_credential_id                   uuid
+--   created_by                               uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY counterparty_fix_sessions_pkey: (id)
+
+-- ===== cpsim.institution_types =====
+--   key                                      text NOT NULL
+--   label                                    text NOT NULL
+--   protocol                                 text NOT NULL
+--   field_groups                             ARRAY NOT NULL
+--   envelope_schema                          text NOT NULL DEFAULT 'generic_envelope_v1'::text
+--   description                              text NOT NULL
+--   sort_order                               integer NOT NULL DEFAULT 100
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY institution_types_pkey: (key)
+
+-- ===== cpsim.real_bic_examples =====
+--   bic                                      text NOT NULL
+--   note                                     text NOT NULL
+--   PRIMARY KEY real_bic_examples_pkey: (bic)
+
+-- ===== cpsim.request_log =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid
+--   slug                                     text
+--   method                                   text NOT NULL
+--   path                                     text NOT NULL
+--   status                                   integer NOT NULL
+--   auth_outcome                             text NOT NULL
+--   shape_valid                              boolean
+--   error_count                              integer NOT NULL DEFAULT 0
+--   message_type                             text
+--   at                                       timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY request_log_pkey: (id)
+
 -- ===== litellm.LiteLLM_AccessGroupTable =====
 --   access_group_id                          text NOT NULL
 --   access_group_name                        text NOT NULL
