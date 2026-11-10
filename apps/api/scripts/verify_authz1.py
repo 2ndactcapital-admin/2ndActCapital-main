@@ -50,6 +50,7 @@ sys.path.insert(0, str(HERE))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "authz1"
 BEFORE_REF = "a911ac7"
@@ -180,7 +181,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch", sub=None):
 async def counts(conn) -> dict:
     out = {}
     for t in COUNTED:
-        out[t] = int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval"))
+        out[t] = int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, FIXTURE_USERS), fetch="fetchval"))
     out["gold_checksum"] = await platform(
         conn, "SELECT md5(COALESCE(string_agg(t::text, ',' ORDER BY t.id), '')) FROM portfolio.note_gold_values t",
         fetch="fetchval")

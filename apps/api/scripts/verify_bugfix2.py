@@ -51,6 +51,7 @@ sys.path.insert(0, str(HERE))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "bugfix2"
 BEFORE_REF = "3d5368a"   # bugfix2-work base (rep11 + previewperf merged, schema refreshed) — the pre-sprint code
@@ -357,7 +358,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def pk_of(conn, table: str) -> list[str]:
@@ -824,8 +825,21 @@ async def y_reclassified(conn):
     now = json.loads(ROUTES_JSON.read_text(encoding="utf-8"))
     b = _open_reads(before)
     after = {(tuple(r["methods"]), r["path"], r["name"]): r for r in now["routes"]}
-    changed = [(k, after[k]) for k in b if k in after and after[k]["after"] != "none beyond auth"]
-    check(len(changed) == 45, "45 reclassified read routes found in the record", f"{len(changed)}")
+    # VERIFYFIX1 (handed off by CATCHALL1 / verify_vhk2): the 45 are bugfix2's OWN reclassifications — counted at
+    # bugfix2's own end ref (BEFORE_REF → end, both pinned history), never against TODAY's record, which any later
+    # sprint that gates one more of those open routes would change. Today's rule is asserted per route instead:
+    # each of the 45 still exists and is still gated.
+    end_ref, how = VS.sprint_end_ref(SPRINT_KEY)
+    at_end = {(tuple(r["methods"]), r["path"], r["name"]): r
+              for r in json.loads(VS.git_show(end_ref, "docs/AUTHZ1_ROUTES.json") or "{}").get("routes", [])}
+    own = [k for k in b if k in at_end and at_end[k]["after"] != "none beyond auth"]
+    check(len(own) == 45, "45 reclassified read routes found in bugfix2's own record (BEFORE_REF → its end ref)",
+          f"{len(own)} ({BEFORE_REF} → {how})")
+    gone = [k for k in own if k not in after]
+    reopened = [k for k in own if k in after and after[k]["after"] == "none beyond auth"]
+    check(not gone and not reopened, "each of bugfix2's reclassified routes still exists today and is still gated",
+          f"gone {gone[:4]}; reopened {reopened[:4]}")
+    changed = [(k, after[k]) for k in own if k in after]
     bad_m, bad_s, bad_o = [], [], []
     for k, r in changed:
         path = _fill(r["path"])

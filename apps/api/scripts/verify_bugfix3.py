@@ -51,6 +51,7 @@ sys.path.insert(0, str(API_DIR))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "bugfix3"
 BEFORE_REF = "9504fff"   # bugfix3-work base: "olivo demo: Muse entry plan v4 (resume pass after portentry2)"
@@ -271,8 +272,29 @@ FIX1_NEEDLES = [
 
 def self_fix1(check, find):
     print("[INFO] FIX 1 — static: verify reproduction soundness + taxonomy wiring")
+    # VERIFYFIX1 — what bugfix3 WROTE is read at bugfix3's own end ref (docs/VERIFY_RULES.md rule 1): ROLLUP2 later
+    # changed key_for_kind's signature (global_security_id), the held-away call and the rollup's unkeyed branch
+    # (counted as 'unclassified' instead of skipped), so the working tree no longer holds bugfix3's exact lines.
+    end_ref, how = VS.sprint_end_ref(SPRINT_KEY)
     for rel, needle, meaning in FIX1_NEEDLES:
-        check(needle in _read(rel), f"FIX 1 — {meaning}", f"{rel}: needle missing")
+        check(needle in (VS.git_show(end_ref, rel) or ""), f"FIX 1 — {meaning} (at bugfix3's own end, {how})",
+              f"{rel}: needle missing at {end_ref}")
+    # …and TODAY's rule: one resolver, still called on every creation path bugfix3 wired.
+    today_calls = {rel: "key_for_kind(" in _read(rel) for rel in (
+        "apps/api/services/portfolio_assets.py", "apps/api/services/portfolio_manual.py",
+        "apps/api/services/held_away.py")}
+    check("async def key_for_kind(" in _read("apps/api/services/portfolio_kind_taxonomy.py")
+          and all(today_calls.values()),
+          "FIX 1 — 4a today: ONE resolver (portfolio_kind_taxonomy.key_for_kind), still called by create_asset, "
+          "manual_asset_for and the held-away asset", f"{today_calls}")
+    rollup = _read("apps/api/services/portfolio_rollup.py")
+    if "reason=NO_TAXONOMY_REASON," not in rollup:
+        find("FIX 1 — 4b today: ROLLUP2 replaced the rollup's skip branch — an unkeyed valued line is COUNTED under "
+             "'unclassified' (portfolio_rollup.UNCLASSIFIED_BUCKET), not skipped", "superseded by design, not lost")
+        check("UNCLASSIFIED_BUCKET" in rollup and "def skipped_of(result) -> dict:" in
+              _read("apps/api/services/portfolio_refresh.py"),
+              "FIX 1 — 4b today: an unkeyed line is never a silent $0 (counted as 'unclassified'; skips still "
+              "reported by skipped_of)", "")
     before = VS.git_show(BEFORE_REF, "apps/api/routers/portfolio_positions.py") or ""
     got = route_calls(before, "get", "/portfolio/positions") if before else None
     names = got[0] if got else set()
@@ -296,9 +318,15 @@ def self_fix1(check, find):
     from services.org_settings import DEFAULT_SETTINGS
     from services.portfolio_manual import KIND_SHAPE
 
+    from services.fund_classification import FUND_KINDS
     m = DEFAULT_SETTINGS.get("portfolio.kind_taxonomy") or {}
+    # VERIFYFIX1 — ROLLUP2 Task 3 removed "mutual_fund" from the kind map by design: a FUND kind is never keyed by
+    # its kind, it is classified by its master category (services.fund_classification.FUND_KINDS) — so the rule
+    # today is "every NON-fund creation kind maps to a key", and no fund kind may be in the map.
     want = ({k for k in DIRECT_KINDS if k != "other"} | {f"private_{k}" for k in PRIVATE_KINDS} | set(KIND_SHAPE)
-            | {"cash"})
+            | {"cash"}) - set(FUND_KINDS)
+    check(not (set(FUND_KINDS) & set(m)), "FIX 1 (4a, ROLLUP2) — no fund kind is keyed by its kind (funds classify "
+          "by category)", f"{sorted(set(FUND_KINDS) & set(m))}")
     check(not (want - set(m)) and "other" not in m,
           "FIX 1 (4a) — every creation kind maps to a key (real estate, collectible, operating business, insurance "
           "cash value, private fund … digital asset, cash); 'other' deliberately unmapped (reported, not guessed)",
@@ -452,7 +480,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def pk_of(conn, table: str) -> list[str]:

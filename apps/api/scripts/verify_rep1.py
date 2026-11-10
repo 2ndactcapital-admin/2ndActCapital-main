@@ -106,6 +106,7 @@ if __name__ == "__main__" and VS.requested():
 
 # VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 if __name__ == "__main__":
     VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
 
@@ -224,7 +225,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def fingerprint(conn, sql, *args) -> tuple[int, str]:
@@ -1301,10 +1302,11 @@ def regression():
     env = os.environ | {"VERIFY_NESTED": "1"}
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_underlyingresolution.py")], REPO, timeout=1200,
                              env=env)
-    m = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+    nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+    m = [(str(nt.passed), str(nt.failed))] if nt.line else []
     fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-    check(bool(m) and m[-1][1] == "0" and code == 0, "verify_underlyingresolution.py: 0 FAIL",
-          f"{m[-1] if m else 'no TOTAL'}; {fails[:3]} {err[-200:] if not m else ''}")
+    check(nt.ok and code == 0, "verify_underlyingresolution.py: 0 FAIL",
+          f"{nt.detail()}; {fails[:3]} {err[-200:] if not m else ''}")
 
 
 async def run(name, fn, *args):

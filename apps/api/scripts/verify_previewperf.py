@@ -446,13 +446,14 @@ def y_bulkfetchui_full(worker_ok: bool) -> None:
     except subprocess.TimeoutExpired as exc:
         code, out, err = 124, (exc.stdout or b"").decode() if isinstance(exc.stdout, bytes) else (exc.stdout or ""), \
             f"timeout after {SUB_TIMEOUT}s"
-    m = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+    nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+    m = [(str(nt.passed), str(nt.failed))] if nt.line else []
     fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
     timing = [ln.strip() for ln in out.splitlines() if "live preview" in ln or ln.strip().startswith("round ")]
-    print(f"[INFO] verify_bulkfetchui.py: exit {code}, {time.monotonic() - t0:.0f} s, {m[-1] if m else 'no TOTAL'}")
+    print(f"[INFO] verify_bulkfetchui.py: exit {code}, {time.monotonic() - t0:.0f} s, {nt.detail()}")
     for ln in timing:
         print(f"    {ln}")
-    check(code == 0 and bool(m) and m[-1][1] == "0", "verify_bulkfetchui.py full run: exit 0, 0 FAIL "
+    check(code == 0 and nt.ok, "verify_bulkfetchui.py full run: exit 0, 0 FAIL "
           "(includes 'live preview returns under 2 s')", f"exit {code}; {fails[:5]}; {timing}; {tail(out + err)}")
 
 

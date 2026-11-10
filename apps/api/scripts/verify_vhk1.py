@@ -120,8 +120,8 @@ def regression_set() -> list[str]:
 
 
 def total_of(out: str):
-    m = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
-    return (int(m[-1][0]), int(m[-1][1])) if m else None
+    t = VT.final_total(out)   # the script's OWN final ^TOTAL line (_verify_total)
+    return (t[0], t[1]) if t else None
 
 
 def tail(text: str, n: int = 600) -> str:

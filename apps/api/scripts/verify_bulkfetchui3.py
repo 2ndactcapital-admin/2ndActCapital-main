@@ -73,6 +73,7 @@ sys.path.insert(0, str(HERE.parent))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "bulkfetchui3"
 
@@ -449,7 +450,7 @@ async def cleanup_only(conn) -> int:
 
 
 async def table_counts(conn) -> dict[str, int]:
-    return {t: await rls_val(conn, f"SELECT count(*) FROM {t}") for t in COUNTED}
+    return {t: await rls_val(conn, VSC.count_sql(t, [ORG], FIXTURE_USERS)) for t in COUNTED}
 
 
 async def real_filings_checksum(conn) -> tuple[int, str]:

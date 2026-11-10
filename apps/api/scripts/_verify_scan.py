@@ -158,7 +158,11 @@ def scan_file(path: pathlib.Path) -> dict:
             if VSC.is_live_written(table) and not re.match(r"\s*(?:\w+\s+)?(?:WHERE|JOIN|,)", rest, re.I):
                 unscoped.append((ln, VSC.qualify(table)))
     r["unscoped_counts"] = sorted(set(unscoped))
-    r["counts_ok"] = not r["unscoped_counts"]
+    # the gate: no generic whole-table loop and no unscoped count of the three tables verify_verifyfix1 (3) names;
+    # any other live-written table counted whole is reported (inventory) — e.g. verify_s28's deliberate read that the
+    # live decision log is NON-EMPTY, which is not a before/after comparison.
+    r["unscoped_gated"] = [u for u in r["unscoped_counts"] if u[1].startswith("generic") or u[1] in VSC.GATED]
+    r["counts_ok"] = not r["unscoped_gated"]
     r["uses_scope_helper"] = "VSC.count_sql" in src or "VSC.predicate" in src
 
     # TOTAL / self-checks
@@ -172,7 +176,7 @@ def scan_file(path: pathlib.Path) -> dict:
     runs_nested = bool(re.search(r"run_cmd\(|subprocess\.run\(|VT\.run_nested\(", src)) and bool(nested_targets)
     r["runs_nested"] = runs_nested
     r["bespoke_total_parse"] = bool(BESPOKE_TOTAL_RE.search(src))
-    r["nested_helper"] = ("VT.nested_total(" in src) or ("VT.run_nested(" in src) or ("nested_total(" in src)
+    r["nested_helper"] = any(k in src for k in ("VT.nested_total(", "VT.run_nested(", "VT.final_total(", "nested_total("))
     r["nested_ok"] = not r["bespoke_total_parse"] and (not runs_nested or r["nested_helper"])
     r["timeouts"] = sorted({int(x) for x in re.findall(r"timeout\s*=\s*(\d{3,5})", src)})
 

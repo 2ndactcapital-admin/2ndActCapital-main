@@ -108,6 +108,7 @@ if __name__ == "__main__" and VS.requested():
 
 # VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 if __name__ == "__main__":
     VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
 
@@ -239,7 +240,7 @@ async def db_today(conn) -> date:
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, [ORG], list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def fingerprint(conn, sql, *args) -> tuple[int, str]:
@@ -1239,10 +1240,11 @@ def regression():
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}
     env.pop("AUTHZ_TEST_MODE", None)   # the child sets its own, before it imports main
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_ensemblesystemone.py")], REPO, timeout=2700, env=env)
-    total = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+    nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+    total = [(str(nt.passed), str(nt.failed))] if nt.line else []
     fails = [ln for ln in out.splitlines() if ln.lstrip().startswith("[FAIL]")]
-    check(bool(total) and total[-1][1] == "0" and not fails and code == 0, "verify_ensemblesystemone.py: 0 FAIL",
-          f"{total[-1] if total else 'no summary'}; {fails[:3]} {err[-300:] if not total else ''}")
+    check(nt.ok and not fails and code == 0, "verify_ensemblesystemone.py: 0 FAIL",
+          f"{nt.detail()}; {fails[:3]} {err[-300:] if not total else ''}")
 
 
 async def run(name, fn, *args):
