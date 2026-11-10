@@ -292,6 +292,13 @@ out to build them. Check first.
   authority is not on the trade path (rep7b authority is); a Treasury position's quantity is assumed
   to be par; a note's buy limit is par (no coupon recorded); a maturity the custodian already removed
   from positions is seen only as cash.
+- ⬜ CASH07 operator steps: run verify_cash07.py (regressions verify_cash05.py + verify_s30.py). Before the first real
+  payment: grant `limited` trading authority (0 grants exist today); record each custodian's rails (Admin → custodian
+  capabilities, with evidence); publish the two disclosure DRAFTS `cash.payments` and `cash.sweep_rate`
+  (`load_disclosure_defaults.py --drafter`, then a SECOND Super Admin publishes); grant `approve_payment` (+ trading
+  authority) to a SECOND eligible money-movement checker at 2nd Act — today a payment made by its one org-admin checker
+  waits indefinitely (the S30 floor, no bypass). Optional: `PAYMENT_SWEEP_ENABLED=1` on the cron service.
+  Follow-up: move the 17 copied system-axis archive helpers onto `services/bitemporal.archive_live_row`.
 - ⬜ CASH05 operator steps: run verify_cash05.py (its regression is verify_cash04.py). Optional: set the
   org setting `cash.mmf_cutoff_et` ("HH:MM", Eastern) so a fund's liquidity reads "same day if instructed
   by HH:MM ET"; file statements / confirmations / 1099s against the cash accounts through the existing

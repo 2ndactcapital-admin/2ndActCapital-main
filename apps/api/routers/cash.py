@@ -42,6 +42,10 @@ VISIBILITY1 scope; another family's household or entity is a 404); a member read
     GET  /api/v1/cash/households/{household_id}/documents                statements / confirmations / 1099s (ET dates)
   services: cash_overview / cash_holdings / cash_activity / cash_earnings / cash_documents. ``entity_id`` (query) filters
   to one entity the household reaches (its own positions — cash01's entity figure).
+  CASH07: a MEMBER's overview also carries the ``cash.sweep_rate`` label (ADV Item 5) — staff envelopes are unchanged.
+
+CASH07 — PAYMENT INSTRUCTIONS live in routers/payments.py (/cash/households/{household_id}/payments…), the same
+Treasury tab (no second tab).
 
 GATES (services.authz, one Principal; Super Admin first). READ: ``view_portfolio`` (a member holds it) or
 ``manage_portfolio``, then the ONE visibility rule ``authz.member_entity_scope`` — a member reads only their own
@@ -899,6 +903,12 @@ async def cash_overview_route(request: Request, household_id: UUID, entity_id: U
         out = await CO.build(conn, sc, t, range_key=range, purpose=_purpose(member), report=report,
                              account_ids=[a["id"] for a in accts])
         labels = await _cash05_labels(conn, org_id, household_id, "overview")
+        if member:
+            # CASH07 — the sweep-rate disclosure (ADV Item 5; library key cash.sweep_rate) on a MEMBER's overview
+            from services import disclosures as D
+
+            labels[CH.SWEEP_RATE_KEY] = D.public(await D.resolve_safe(conn, CH.SWEEP_RATE_KEY, org_id=org_id,
+                                                                      household_id=household_id))
     return {**_cash05_envelope(p, member, sc, screen="overview", labels=labels,
                              vocab={**CO.vocabularies(), "flags": CC.vocabularies()["flags"]}),
             "today": t.isoformat(), **out, "actions": _cash05_actions(p, member, household_id)}

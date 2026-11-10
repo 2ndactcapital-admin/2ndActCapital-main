@@ -62,6 +62,7 @@ export function YieldCard({ data }) {
   const y = yieldsView(data);
   const est = labelText(data, "cash.yield_estimate");
   const tax = labelText(data, "cash.tax_estimate");
+  const sweep = labelText(data, "cash.sweep_rate");   // CASH07 — a member's read only (ADV Item 5)
   return (
     <section className={card} aria-label="Blended yield">
       <h3 className="font-semibold text-navy">Blended yield</h3>
@@ -76,6 +77,7 @@ export function YieldCard({ data }) {
       {y.without.length ? <p className="mt-1 text-xs text-text-muted">Not in the blend: {y.without.map((w) => `${w.name} (${w.why})`).join("; ")}</p> : null}
       {est ? <p className="mt-2 text-xs text-text-muted" data-label="cash.yield_estimate">{est}</p> : null}
       {tax && y.afterTax ? <p className="text-xs text-text-muted" data-label="cash.tax_estimate">{tax}</p> : null}
+      {sweep ? <p className="text-xs text-text-muted" data-label="cash.sweep_rate">{sweep}</p> : null}
     </section>
   );
 }

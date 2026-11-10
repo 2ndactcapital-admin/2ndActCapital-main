@@ -8,6 +8,8 @@ item, each in its own transaction(s) exactly as the single route runs it:
     authority   services.authority.decide        (POST /authority/changes/{id}/approve|reject)
     held_away   services.held_away.decide_import (POST /held-away/imports/{id}/approve|reject)
     cash_policy services.cash_policy.decide      (POST /cash/policies/{id}/approve|reject)   — CASH02
+    payment     services.payments.decide         (POST /cash/households/{hh}/payments/{id}/approve|reject) — CASH07,
+                the S30 FLOOR: a maker of the payment is refused here exactly as on the single route
 
 so every rule — maker ≠ checker (service, human task, engine and the table's
 CHECK), the approve_* permission (route gate here, rbac.has_permission in
@@ -37,6 +39,7 @@ from services import authority as AU
 from services import cash_policy as CP
 from services import held_away as HA
 from services import human_tasks as HT
+from services import payments as PS
 from services import sod  # S30 — the ONE maker-checker rule
 
 log = logging.getLogger(__name__)
@@ -59,6 +62,8 @@ TYPES = {
     "held_away": BulkType("held_away", "Held-away entries", HA.VIEW, HA.APPROVE, HA.TASK_IMPORT),
     # CASH02 — reading AND deciding need manage_cash_policy (never view_portfolio: a member holds that)
     "cash_policy": BulkType("cash_policy", "Cash policies", CP.PERMISSION, CP.PERMISSION, CP.TASK),
+    # CASH07 — payment instructions: read by initiate_payment or approve_payment, decided by approve_payment only
+    "payment": BulkType("payment", "Payment instructions", PS.INITIATE, PS.APPROVE, PS.TASK_KIND),
 }
 TYPE_KEYS = tuple(TYPES)
 APPROVE_KEYS = tuple(dict.fromkeys(t.approve for t in TYPES.values()))
@@ -70,6 +75,7 @@ SUBTYPE_LABELS = {
     "authority": {"household": "Household authority", "account": "Account authority / custody"},
     "held_away": {k: f"Held-away {v.lower()}" for k, v in HA.SOURCE_KIND_LABELS.items()},
     "cash_policy": {k: f"Cash policy — {v.lower()}" for k, v in CP.SCOPES},
+    "payment": {k: f"Payment — {v}" for k, v in PS.RAILS},
 }
 AGE_BUCKETS = [
     {"key": "any", "label": "Any age", "min_days": None, "max_days": None},
@@ -308,8 +314,37 @@ async def _cash_policy_items(conn, org_id, principal, *, household_id=None, acco
     return out
 
 
+async def _payment_items(conn, org_id, principal, *, household_id=None, account_id=None,
+                         today: date | None = None) -> list[dict]:
+    today = today or date.today()
+    bt = TYPES["payment"]
+    rows = [r for r in await PS.pending_for_bulk(conn, org_id)
+            if (household_id is None or str(r["household_id"]) == str(household_id))
+            and (account_id is None or str(account_id) in (str(r["source_account_id"]), str(r["destination_account_id"])))]
+    status = await _task_status(conn, org_id, [r["approval_task_id"] for r in rows])
+    names = await _names(conn, [m for r in rows for m in r["maker_ids"]])
+    out = []
+    for r in rows:
+        tid = str(r["approval_task_id"]) if r["approval_task_id"] else None
+        makers = [str(m) for m in r["maker_ids"]]
+        out.append({
+            "id": str(r["id"]), "type": "payment", "subtype": r["rail"], "subtype_label": SUBTYPE_LABELS["payment"][r["rail"]],
+            "household_id": str(r["household_id"]), "household_name": r["household_name"], "entity_id": None,
+            "account_id": str(r["source_account_id"]), "account_masked": r["src_masked"],
+            "from_label": r["src_masked"],
+            "to_label": f"{r['dst_masked']}: {PS.money(r['amount'])} USD on {r['value_date'].isoformat()}",
+            "reason": r["purpose"], "maker_id": str(r["maker_id"]), "maker_ids": makers,
+            "maker_name": ", ".join(names.get(m, "A colleague") for m in makers),
+            "requested_at": _iso(r["updated_at"]), "age_days": _age_days(r["updated_at"], today),
+            "task_id": tid, "task_status": status.get(tid) if tid else None,
+            **_decidability(principal, bt, r["maker_id"], status.get(tid) if tid else None, maker_ids=makers)})
+    return out
+
+
 async def pending(conn, org_id, principal, type_key: str, *, household_id=None, account_id=None) -> list[dict]:
     bt = bulk_type(type_key)
+    if bt.key == "payment":
+        return await _payment_items(conn, org_id, principal, household_id=household_id, account_id=account_id)
     if bt.key == "cash_policy":
         return await _cash_policy_items(conn, org_id, principal, household_id=household_id, account_id=account_id)
     if bt.key == "authority":
@@ -363,14 +398,16 @@ async def summary(conn, org_id, principal, *, household_id=None, account_id=None
 def _refusal(exc: Exception, bt: BulkType) -> tuple[int, str]:
     """The same classification the single routes apply (routers.authority / routers.held_away _raise)."""
     msg = str(exc).split("\n")[0]
-    if isinstance(exc, (AU.AuthorityNotFound, HA.HeldAwayNotFound, HT.HumanTaskNotFound, CP.PolicyNotFound)):
+    if isinstance(exc, (AU.AuthorityNotFound, HA.HeldAwayNotFound, HT.HumanTaskNotFound, CP.PolicyNotFound,
+                        PS.PaymentNotFound)):
         return 404, "Not found"
     if isinstance(exc, (AU.MakerCheckerViolation, HA.MakerCheckerViolation, HT.MakerCheckerError,
-                        CP.MakerCheckerViolation)):
+                        CP.MakerCheckerViolation, PS.MakerCheckerViolation)):
         return 403, f"{BLOCK_LABELS['maker']} ({msg})"
     if isinstance(exc, (PermissionError, HT.HumanTaskPermissionError)):
         return 403, msg or f"Permission required: {bt.approve}"
-    if isinstance(exc, (AU.AuthorityConflict, HA.HeldAwayConflict, HT.HumanTaskConflict, CP.PolicyConflict)):
+    if isinstance(exc, (AU.AuthorityConflict, HA.HeldAwayConflict, HT.HumanTaskConflict, CP.PolicyConflict,
+                        PS.PaymentConflict)):
         return 409, f"No longer pending — {msg}"
     if isinstance(exc, asyncpg.UniqueViolationError):
         return 409, f"refused by the database: {exc.constraint_name}"
@@ -384,6 +421,8 @@ def _refusal(exc: Exception, bt: BulkType) -> tuple[int, str]:
 
 
 async def _decide_one(pool, bt: BulkType, *, org_id, actor_id, item_id, outcome, note) -> dict:
+    if bt.key == "payment":
+        return await PS.decide(pool, org_id=org_id, actor_id=actor_id, payment_id=item_id, outcome=outcome, note=note)
     if bt.key == "cash_policy":
         return await CP.decide(pool, org_id=org_id, actor_id=actor_id, policy_id=item_id, outcome=outcome, note=note)
     if bt.key == "authority":

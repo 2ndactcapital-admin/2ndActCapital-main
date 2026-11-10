@@ -3364,6 +3364,81 @@
 --   changed_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY ownership_change_log_pkey: (id)
 
+-- ===== payment_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   payment_id                               uuid NOT NULL
+--   action                                   text NOT NULL
+--   from_status                              text
+--   to_status                                text NOT NULL
+--   actor_id                                 uuid
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY payment_events_pkey: (id)
+
+-- ===== payment_instructions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   household_id                             uuid NOT NULL
+--   source_account_id                        uuid NOT NULL
+--   destination_account_id                   uuid NOT NULL
+--   amount                                   numeric NOT NULL
+--   currency_code                            text NOT NULL DEFAULT 'USD'::text
+--   rail                                     text NOT NULL
+--   value_date                               date NOT NULL
+--   purpose                                  text NOT NULL
+--   purpose_ref_type                         text
+--   purpose_ref_id                           uuid
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   maker_ids                                ARRAY NOT NULL
+--   approval_task_id                         uuid
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   adapter                                  text
+--   sent_by                                  uuid
+--   sent_at                                  timestamp with time zone
+--   sent_channel                             text
+--   sent_note                                text
+--   external_ref                             text
+--   consent_requested_at                     timestamp with time zone
+--   acknowledged_by                          uuid
+--   acknowledged_at                          timestamp with time zone
+--   settled_by                               uuid
+--   settled_at                               timestamp with time zone
+--   settled_on                               date
+--   provisional_until                        date
+--   custodian_rejected_reason                text
+--   return_code                              text
+--   return_reason                            text
+--   returned_by                              uuid
+--   returned_at                              timestamp with time zone
+--   reconciled_by                            uuid
+--   reconciled_at                            timestamp with time zone
+--   reconcile_method                         text
+--   reconcile_reference                      text
+--   reconcile_note                           text
+--   reconciled_transaction_ids               ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   closed_by                                uuid
+--   closed_at                                timestamp with time zone
+--   cancelled_by                             uuid
+--   cancelled_at                             timestamp with time zone
+--   cancel_reason                            text
+--   expired_at                               timestamp with time zone
+--   expiry_reason                            text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY payment_instructions_pkey: (id)
+
 -- ===== permission_set_permissions =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL

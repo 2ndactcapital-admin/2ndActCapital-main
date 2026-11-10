@@ -105,14 +105,15 @@ def self_task1(check, find):
          "policies, integrated import and 10 more approve/reject maker-checker kinds — listed, none built.")
 
 
-#: CASH02 (2026-11-08) — the approvals routes gained the cash-policy bulk type: path → (gate at bulkapprove1's end,
+#: CASH02 (2026-11-08) — the approvals routes gained the cash-policy bulk type; CASH07 (2026-11-09) the payment
+#: type (read by initiate_payment | approve_payment, decided by approve_payment): path → (gate at bulkapprove1's end,
 #: gate today). Nothing else about them changed.
 _R0 = "any(view_authority|approve_authority|view_held_away|approve_held_away)"
 _W0 = "any(approve_authority|approve_held_away)"
 CASH02_WIDENED = {
-    ("GET", "/api/v1/approvals/bulk"): (_R0, _R0[:-1] + "|manage_cash_policy)"),
-    ("GET", "/api/v1/approvals/summary"): (_R0, _R0[:-1] + "|manage_cash_policy)"),
-    ("POST", "/api/v1/approvals/bulk"): (_W0, _W0[:-1] + "|manage_cash_policy)"),
+    ("GET", "/api/v1/approvals/bulk"): (_R0, _R0[:-1] + "|manage_cash_policy|initiate_payment|approve_payment)"),
+    ("GET", "/api/v1/approvals/summary"): (_R0, _R0[:-1] + "|manage_cash_policy|initiate_payment|approve_payment)"),
+    ("POST", "/api/v1/approvals/bulk"): (_W0, _W0[:-1] + "|manage_cash_policy|approve_payment)"),
 }
 
 
@@ -124,16 +125,16 @@ def self_routes(check, find):
     check(bool(set(R.new) == set(NEW_ROUTES) and not bad), f"bulkapprove1's {len(NEW_ROUTES)} new routes, each with "
           "its stated gate", f"{R.where()}; new={R.new} bad={bad}")
     drifted = VS.still_gated(R)
-    # CASH02 widened these three gates on purpose: a third bulk type (cash policies, decided by manage_cash_policy). The
-    # widening is pinned EXACTLY (each route's gate at bulkapprove1's end + the one key), so any other drift still fails.
+    # CASH02 and CASH07 widened these three gates on purpose: bulk types for cash policies (manage_cash_policy) and
+    # payment instructions (initiate_payment / approve_payment). The widening is pinned EXACTLY (each route's gate at bulkapprove1's end + the one key), so any other drift still fails.
     def _pin(k):
         return next((CASH02_WIDENED[(m, k[1])] for m in k[0] if (m, k[1]) in CASH02_WIDENED), None)
 
     wid = {k: g for k, g in drifted if _pin(k) is not None}
     exact = all(f"{_pin(k)[0]} → {_pin(k)[1]}" == g for k, g in wid.items())
     rest = [(k, g) for k, g in drifted if k not in wid]
-    check(bool(R.new and not rest and exact), "bulkapprove1's routes all still exist today with the same gate (CASH02's "
-          "pinned widening for cash policies aside)", f"{drifted}")
+    check(bool(R.new and not rest and exact), "bulkapprove1's routes all still exist today with the same gate (CASH02's / "
+          "CASH07's pinned widening for cash policies and payments aside)", f"{drifted}")
 
 
 def _sql_strings(source: str) -> list[str]:

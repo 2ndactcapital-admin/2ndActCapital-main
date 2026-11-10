@@ -77,6 +77,18 @@ VERB_AUTONOMY: dict[str, dict] = {
                              "writes": "submits a cash proposal for approval (a trade list) — a person only"},
     "cash.proposal_route": {"class": NEVER, "trades": True,
                             "writes": "routes an approved cash proposal to execution instructions — a person only"},
+    # CASH07 — payment instructions (money between a family's own accounts). Money movement is excluded from autonomy
+    # until counsel signs off (Joe): ALL FOUR are never. The assistant may at most DRAFT one while a person is present
+    # — that verb is declared here (and in sod.VERB_DUTIES as 'propose') but NOT registered as an action in stage A,
+    # so no workflow and no agent can reach any of them. Submit / approve / send are a person's only (the custody cliff).
+    "cash.payment_draft": {"class": NEVER, "money": True,
+                           "writes": "a payment instruction DRAFT (payment_instructions, status draft) — never submits"},
+    "cash.payment_submit": {"class": NEVER, "money": True,
+                            "writes": "submits a payment instruction for approval — a person only"},
+    "cash.payment_approve": {"class": NEVER, "money": True,
+                             "writes": "approves a payment instruction (the S30 floor) — a different person only"},
+    "cash.payment_send": {"class": NEVER, "money": True,
+                          "writes": "sends a payment instruction through its adapter — a person only"},
 }
 #: CASH04 — the verbs whose write may only ever DRAFT (the run's output is a draft a person adopts)
 DRAFT_ONLY_VERBS = frozenset(k for k, v in VERB_AUTONOMY.items() if v.get("draft_only"))

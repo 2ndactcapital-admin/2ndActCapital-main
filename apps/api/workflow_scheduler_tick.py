@@ -183,6 +183,17 @@ async def main() -> int:
                       f"{ {k: len(v) for k, v in expiry.items()} }")
         except Exception as exc:  # noqa: BLE001
             print(f"[scheduler] execution expiry failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # CASH07 — payment instructions: the expiry + unmatched-settlement sweep. SWITCHED OFF: it returns at once
+        # unless PAYMENT_SWEEP_ENABLED=1 (an operator decision — docs/cash/CASH_PAYMENTS.md). Never a test org.
+        try:
+            from services.payments import sweep_tick as payments_sweep_tick
+
+            pays = await payments_sweep_tick(pool)
+            if pays.get("enabled") and (pays["expired"] or pays["unmatched"]):
+                print(f"[scheduler] payment instructions: expired {len(pays['expired'])}, "
+                      f"unmatched {len(pays['unmatched'])}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] payment sweep failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         # PORTENTRY1 (GAP-PORT-05) — family rollups a process left pending, every tick; the org-wide nightly
         # rollup in the 07:00 UTC window (idempotent — a second run in the window rewrites the same buckets).
         try:

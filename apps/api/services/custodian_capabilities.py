@@ -46,7 +46,16 @@ CAPABILITY_LABELS: dict[str, str] = {
     "stock_borrow": "Stock borrow",
     "margin_initial_pct": "Margin requirement — initial (fraction)",
     "margin_maintenance_pct": "Margin requirement — maintenance (fraction)",
+    # CASH07 — payment rails a custodian accepts for a payment from one of its accounts, its payment status feed, and
+    # the manual route's printable payment sheet ('unknown' is not available — the same rule)
+    "ach": "Payments — ACH",
+    "wire": "Payments — wire",
+    "journal": "Payments — journal between accounts",
+    "check": "Payments — check",
+    "payment_status_feed": "Payment status feed",
+    "payment_sheet": "Printable payment sheet",
 }
+PAYMENT_RAIL_KEYS = ("ach", "wire", "journal", "check")
 PCT_KEYS = ("margin_initial_pct", "margin_maintenance_pct")
 CAPABILITY_KEYS = tuple(CAPABILITY_LABELS)
 

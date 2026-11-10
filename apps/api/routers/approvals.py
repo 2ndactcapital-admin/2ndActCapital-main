@@ -2,13 +2,13 @@
 
 Every route names its gate (docs/AUTHZ1_ROUTES.json; authz1_routes.py reads it):
 
-  any(view_authority|approve_authority|view_held_away|approve_held_away|manage_cash_policy)
-      GET  /approvals/bulk?type=authority|held_away|cash_policy[&household_id=&account_id=]
+  any(view_authority|approve_authority|view_held_away|approve_held_away|manage_cash_policy|initiate_payment|approve_payment)
+      GET  /approvals/bulk?type=authority|held_away|cash_policy|payment[&household_id=&account_id=]
            the PENDING items of that type — each with the server's own `actions` and, when none, the reason
            (you made it / no permission / no longer pending); the type also needs its own view_* or approve_*
       GET  /approvals/summary[?household_id=&account_id=]
            pending counts per readable type, for the "N pending — review in bulk" entry points
-  any(approve_authority|approve_held_away|manage_cash_policy)
+  any(approve_authority|approve_held_away|manage_cash_policy|approve_payment)
       POST /approvals/bulk {type, item_ids, decision, note}
            the type's OWN approval permission is then required (approve_authority / approve_held_away — 403
            naming it); each item goes through the SAME single-approval service function
@@ -42,7 +42,7 @@ APPROVE_KEYS = BA.APPROVE_KEYS
 class BulkDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["authority", "held_away", "cash_policy"]
+    type: Literal["authority", "held_away", "cash_policy", "payment"]
     # strings, not UUIDs: one malformed id is refused on its own line and never stops the others
     item_ids: list[str] = Field(min_length=1, max_length=BA.MAX_ITEMS)
     decision: Literal["approve", "reject"]

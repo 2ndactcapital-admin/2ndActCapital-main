@@ -1,5 +1,5 @@
 {
- "app_route_count": 999,
+ "app_route_count": 1008,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -18115,6 +18115,178 @@
    "write": false
   },
   {
+   "after": "any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_payment",
+     "initiate_payment",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.payments",
+   "name": "list_payments_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz initiate_payment; any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.payments",
+   "name": "payment_options_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments/options",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_payment",
+     "initiate_payment",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.payments",
+   "name": "payment_detail_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz initiate_payment; any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.payments",
+   "name": "payment_matches_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}/matches",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz initiate_payment; any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.payments",
+   "name": "payment_draft_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz initiate_payment; any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.payments",
+   "name": "payment_sheet_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}/sheet",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_payment; any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.payments",
+   "name": "payment_approve_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_payment; any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.payments",
+   "name": "payment_reject_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz initiate_payment; any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.payments",
+   "name": "payment_action_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}/{action}",
+   "public": false,
+   "write": true
+  },
+  {
    "after": "authz view_tax",
    "before": "\u2014",
    "before_effect": "new route",
@@ -19413,13 +19585,15 @@
    "write": true
   },
   {
-   "after": "any(view_authority|approve_authority|view_held_away|approve_held_away|manage_cash_policy)",
+   "after": "any(view_authority|approve_authority|view_held_away|approve_held_away|manage_cash_policy|initiate_payment|approve_payment)",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
     "any_of": [
      "approve_authority",
      "approve_held_away",
+     "approve_payment",
+     "initiate_payment",
      "manage_cash_policy",
      "view_authority",
      "view_held_away"
@@ -19438,13 +19612,15 @@
    "write": false
   },
   {
-   "after": "any(view_authority|approve_authority|view_held_away|approve_held_away|manage_cash_policy)",
+   "after": "any(view_authority|approve_authority|view_held_away|approve_held_away|manage_cash_policy|initiate_payment|approve_payment)",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
     "any_of": [
      "approve_authority",
      "approve_held_away",
+     "approve_payment",
+     "initiate_payment",
      "manage_cash_policy",
      "view_authority",
      "view_held_away"
@@ -19463,13 +19639,14 @@
    "write": false
   },
   {
-   "after": "any(approve_authority|approve_held_away|manage_cash_policy)",
+   "after": "any(approve_authority|approve_held_away|manage_cash_policy|approve_payment)",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
     "any_of": [
      "approve_authority",
      "approve_held_away",
+     "approve_payment",
      "manage_cash_policy"
     ],
     "rule": "perm"

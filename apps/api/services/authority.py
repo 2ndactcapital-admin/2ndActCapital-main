@@ -214,6 +214,32 @@ def refusal(account: dict | None, action: str, *, path: str | None = None, execu
     return f"{head} — {action} refused: {why}."
 
 
+def payment_refusal(account: dict | None) -> str | None:
+    """CASH07 — the rep7b rule for a PAYMENT instruction from this account (the source): only an account Hollisworks
+    MANAGES at a custodian (authority managed, custody integrated / another custodian) can be instructed to send money.
+    read_only (data only) and advise (the member or another adviser executes) refuse, with what would allow it. The
+    effective authority is THIS module's (:func:`effective` — the approved override ?? the household ?? the default);
+    nothing is re-derived by the payment path. None = allowed."""
+    if not account:
+        return "the source account was not found"
+    e = effective(account)
+    a, c = e["authority"], e["custody"]
+    if a == "managed" and valid_setting(a, c):
+        return None
+    name = account.get("account_number_masked") or "this account"
+    head = f"{name} (authority {AUTHORITY_SHORT[a]}, custody {CUSTODY_SHORT[c]})"
+    if a == "read_only":
+        why = ("its data is read-only — Hollisworks has no authority to instruct its custodian. What would allow it: an "
+               "approved authority change to managed")
+    elif a == "advise":
+        why = ("under advise the member or another adviser acts on the account — Hollisworks does not instruct its "
+               "custodian. What would allow it: an approved authority change to managed")
+    else:
+        why = ("managed needs a custodian and this account is outside the platform. What would allow it: an approved "
+               "custody change to a custodian")
+    return f"{head} — instructing a payment refused: {why}."
+
+
 def account_actions(account: dict) -> list[str]:
     """The trade-path actions the matrix allows this account (for envelopes)."""
     e = effective(account)
