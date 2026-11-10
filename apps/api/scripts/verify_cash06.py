@@ -50,7 +50,8 @@ ONLY. Real rows (rules, firings, payments, events, triggers, autonomy settings, 
 transactions — the Olivo demo's included) are fingerprinted before and after.
 
 --self-checks-only: git / route / static self-checks only (no database). --cleanup-only: the teardown and the leftover
-check only. With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
+check only. --only=<seed|validation|governance|engine|instructions|visibility,…> (cash06 fix 1): seed + the named
+sections + the full teardown, no regression. With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
 """
 
 from __future__ import annotations
@@ -1077,6 +1078,14 @@ async def seed(conn) -> None:
 
 
 async def check_fixture_roles(conn) -> bool:
+    """cash06 fix 1 — per fixture user: roles granted, permission sets granted, the permissions the app decides (the
+    Principal), expected. The detail names ONLY the mismatches (the first run printed four permissions intersected
+    and hid the real cause: workflow_admin is a fixture role the app — correctly, fail closed — does not classify as
+    internal, so the old `is_internal is (rname != 'member')` expectation could never hold for it).
+
+    is_internal is expected EXACTLY when the role is one the app names internal (services.authz.INTERNAL_ROLE_NAMES);
+    an unclassified fixture role (workflow_admin) must be decided NOT internal and NOT staff, and still carry every
+    permission its role grants (PERMS1: the workflow keys live on the role axis, so no permission set is needed)."""
     bad = []
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
@@ -1084,22 +1093,42 @@ async def check_fixture_roles(conn) -> bool:
             names = [r["name"] for r in await conn.fetch(
                 "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 AND "
                 "r.org_id = $2", uid, org)]
+            sets = [r["name"] for r in await conn.fetch(
+                "SELECT ps.name FROM user_permission_sets ups JOIN permission_sets ps ON ps.id = ups.permission_set_id "
+                "WHERE ups.user_id = $1", uid)]
             pr = await AZ.load_principal(conn, uid)
             perms = set(getattr(pr, "permissions", ()) or ())
-            ok = rname in names and pr is not None and pr.admitted
-            if rname == "super_admin":
-                ok = ok and pr.is_super_admin
+            want_internal = rname in AZ.INTERNAL_ROLE_NAMES
+            want_init = rname in ("advisor", "support_staff", "fund_finance")
+            want_appr = rname in ("advisor", "compliance", "fund_finance")
+            why = []
+            if rname not in names:
+                why.append(f"role {rname} not granted")
+            if pr is None or not pr.admitted:
+                why.append("not admitted")
+            elif rname == "super_admin":
+                if not pr.is_super_admin:
+                    why.append("not Super Admin")
             else:
-                ok = ok and not pr.is_super_admin and not pr.is_staff and PERMS[rname] <= perms
-                ok = ok and bool(pr.is_internal) is (rname != "member")
-                ok = ok and ("initiate_payment" in perms) is (rname in ("advisor", "support_staff", "fund_finance"))
-                ok = ok and ("approve_payment" in perms) is (rname in ("advisor", "compliance", "fund_finance"))
-            if not ok:
-                bad.append((short, names, sorted(perms & {"initiate_payment", "approve_payment", "view_portfolio",
-                                                          "manage_org_settings"}), bool(pr and pr.is_internal)))
+                if pr.is_super_admin or pr.is_staff:
+                    why.append(f"super={pr.is_super_admin} staff={pr.is_staff}")
+                if PERMS[rname] - perms:
+                    why.append(f"missing {sorted(PERMS[rname] - perms)}")
+                if bool(pr.is_internal) is not want_internal:
+                    why.append(f"is_internal={pr.is_internal} (expected {want_internal})")
+                if ("initiate_payment" in perms) is not want_init:
+                    why.append(f"initiate_payment {'held' if not want_init else 'absent'}")
+                if ("approve_payment" in perms) is not want_appr:
+                    why.append(f"approve_payment {'held' if not want_appr else 'absent'}")
+            shown = sorted(perms) if rname != "super_admin" else f"<the catalog: {len(perms)}>"
+            print(f"[INFO] fixture {short}: roles={names} permission_sets={sets} decided={shown} "
+                  f"expected={sorted(PERMS[rname])} internal={bool(pr and pr.is_internal)}/{want_internal}")
+            if why:
+                bad.append((short, why))
     return check(not bad, "every fixture role is a user_roles grant the app decides as meant (advisors initiate + "
                  "approve; compliance approves only; support staff initiates only; workflow admins hold the S29b "
-                 "settings; the member and the restricted staff as named; one Super Admin; no staff bypass)", f"{bad}")
+                 "settings; the member and the restricted staff as named; one Super Admin; no staff bypass; internal "
+                 "exactly for the app's internal roles — an unclassified fixture role fails closed)", f"{bad}")
 
 
 # ── helpers: a rule through the API, its S29b opt-in, a firing through the real fire path ──────────────────────
@@ -1815,6 +1844,29 @@ FIXTURE_SECTIONS = (("validation", y_validation), ("governance (the floor)", y_g
                     ("instructions (nothing sent)", y_instructions), ("visibility + isolation", y_visibility))
 
 
+#: cash06 fix 1 — the one-off path (cash07 fix 1's shape): --only=<a,b,…> runs teardown, prefix guard, real
+#: fingerprints, schema, seed, the named sections, then the full teardown + pre-count + real-row checks (no task 1 /
+#: evaluator / screens / routes / front end / regression)
+ONLY_NAMES = {"validation": "validation", "governance": "governance (the floor)", "engine": "engine",
+              "instructions": "instructions (nothing sent)", "visibility": "visibility + isolation"}
+#: a section that reads another's rules / payments (S["rule"], S["pay"]) pulls it in (run in FIXTURE_SECTIONS order)
+ONLY_NEEDS = {"instructions": ("engine",), "visibility": ("engine",)}
+
+
+def only_sections() -> list[str] | None:
+    arg = next((a for a in sys.argv[1:] if a.startswith("--only=")), None)
+    if arg is None:
+        return None
+    want = [x.strip() for x in arg.split("=", 1)[1].split(",") if x.strip()]
+    bad = [x for x in want if x not in ONLY_NAMES and x != "seed"]
+    if bad:
+        raise SystemExit(f"--only: unknown section(s) {sorted(bad)}; known: seed, {', '.join(ONLY_NAMES)}")
+    names = {x for x in want if x != "seed"}
+    for x in list(names):
+        names |= set(ONLY_NEEDS.get(x, ()))
+    return [ONLY_NAMES[x] for x in ONLY_NAMES if x in names]
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1828,6 +1880,9 @@ async def main_async() -> int:
     if "--cleanup-only" in sys.argv:
         return await cleanup_only(conn)
     pre = None
+    only = only_sections()
+    if only is not None:
+        print(f"[INFO] --only: seed + {only or '(seed only)'}")
     try:
         await run("pre-teardown", teardown_retrying)
         check(await leftovers(conn) == 0, "pre-run cleanup: zero fixture rows before seeding")
@@ -1836,20 +1891,23 @@ async def main_async() -> int:
             return 1
         pre = await counts(conn)
         S["real"] = await real_fingerprints(conn)
-        await run("task 1", y_task1, conn)
-        await run("evaluator", y_evaluator, conn)
+        if only is None:
+            await run("task 1", y_task1, conn)
+            await run("evaluator", y_evaluator, conn)
         await run("schema", y_schema, conn)
         if S.get("schema_ok"):
             await run("seed", seed, conn)
+        chosen = [(n, f) for n, f in FIXTURE_SECTIONS if only is None or n in only]
         if S.get("seeded"):
-            for name, fn in FIXTURE_SECTIONS:
+            for name, fn in chosen:
                 await run(name, fn, conn)
         else:
-            for name, _fn in FIXTURE_SECTIONS:
+            for name, _fn in chosen:
                 check(False, f"{name}: not run — the schema read or the seed failed (never skipped silently)")
-        await run("screens", y_screens, conn)
-        await run("routes", y_routes, conn)
-        await run("front end", y_front_end, conn)
+        if only is None:
+            await run("screens", y_screens, conn)
+            await run("routes", y_routes, conn)
+            await run("front end", y_front_end, conn)
         check(bool(NETWORK_CALLS == [] and MODEL_CALLS == [] and SEND_CALLS == []),
               "no network call, no model call and no adapter send during the whole run",
               f"{NETWORK_CALLS[:3]} {MODEL_CALLS[:3]} {SEND_CALLS[:3]}")
@@ -1882,7 +1940,9 @@ async def main_async() -> int:
         await close_conn(conn)
         if S.get("no_teardown"):
             print(total_line())
-    if os.environ.get("VERIFY_NESTED") == "1":
+    if only is not None:
+        print("[SKIP] regression — --only one-off run")
+    elif os.environ.get("VERIFY_NESTED") == "1":
         print("[SKIP] nested run")
     else:
         try:
