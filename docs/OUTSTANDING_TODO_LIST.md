@@ -159,6 +159,14 @@ The assistant is mounted on member pages today.
   reply, confirm the exchange covers the rest of the Sprint 0 asks: the real
   OAuth redirect URI, webhook signature docs, and the business inputs (entity
   choice, legal address, contact, launch date, AUM projection).
+- ⏳ **Counterparty Simulator (cpsim01 built 2026-11-10; cpsim02–04 queued).** Run
+  `verify_cpsim01.py`. cpsim02 must add a `simulator` environment to the
+  Altruist client WITHOUT the `client_credentials()` fall-through to
+  production credentials, call `cpsim.may_connect` before connecting (and add
+  that call site to `cpsim_boundary_check.py`'s allow-list), and fix the
+  unreachable OAuth callback. Open: D1 (move the Olivo demo to its own tenant?),
+  D3 (counsel: Altruist developer terms vs an unbranded compatible simulator).
+  `counterparty_sim.allowed` stays false everywhere until then.
 - ⏸️ All Altruist product claims (cash rate, brokered CDs, cash spread for ADV
   Item 5) are unverified.
 - ⏸️ AWS SES: grant `ses:SendEmail` + `ses:SendRawEmail`, check sandbox status,
