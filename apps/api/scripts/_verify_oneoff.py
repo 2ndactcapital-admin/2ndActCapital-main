@@ -100,6 +100,9 @@ async def drive(name: str, section: str | None) -> int:
         for n in pre_seed:
             await _call(getattr(MOD, n), conn)
         await _call(getattr(MOD, seed_name), conn)
+        # a verify whose main asserts the fixture roles right AFTER the seed (rep6), not inside it
+        if "check_fixture_roles" in order and hasattr(MOD, "check_fixture_roles"):
+            await _call(MOD.check_fixture_roles, conn)
         if pick:
             await _call(getattr(MOD, pick), conn)
         else:
