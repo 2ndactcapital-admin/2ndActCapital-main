@@ -136,6 +136,7 @@ if __name__ == "__main__" and VS.requested():
 
 # VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 if __name__ == "__main__":
     VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
@@ -903,6 +904,9 @@ async def seed(conn) -> None:
     c2, _ = await api(U_ADMIN2, "POST", f"/api/v1/tax/profiles/{(o.get('profile') or {}).get('id')}/approve", {})
     check(c == 201 and c2 == 200, "the household's tax profile entered and approved (rep6)", f"{c} {c2}")
     S["seeded"] = True
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {r for r in (rname,) if r}) for uid, (org, _a, _n, rname, _f) in USERS.items()})
 
 
 def base_target() -> dict:

@@ -94,6 +94,7 @@ if __name__ == "__main__" and VS.requested():
 
 # VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 if __name__ == "__main__":
     VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
@@ -433,6 +434,9 @@ async def seed(conn) -> None:
         await conn.execute("SELECT set_config('app.current_org_id', $1, true), "
                            "set_config('app.is_super_admin', 'false', true)", str(ORG_B))
         await R.init_deal_room(conn, ORG_B, D_B)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {r for r in (rname,) if r} | ({"org_admin"} if uid == U_ORGADMIN else set())) for uid, (org, _a, _n, rname, _f) in USERS.items()})
 
 
 # ═══ The real app, token stubbed by bearer string ══════════════════════════

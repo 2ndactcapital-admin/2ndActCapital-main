@@ -69,6 +69,7 @@ sys.path.insert(0, str(HERE.parent))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "bulkfetchui"
@@ -624,6 +625,12 @@ async def seed_users(conn) -> None:
                 """INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, is_active)
                    VALUES ($1, $2, $3, $4, $5, $6, true)""", uid, ORG, f"{sub}@test.local", sub, sub, role)
         await grant_org_admin(conn, U_ORGADMIN, ORG)
+        # VERIFYFIX1 (bugfix4: user_roles is the ONE role source) — the Super Admin is one by its GRANT, not users.role.
+        from services.rbac import grant_named_role
+        await grant_named_role(conn, U_SUPER, ORG, "super_admin")
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {U_SUPER: (ORG, {"super_admin"}), U_ORGADMIN: (ORG, {"org_admin"})})
 
 
 # ═══ Sections ══════════════════════════════════════════════════════════════

@@ -134,6 +134,7 @@ if __name__ == "__main__" and VS.requested():
 
 # VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 if __name__ == "__main__":
     VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
@@ -742,6 +743,9 @@ async def seed(conn) -> None:
                 await rbac.grant_org_admin(conn, uid, org)
             elif rname:
                 await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", uid, roles[rname])
+        # VERIFYFIX1 (bugfix4: user_roles is the ONE role source) — the Super Admin is one by its super_admin GRANT;
+        # the users.role string alone no longer makes anyone a Super Admin.
+        await rbac.grant_named_role(conn, U_SUPER, ORG_A, "super_admin")
         for i, (key, name) in enumerate(IDX_NAMES.items()):
             sid = await SG.create_security(conn, name=name, security_type="index", currency_code="USD",
                                            is_super_admin=True)
@@ -765,6 +769,9 @@ async def seed(conn) -> None:
     check(us == set(USERS) and os_ == set(FIXTURE_ORGS), "fixture orgs and users are is_test = true",
           f"{len(us)}/{len(USERS)} users, {len(os_)}/2 orgs")
     S["seeded"] = True
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {r for r in (rname,) if r} | ({"super_admin"} if uid == U_SUPER else set())) for uid, (org, _a, _n, rname, _f) in USERS.items()})
 
 
 async def y_settings(conn):

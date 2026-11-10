@@ -97,6 +97,7 @@ if __name__ == "__main__" and VS.requested():
 
 # VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 if __name__ == "__main__":
     VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
@@ -687,6 +688,9 @@ async def seed(conn) -> None:
                                   "WHERE id = ANY($1::uuid[])", list(USERS), fetch="fetchrow")
     check(flags["t"] == flags["n"] == 2 and uflags["t"] == uflags["n"] == len(USERS),
           "every fixture org and user is is_test = true", f"orgs {dict(flags)} users {dict(uflags)}")
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {r for r in (rname,) if r} | ({"org_admin"} if uid == U_B_ADMIN else set())) for uid, (org, _a, _n, rname, _f) in USERS.items()})
 
 
 DEALS = (("wm", "DR3 Watermark"), ("vo", "DR3 View Only"), ("legacy", "DR3 Legacy Download"),

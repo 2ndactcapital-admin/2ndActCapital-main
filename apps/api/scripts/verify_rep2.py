@@ -137,6 +137,7 @@ if __name__ == "__main__" and VS.requested():
 
 # VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 if __name__ == "__main__":
     VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
@@ -630,6 +631,9 @@ async def seed(conn) -> None:
             await conn.execute("INSERT INTO portfolio.tax_lots (id, org_id, position_id, acquired_date, quantity, "
                                "adjusted_cost, term, status) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open')",
                                lot, ORG_A, pos, acq, Decimal(qty), Decimal(qty) * Decimal("90.5"), term)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {r for r in (rname,) if r}) for uid, (org, _a, _n, rname, _f) in USERS.items()})
 
 
 async def y_constraints(conn):

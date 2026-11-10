@@ -59,6 +59,7 @@ sys.path.insert(0, str(HERE))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "usermgmt1"
@@ -409,6 +410,11 @@ async def seed(conn) -> dict:
         await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", U_OTHER, roles[(ORG_B, "member")])
         await rbac.grant_org_admin(conn, U_ADMIN, ORG_A)
         await rbac.grant_org_admin(conn, U_ORGADMIN_ONLY, ORG_A)
+        # VERIFYFIX1 (bugfix4: user_roles is the ONE role source) — the Super Admin is one by its GRANT.
+        await rbac.grant_named_role(conn, U_SUPER, ORG_A, "super_admin")
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {U_ADMIN: (ORG_A, {"admin", "org_admin"}), U_MEMBER: (ORG_A, {"member"}), U_SUPER: (ORG_A, {"super_admin"}), U_TWOROLES: (ORG_A, {"member", "investment_staff"}), U_GOOGLE: (ORG_A, {"member"}), U_PH: (ORG_A, {"member"}), U_NOEMAIL: (ORG_A, set()), U_PLAT_PH: (ORG_A, set()), U_PLAT_DB: (ORG_A, {"member"}), U_RETIRED: (ORG_A, set(), False), U_DEACT: (ORG_A, {"member"}, False), U_VISIBLE: (ORG_A, {"member"}), U_RETIRE_ME: (ORG_A, {"member"}), U_ORGADMIN_ONLY: (ORG_A, {"org_admin"}), U_OTHER: (ORG_B, {"member"}), U_INVITED: (ORG_A, {"member"}), U_INVITED2: (ORG_A, {"member"})})
     return roles
 
 
