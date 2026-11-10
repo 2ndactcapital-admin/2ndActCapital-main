@@ -10,7 +10,8 @@ Rules, each by NAME (AST string constants / call names), never by exact line:
 ROLES      A verify that inserts ``public.users`` rows grants roles through ``user_roles`` (rbac.grant_named_role /
            grant_org_admin / an INSERT INTO user_roles) and asserts the app decides each fixture user as meant
            (``VR.check_roles_as_meant`` — _verify_roles — or its own "decides as meant" check); it never
-           writes ``UPDATE users SET role`` to change a fixture user's standing.
+           writes ``UPDATE users SET role`` to change a fixture user's standing, and never picks a user BY the
+           ``users.role`` string (``FROM users … WHERE role = …`` — the mirror, not the grant).
 COUNTS     No ``count(*)`` over a LIVE-WRITTEN table (_verify_scope.LIVE_WRITTEN) without a WHERE, and no generic
            whole-table ``f"SELECT count(*) FROM {t}"`` (a generic loop goes through ``VSC.count_sql``, which scopes
            the live-written tables and keeps every other table whole).
@@ -42,6 +43,9 @@ BARE_RE = re.compile(r"^verify_[A-Za-z0-9_]+\.py$")
 COUNT_RE = re.compile(r"count\(\s*\*\s*\)(?:\s+AS\s+\w+)?\s+FROM\s+((?:public\.|portfolio\.)?\w+)\b(.*)$",
                       re.I | re.S)
 GENERIC_WHOLE_RE = re.compile(r"count\(\s*\*\s*\)\s+FROM\s+(?:\w+\.)?\{[^}]+\}\s*$", re.I)
+#: a users query that DECIDES who holds a role by the users.role mirror string (BUGFIX4: the grant decides)
+ROLE_READ_RE = re.compile(r"FROM\s+(?:public\.)?users\b(?:\s+(?:AS\s+)?\w+)?[^;]*?\bWHERE\b[^;]*?(?<![\w.])(?:\w+\.)?role\s*(?:=|IN\b|<>|!=)",
+                          re.I | re.S)
 UPDATE_ROLE_RE = re.compile(r"UPDATE\s+(?:public\.)?users\s+SET\b[^;]*?\brole\s*=", re.I | re.S)
 INSERT_USERS_RE = re.compile(r"INSERT\s+INTO\s+(?:public\.)?users\s*\(", re.I)
 GRANT_RE = re.compile(r"grant_named_role\s*\(|grant_org_admin\s*\(|INSERT\s+INTO\s+(?:public\.)?user_roles\b", re.I)
@@ -136,6 +140,7 @@ def scan_file(path: pathlib.Path) -> dict:
     upd = sorted({ln for ln, s, _ in strings if UPDATE_ROLE_RE.search(s)})
     r["inserts_users"] = inserts_users
     r["role_writes"] = upd
+    r["role_reads"] = sorted({ln for ln, s, _ in strings if ROLE_READ_RE.search(s)})
     if upd:
         r["roles"] = "users.role"
     elif not inserts_users:
@@ -145,7 +150,7 @@ def scan_file(path: pathlib.Path) -> dict:
     else:
         r["roles"] = "users.role"
     r["decides_as_meant"] = decides
-    r["roles_ok"] = not upd and (not inserts_users or (grants and decides))
+    r["roles_ok"] = not upd and not r["role_reads"] and (not inserts_users or (grants and decides))
 
     # COUNTS
     unscoped = []
@@ -220,7 +225,84 @@ def _cell(v) -> str:
     return str(v)
 
 
+
+# ── the inventory (docs/VERIFYFIX1_INVENTORY.md) ────────────────────────────────────────────────────────────────
+
+KNOWN_ISSUES = {
+    "verify_rep5.py": ("nested verify_rep2 timeout 1200 s → 2700 s",
+                       lambda src: bool(re.search(r"verify_rep2\.py.{0,200}timeout=2700", src, re.S))),
+    "verify_rep7.py": ("TODAY fixed at start → today() at the call, passed through to services",
+                       lambda src: "def today()" in src and not re.search(r"^TODAY\s*=", src, re.M)),
+    "verify_rep6.py": ("pre-run cleanup scoped by fixture id (was a ~25-min FK walk)",
+                       lambda src: "async def pre_teardown" in src and "VC.cleanup(" in src and "by_org" in src),
+}
+
+
+def _wip_commits(name: str) -> list[str]:
+    import subprocess
+    try:
+        out = subprocess.run(["git", "log", "--format=%h", "0af412b^..HEAD", "--", f"apps/api/scripts/{name}"],
+                             cwd=REPO, capture_output=True, text=True, timeout=60).stdout.split()
+    except Exception:  # noqa: BLE001
+        return []
+    return out
+
+
+def _last_known() -> dict[str, str]:
+    out: dict[str, str] = {}
+    f = REPO / "sprint_prompts" / "logs" / "regressions_2026-11-02.out"
+    if f.is_file():
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            m = re.match(r"^(verify_\w+\.py)\s+PASS\s+(\d+)\s+FAIL\s+(\d+)\s+(\d+)s", line)
+            if m:
+                out[m.group(1)] = f"2026-11-02: {m.group(2)}/{m.group(3)} ({m.group(4)} s)"
+    return out
+
+
+def inventory_markdown() -> str:
+    rows = scan_set()
+    last = _last_known()
+    lines = []
+    body = []
+    for r in rows:
+        if r.get("missing"):
+            body.append((0, f"| {r['name']} | MISSING | | | | | | | | | | | **remaining** |"))
+            continue
+        src = (HERE / r["name"]).read_text(encoding="utf-8")
+        ki = KNOWN_ISSUES.get(r["name"])
+        ki_cell = "—"
+        ki_ok = True
+        if ki:
+            ki_ok = ki[1](src)
+            ki_cell = f"{ki[0]}: {'done' if ki_ok else '**remaining**'}"
+        gated = sorted({t for _, t in r["unscoped_gated"]})
+        other = sorted({t for _, t in r["unscoped_counts"]} - set(gated))
+        uc = (", ".join(gated) or "—") + (f" (reported, not a before/after count: {', '.join(other)})" if other else "")
+        nested = ("bespoke" if r["bespoke_total_parse"] else
+                  ("helper" if r["nested_helper"] else ("**none**" if r["runs_nested"] else "n/a")))
+        remaining = [k for k, ok in (("roles", r["roles_ok"]), ("counts", r["counts_ok"]),
+                                     ("self-checks", r["self_checks"]), ("TOTAL", r["total_guard"]),
+                                     ("nested", r["nested_ok"]), ("GUCs", not r["gucs_missing"]),
+                                     ("known issue", ki_ok)) if not ok]
+        status = "done" if not remaining else "**remaining: " + ", ".join(remaining) + "**"
+        roles = r["roles"] + (f" (role-string read L{r['role_reads']})" if r.get("role_reads") else "")
+        body.append((len(remaining), f"| {r['name']} | {r['lines']} | {roles} | {_cell(r['decides_as_meant'])} | {uc} | "
+                     f"{_cell(r['gucs_missing'])} | {_cell(r['self_checks'])} | {_cell(r['total_guard'])} | "
+                     f"{_cell(r['cleanup_only'])} | {nested} | {_cell(r['timeouts'])} | {ki_cell} | "
+                     f"{last.get(r['name'], 'not in the 2026-11-02 run')} | {', '.join(_wip_commits(r['name'])) or '—'} | "
+                     f"{status} |"))
+    body.sort(key=lambda t: -t[0])
+    lines.append("| verify | lines | role seeding | decides-as-meant | unscoped counts (gated) | missing teardown GUCs | "
+                 "--self-checks-only | TOTAL every exit | --cleanup-only | nested TOTAL | timeouts (s) | known issue | "
+                 "last known result | verifyfix1 commits | done / remaining |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    lines += [b for _, b in body]
+    return "\n".join(lines)
+
 if __name__ == "__main__":
+    if "--inventory" in sys.argv:
+        print(inventory_markdown())
+        sys.exit(0)
     rows = scan_set()
     if "--json" in sys.argv:
         print(json.dumps(rows, indent=1, default=list))

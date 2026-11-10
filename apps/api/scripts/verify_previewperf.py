@@ -469,9 +469,12 @@ async def run() -> None:
         worker_ok = await y_worker(conn)
         await y_index(conn)
         instrument()
-        supers = await scoped(conn, """SELECT id::text AS sub, org_id::text AS org FROM users
-                                        WHERE role = 'super_admin' AND status = 'active' AND is_active
-                                        ORDER BY created_at, id""")
+        # VERIFYFIX1: a real Super Admin is a user_roles grant (BUGFIX4 — users.role is only a mirror)
+        supers = await scoped(conn, """SELECT u.id::text AS sub, u.org_id::text AS org FROM users u
+                                        WHERE u.status = 'active' AND u.is_active
+                                          AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                                                      WHERE ur.user_id = u.id AND r.name = 'super_admin')
+                                        ORDER BY u.created_at, u.id""")
         user = dict(supers[0]) if supers else None
         if user is None:
             find("no admitted real super admin today", "the app-level checks (3a) and (4) need one; (5)'s fixture "
