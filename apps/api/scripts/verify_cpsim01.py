@@ -670,11 +670,18 @@ async def y_task1(conn):
           "send PRODUCTION credentials")
 
 
+# fix 1: a `$1::regclass` cast resolves the name INSIDE schema cpsim, which this login correctly has no USAGE on
+# (permission denied for schema cpsim). Resolve the relation from the catalog by namespace + relname instead — no
+# schema lookup, no privilege needed, and the isolation check stays exactly as strict.
+REL_OID = ("(SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+           "WHERE n.nspname = split_part($1::text, '.', 1) AND c.relname = split_part($1::text, '.', 2))")
+
+
 async def seed_rows_vs_checks(conn, rows_by_table) -> tuple[int, list]:
     n, refused = 0, []
     for table, rows in rows_by_table.items():
         defs = await platform(conn, "SELECT conname, pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE contype = "
-                                    "'c' AND conrelid = $1::regclass ORDER BY conname", table)
+                                    "'c' AND conrelid = " + REL_OID + " ORDER BY conname", table)
         for d in defs:
             m = re.fullmatch(r"CHECK \((.*)\)( NOT VALID)?", d["d"], re.S)
             if not m:
@@ -764,8 +771,8 @@ async def y_schema(conn):
     # constraints
     got, bad = 0, []
     for table, name, lits in SEED_CHECK_LITERALS:
-        d = await platform(conn, "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = $1::regclass "
-                                 "AND conname = $2", table, name, fetch="fetchval")
+        d = await platform(conn, "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = " + REL_OID +
+                                 " AND conname = $2", table, name, fetch="fetchval")
         if d is None:
             bad.append((table, name, "absent"))
             continue
