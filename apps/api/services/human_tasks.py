@@ -357,6 +357,10 @@ async def list_tasks(conn, org_id, *, status: str | None = None, kind: str | Non
 
 
 async def get_task(conn, org_id, task_id) -> dict:
+    # an absent id is NOT "any task": list_tasks with no task_id filter would hand back the org's first task, and a
+    # caller deciding "task None" would then act on (or be refused by) some unrelated task (cash08 fix 1)
+    if task_id is None or str(task_id).strip() == "":
+        raise HumanTaskNotFound("task not found (no task id)")
     rows = await list_tasks(conn, org_id, task_id=task_id, limit=1)
     if not rows:
         raise HumanTaskNotFound("task not found")

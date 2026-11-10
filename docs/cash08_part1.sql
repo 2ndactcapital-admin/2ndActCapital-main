@@ -210,9 +210,49 @@ CREATE UNIQUE INDEX IF NOT EXISTS cash_payees_task_live_uq
 CREATE UNIQUE INDEX IF NOT EXISTS cash_payees_bank_task_live_uq
   ON public.cash_payees (bank_change_task_id) WHERE system_to IS NULL AND bank_change_task_id IS NOT NULL;
 
+-- PHONE SHAPE (cash08 fix 1; mirrors services/cash_payees.py is_phone — keep the two identical): only digits, '+',
+-- spaces, '.', '-', '(' and ')'; no run of five or more digits; and either NANP — optional +1 / 1, then 3-3-4 digits with
+-- separators ("212-555-0100", "(212) 555-0100", "+1 212.555.0100"; 10–11 digits) — or international E.164 — a leading
+-- '+', a 1–3 digit country code, then groups of 1–4 digits (10–15 digits). Not a phone: "1234 5678 9012" (no phone
+-- shape), "2125550100" (unseparated), a 7-digit local number.
+CREATE OR REPLACE FUNCTION public.cash_payees_is_phone(v text) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT v IS NOT NULL AND btrim(v, ' ') ~ '^[+0-9 ().-]+$' AND btrim(v, ' ') !~ '[0-9]{5,}'
+     AND ((btrim(v, ' ') ~ '^([+]?1[ .-]?)?([(][0-9]{3}[)] ?|[0-9]{3}[ .-])[0-9]{3}[ .-][0-9]{4}$'
+           AND length(regexp_replace(v, '[^0-9]', '', 'g')) IN (10, 11))
+       OR (btrim(v, ' ') ~ '^[+][0-9]{1,3}([ .-]+[(]?[0-9]{1,4}[)]?)+$'
+           AND length(regexp_replace(v, '[^0-9]', '', 'g')) BETWEEN 10 AND 15))
+$$;
+
+-- CONTACT TEXT (cash08 fix 1; mirrors contact_text_without_phones): the text with every phone-shaped token removed —
+-- what is left is held to the bank-number rule; a token that is NOT phone-shaped stays.
+CREATE OR REPLACE FUNCTION public.cash_payees_contact_without_phones(v text) RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  rest text := v;
+  out text := '';
+  m text;
+  p int;
+BEGIN
+  IF v IS NULL THEN
+    RETURN NULL;
+  END IF;
+  LOOP
+    m := substring(rest from '[+]?[0-9(][0-9 ().-]{6,24}[0-9]');
+    EXIT WHEN m IS NULL;
+    p := strpos(rest, m);   -- the leftmost match's own position (an earlier copy would itself be the leftmost match)
+    out := out || left(rest, p - 1) || CASE WHEN public.cash_payees_is_phone(m) THEN ' ' ELSE m END;
+    rest := substr(rest, p + length(m));
+  END LOOP;
+  RETURN out || rest;
+END $$;
+
 -- NO BANK NUMBERS: the last four exactly four digits (ahead of the CHECK: a CHECK's error DETAIL echoes the row); a
--- run of 5+ digits anywhere; a 9+ digit run once separators go (non-phone columns); phones are
--- digits with separators only. The error names the column; never the value.
+-- run of 5+ digits anywhere; a 9+ digit run once separators go (non-phone columns); phone columns hold a PHONE SHAPE
+-- (above) and nothing else; the contact-text column (how a bank-change request arrived) may quote phone-shaped numbers
+-- but never one labelled as an account / routing number, and everything else in it is held to the bank rule. Bank
+-- fields (bank name, reference, last four, notes) never get the phone exemption. The error names the column; never the
+-- value.
 CREATE OR REPLACE FUNCTION public.cash_payees_no_numbers() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -224,6 +264,7 @@ DECLARE
     'bank_change_request_contact', 'bank_change_reason', 'callback_person', 'sloa_revoke_reason', 'suspend_reason',
     'retire_reason'];
   phone_cols text[] := ARRAY['contact_phone', 'pending_contact_phone', 'bank_change_request_phone', 'callback_number'];
+  contact_cols text[] := ARRAY['bank_change_request_contact'];
 BEGIN
   IF NEW.system_to IS NOT NULL THEN
     RETURN NEW;   -- an archived copy of a row that already passed
@@ -238,6 +279,13 @@ BEGIN
   FOREACH c IN ARRAY free_cols LOOP
     v := j ->> c;
     CONTINUE WHEN v IS NULL;
+    IF c = ANY (contact_cols) THEN
+      IF v ~* '(^|[^a-z])(acct|account|routing|aba|iban|a/c)s?[^a-z0-9]{0,4}(no|number|num|#)?[^a-z0-9]{0,4}[+(]?[0-9]' THEN
+        RAISE EXCEPTION 'cash_payees.%: a number labelled as an account or routing number — never stored', c
+          USING ERRCODE = '23514';
+      END IF;
+      v := public.cash_payees_contact_without_phones(v);
+    END IF;
     IF v ~ '[0-9]{5,}' THEN
       RAISE EXCEPTION 'cash_payees.%: a run of more than four digits looks like an account or routing number — store the custodian''s reference and the last four only', c
         USING ERRCODE = '23514';
@@ -250,8 +298,8 @@ BEGIN
   FOREACH c IN ARRAY phone_cols LOOP
     v := j ->> c;
     CONTINUE WHEN v IS NULL;
-    IF v !~ '^[+0-9 ().-]{7,25}$' OR v ~ '[0-9]{5,}' THEN
-      RAISE EXCEPTION 'cash_payees.%: a phone number is digits with separators (e.g. 212-555-0100), no run over four digits', c
+    IF NOT public.cash_payees_is_phone(v) THEN
+      RAISE EXCEPTION 'cash_payees.%: a phone number is 212-555-0100 / (212) 555-0100 / +1 212 555 0100, or +<country> in groups of up to four digits (10–15 digits) — never an account or routing number', c
         USING ERRCODE = '23514';
     END IF;
   END LOOP;

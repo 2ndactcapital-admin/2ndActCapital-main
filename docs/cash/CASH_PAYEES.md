@@ -28,24 +28,48 @@ Screens: Household → Treasury → **Payees** and **Invoices** (the existing Tr
 | Create | `manage_payees` | kind, display name, legal name, contact, the **call-back number on file**, bank name, account type, the **last four** digits and the **custodian's standing-instruction reference** (copied from the custodian) | draft |
 | Edit | a maker | any field while draft; every editor becomes a maker | draft |
 | Submit | a maker | opens the approval task (inbox) | pending_approval |
-| Approve | a **different** `approve_payees` holder (never a maker — Super Admin included) | on the payee or in the inbox | active |
+| Approve | a **different** `approve_payees` holder (never a maker — Super Admin included; S30 floor item `payee`) | on the payee or in the inbox | active |
 | Reject | the approver, with a note | back to draft | draft |
 
 **Never enter a full account or routing number** — anywhere, in any field. The database refuses any run of more than
 four digits in every text field, any nine-digit (routing-like) number written with dashes or spaces, and a last-four
-that is not exactly four digits; the refusal names the field, never the value. Write phone numbers with separators
-(`212-555-0100`). The payee's tax form (W-9) is a Chancery document, not a field.
+that is not exactly four digits; the refusal names the field, never the value. The payee's tax form (W-9) is a Chancery
+document, not a field.
+
+### Phone numbers (cash08 fix 1)
+
+The call-back procedure needs phone numbers, so phone and contact fields are checked **as phone numbers**, not by the
+bank-number rule — and a bank field never gets that exemption. The rule (the service's `is_phone` and the database's
+`cash_payees_is_phone`, kept identical):
+
+- **A phone number is** only digits, `+`, spaces, `.`, `-`, `(` and `)`, never a run of five or more digits, and either
+  - **North American**: an optional `+1` / `1`, then 3-3-4 digits **with separators** — `212-555-0100`,
+    `(212) 555-0100`, `+1 212.555.0100`; or
+  - **international (E.164)**: a leading `+`, a 1–3 digit country code, then groups of 1–4 digits — `+44 20 7946 0101`;
+    10 to 15 digits in all.
+- **Not a phone**: twelve digits in groups of four (`1234 5678 9012` — the shape of an account number), an unseparated
+  `2125550100` (as likely an account number), a seven-digit local number with no area code.
+- **Phone fields** — the payee's call-back number on file (`contact_phone`, and its pending value in a bank change), the
+  number given in a bank-change request (`bank_change_request_phone`), the number the approver dialled
+  (`callback_number`) — must hold one phone number in that shape, nothing else.
+- **The request-contact text** (`bank_change_request_contact` — how the request arrived) may quote phone numbers in
+  that shape; everything else in it is held to the bank-number rule, and a number **labelled** as an account or routing
+  number (`acct 212-555-0100`, `routing # …`) is refused whatever its shape. Separate two numbers with `;` or "or".
+- **Bank fields** — bank name, the custodian reference, the last four, notes, names, reasons — keep the bank-number rule
+  exactly: a phone number typed there (`646-555-0199`, ten digits) is refused like any nine-digit number.
 
 ## The bank-change call-back procedure
 
 A request to change a payee's bank details is the most common payment-fraud route. The platform treats it so:
 
-1. **Request** (`manage_payees`, on an ACTIVE payee): the new bank name, account type, **last four** and custodian
-   reference, plus **how the request arrived** (who, which channel — e-mail address, phone number given) and any phone
-   number given in the request. The payee is **suspended at once**; its approved details stay as they are; the new ones
+1. **Request** (`manage_payees`, on an ACTIVE payee — Treasury → Payees → the payee → *Request bank change*): the new
+   bank name, account type, **last four** and custodian reference, plus **how the request arrived** (who, which channel
+   — e-mail address, the phone number they called from) and any phone number given in the request (its own field — the
+   platform remembers it so the approver can never call it back). The payee is **suspended at once**; its approved details stay as they are; the new ones
    wait as "pending". The approval task goes to the `approve_payees` holders.
-2. **Call back** (the approver — never the requester): phone the payee on the number **on file** — the one shown on
-   the attestation form, recorded when the payee was approved. **Never call a number from the request**, even if it
+2. **Call back** (the approver: a different `approve_payees` holder, never the requester — S30 floor item
+   `payee_bank_change`, Super Admin included): phone the payee on the number **on file** — the one shown on the
+   attestation form, recorded when the payee was approved. **Never call a number from the request**, even if it
    looks familiar. Confirm the new details by voice with a person you can name.
 3. **Attest and approve**: record who you spoke to, the number you called and when. All three are required. The
    platform refuses an approval without them, a number that is not the one on file, and a number taken from the
@@ -85,9 +109,10 @@ enable it later, ALL of the following:
 
 1. **Counsel's written sign-off** on third-party payments (custody, SLOAs, disclosures, the call-back procedure) —
    filed in Chancery as the **counsel sign-off document**.
-2. **Two Super Admins**: one asks (Admin → `POST /api/v1/cash/third-party/request`, naming the counsel document); a
-   DIFFERENT Super Admin decides (the S30 floor `third_party_payments_setting`). One Super Admin alone, or a request
-   without the counsel document, is refused.
+2. **Two Super Admins** — the switch always takes two Super Admins plus counsel's document: one asks (Admin →
+   `POST /api/v1/cash/third-party/request`, naming the counsel sign-off document filed in Chancery); a DIFFERENT Super
+   Admin decides (the S30 floor `third_party_payments_setting` — the asker can never decide). One Super Admin alone, a
+   request without the counsel document, or any org admin who is not a Super Admin, is refused.
 3. **A code release** removing `THIRD_PARTY_RELEASE_LOCKED` in `services/cash_payees.py` (today it refuses every
    approval of the switch), reviewed after counsel signs off.
 4. **The payment path for payees**: `payment_instructions` able to name a payee (schema + its database trigger), the

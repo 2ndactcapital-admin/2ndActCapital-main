@@ -232,14 +232,19 @@ NAME = "CASH08 VERIFY "
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 FIXTURE_ID_PREFIX = "99000000-0000-0000-0000-0000cac8"
 TODAY = date(2026, 11, 9)           # a Monday
-TEARDOWN_GUCS = ("payees.teardown", "payments.teardown", "sod.teardown")
+#: every guard a touched table reads: cash_payees → payees.teardown; payment_instructions / events → payments.teardown;
+#: custodian_capabilities (rep2's custodian_capabilities_guard → execution_teardown_allowed()) → execution.teardown;
+#: sod_rules / sod_decisions → sod.teardown (cash08 fix 1: execution.teardown was missing → the teardown raised)
+TEARDOWN_GUCS = ("payees.teardown", "payments.teardown", "execution.teardown", "sod.teardown")
 CUSTODIAN = "cash08verify"
 D = Decimal
 ON_FILE = "212-555-0100"            # the payee's call-back number on file (separated: no run over four digits)
 REQUEST_PHONE = "646-555-0199"      # a number given IN the change request (never accepted as the call-back)
 OTHER_PHONE = "917-555-0123"        # a number that is neither
 #: the ONLY digit runs over four this script ever sends — each to a refusal check; scanned for afterwards
-REFUSED_NUMBERS = {"last5": "48213", "aba": "026009593", "acct": "40817731205", "acct_sep": "026-009-593"}
+REFUSED_NUMBERS = {"last5": "48213", "aba": "026009593", "acct": "40817731205", "acct_sep": "026-009-593",
+                   # cash08 fix 1: twelve digits in groups of four — NOT a phone shape, refused even in a contact field
+                   "acct12": "4081 7731 2058"}
 INVOICE_NO = "INV-A7"
 INVOICE_AMOUNT = "1250.00"
 
@@ -1120,9 +1125,22 @@ async def y_bank(conn):
     check(c4 == 403 and "requested this bank-detail change" in detail_text(b4) and r4["status"] == "suspended" and rr > r0,
           "the REQUESTER cannot approve, even with a proper attestation (403, floor), recorded", f"{c4} "
           f"{detail_text(b4)[:200]} {r0}->{rr}")
+    bank_task = None
+    if r4["bank_change_task_id"] is not None:
+        with _ctx(ORG_A):
+            pool = await get_pool()
+            async with pool.acquire() as c_:
+                bank_task = await HT.get_task(c_, str(ORG_A), r4["bank_change_task_id"])
+    check(bank_task is not None and bank_task["kind"] == CP.BANK_TASK_KIND and bank_task["status"] == "open"
+          and str(bank_task["id"]) == str(r4["bank_change_task_id"]),
+          "the generic-inbox check targets the BANK-CHANGE approval task, and it is open (not the completed payee "
+          "approval)", f"{r4['bank_change_task_id']} "
+                       f"{({k: bank_task.get(k) for k in ('kind', 'status')}) if bank_task else None}")
     with _ctx(ORG_A):
         pool = await get_pool()
         try:
+            if r4["bank_change_task_id"] is None:
+                raise RuntimeError("no bank-change task on the payee — nothing to bypass")
             await HT.complete_task(pool, org_id=str(ORG_A), task_id=r4["bank_change_task_id"], actor_id=str(U_CK),
                                    outcome="approve")
             bypass = "completed"
@@ -1173,6 +1191,119 @@ async def y_bank(conn):
           and r8["pending_last_four"] is None,
           "a rejected change: the pending details are discarded, the approved ones stand, the payee active again",
           f"{c7} {c8} {detail_text(b8)[:160]}")
+    await y_contact_phones(conn, pid, change)
+
+
+#: phone-shape samples for the Python ↔ SQL parity check (fixture phones in the reserved 555-01xx range; the non-phones
+#: carry no run over four digits, so nothing here is a refusal input the leak scan looks for)
+PHONE_SAMPLES = {
+    ON_FILE: True, "(212) 555-0100": True, "+1 212 555 0100": True, "1-646-555-0199": True, "+1 (646) 555-0199": True,
+    "646.555.0199": True, "+44 20 7946 0101": True,
+    REFUSED_NUMBERS["acct12"]: False, "4081-7731-2058": False, "555-0100": False, "212-555-01": False,
+    "+1 212 555 0100 1": True, "212 555 0100 x12": False, "": False, "+": False, "12 34 56 78 90 12": False,
+}
+
+
+async def y_contact_phones(conn, pid, change):
+    """cash08 fix 1: the digit-run guard is scoped — a PHONE in a contact / call-back field is a phone (validated as
+    one), the same digits in a bank field / the reference / notes stay refused, and a 12-digit non-phone (or a number
+    labelled as an account) in a contact field stays refused. Service AND database, both sides."""
+    # Python and SQL agree on the phone shape, sample by sample
+    sql_says = {}
+    for v, want in PHONE_SAMPLES.items():
+        sql_says[v] = await platform(conn, "SELECT public.cash_payees_is_phone($1)", v, fetch="fetchval")
+    py_bad = [v for v, want in PHONE_SAMPLES.items() if CP.is_phone(v) != want]
+    sql_bad = [v for v, want in PHONE_SAMPLES.items() if bool(sql_says[v]) != want]
+    check(not py_bad and not sql_bad, f"the phone shape: the service and the database agree on all {len(PHONE_SAMPLES)} "
+          "samples (NANP 3-3-4 separated, +E.164 in groups ≤ 4, 10–15 digits; no 12-digit non-phone)",
+          f"py {len(py_bad)} sql {len(sql_bad)} off")
+    contact_samples = [f"email from ap@harbor.example, call {REQUEST_PHONE}", f"phoned from {OTHER_PHONE} and (212) "
+                       "555-0100", f"call {REFUSED_NUMBERS['acct12']}", f"call {REQUEST_PHONE} {OTHER_PHONE}",
+                       "acct 212-555-0100", "routing # 646-555-0199", "Harbor accounts payable, call 646-555-0199"]
+    parity = []
+    for v in contact_samples:
+        sql_v = await platform(conn, "SELECT public.cash_payees_contact_without_phones($1)", v, fetch="fetchval")
+        parity.append(sql_v == CP.contact_text_without_phones(v))
+    check(all(parity), "the contact-text phone exemption: the service and the database strip the same tokens",
+          f"{parity}")
+
+    # 1. API — a phone in a CONTACT field is accepted (the real request above did it with a phone in request_contact
+    #    AND request_phone); here: a fresh request whose contact text quotes two phone numbers, then rejected
+    base = await live(conn, pid)
+    c1, b1 = await act(U_MK, pid, "request_bank_change", **{
+        **change, "changes": {"last_four": "0999", "payee_reference": "STD-HARBOR-GH"},
+        "request_contact": f"phoned from {OTHER_PHONE}; asked us to call +1 {REQUEST_PHONE}",
+        "request_phone": f"({REQUEST_PHONE[:3]}) {REQUEST_PHONE[4:]}"})
+    r1 = await live(conn, pid)
+    stored = (r1 or {}).get("bank_change_request_contact") or ""
+    check(c1 == 200 and r1["status"] == "suspended" and REQUEST_PHONE in stored and OTHER_PHONE in stored
+          and r1["bank_change_request_phone"] == f"({REQUEST_PHONE[:3]}) {REQUEST_PHONE[4:]}",
+          "a PHONE in a contact field is accepted and stored as given (request contact quoting two phone numbers; the "
+          "request's own number in its phone field)", f"{c1} {detail_text(b1)[:160]}")
+    c1r, _b = await api(U_CK, "POST", pe(H1, f"/{pid}/bank-change/reject"), {"note": "fixture: not confirmed"})
+    r1r = await live(conn, pid)
+    check(c1r == 200 and r1r["status"] == "active" and r1r["last_four"] == base["last_four"],
+          "…and that change rejected: the approved details stand", f"{c1r}")
+
+    # 2. API — the SAME digits in a bank field, the reference or notes are refused (the column named)
+    for field, val in (("payee_reference", REQUEST_PHONE), ("notes", f"call {REQUEST_PHONE}"),
+                       ("bank_name", f"Fixture Bank {REQUEST_PHONE}")):
+        c, b = await create(display_name=NAME + f"phone in {field}", **{field: val})
+        check(c == 422 and field in detail_text(b), f"the same phone digits in {field} → refused (a bank field never "
+              "takes the phone exemption)", f"{c} {detail_text(b)[:160]}")
+    c, b = await act(U_MK, pid, "request_bank_change", **{
+        **change, "changes": {"last_four": "0999", "payee_reference": f"STD {REQUEST_PHONE}"}})
+    r2 = await live(conn, pid)
+    check(c == 422 and "pending_payee_reference" in detail_text(b) and r2["status"] == "active"
+          and r2["bank_change_task_id"] is None,
+          "…and as the NEW reference of a bank change: refused, nothing pending, no task opened", f"{c} "
+          f"{detail_text(b)[:160]}")
+
+    # 3. API — a 12-digit non-phone, or a number labelled as an account, in a CONTACT field is refused
+    for label, extra in (("12 digits in groups of four in the request contact",
+                          {"request_contact": f"email; call {REFUSED_NUMBERS['acct12']}"}),
+                         ("12 digits in groups of four as the request's phone",
+                          {"request_phone": REFUSED_NUMBERS["acct12"]}),
+                         ("a phone-shaped number LABELLED as an account in the request contact",
+                          {"request_contact": f"new acct {REQUEST_PHONE}"})):
+        c, b = await act(U_MK, pid, "request_bank_change", **{**change, "changes": {"last_four": "0999",
+                                                                                    "payee_reference": "STD-HARBOR-IJ"},
+                                                              **extra})
+        r3 = await live(conn, pid)
+        check(c == 422 and "bank_change_request" in detail_text(b) and r3["status"] == "active"
+              and r3["bank_change_task_id"] is None and not number_leaks(dumps(b)),
+              f"{label} → refused (column named, value never echoed); nothing pending", f"{c} {detail_text(b)[:160]}")
+    c, b = await create(display_name=NAME + "acct12 as phone", contact_phone=REFUSED_NUMBERS["acct12"])
+    check(c == 422 and "contact_phone" in detail_text(b), "12 digits with no phone shape as the payee's call-back "
+          "number → refused", f"{c} {detail_text(b)[:160]}")
+
+    # 4. DATABASE — the trigger, both sides, each in a rolled-back transaction
+    def ins(col, val):
+        return lambda c_: c_.execute(
+            f"INSERT INTO cash_payees (org_id, household_id, kind, display_name, created_by, maker_ids, {col}) "
+            "VALUES ($1::uuid, $2::uuid, 'vendor', $3, $4::uuid, ARRAY[$4::uuid], $5)",
+            str(ORG_A), str(H1), NAME + f"db phone {col}", str(U_MK), val)
+    accepted = [("contact_phone", "(212) 555-0100"), ("contact_phone", "+44 20 7946 0101"),
+                ("bank_change_request_phone", REQUEST_PHONE),
+                ("bank_change_request_contact", f"email from ap@harbor.example, call {REQUEST_PHONE}")]
+    refused = [("payee_reference", REQUEST_PHONE), ("notes", f"call {REQUEST_PHONE}"),
+               ("bank_name", f"Bank {REQUEST_PHONE}"), ("callback_person", f"A. Clerk {REQUEST_PHONE}"),
+               ("bank_change_request_contact", f"call {REFUSED_NUMBERS['acct12']}"),
+               ("bank_change_request_contact", f"acct {REQUEST_PHONE}"),
+               ("contact_phone", REFUSED_NUMBERS["acct12"]), ("callback_number", "4081-7731-2058"),
+               ("contact_phone", "555-0100")]
+    bad = []
+    for col, val in accepted:
+        _r, err = await in_rolled_back(conn, ORG_A, ins(col, val))
+        if err is not None:
+            bad.append(("accepted?", col, type(err).__name__))
+    for col, val in refused:
+        _r, err = await in_rolled_back(conn, ORG_A, ins(col, val))
+        if not (err is not None and getattr(err, "sqlstate", None) == "23514" and col in str(err).split("\n", 1)[0]):
+            bad.append(("refused?", col, type(err).__name__ if err else None))
+    check(not bad, f"the database: a phone in a contact field accepted ({len(accepted)}); the same digits in a bank "
+          f"field / reference / notes / name, a 12-digit non-phone or a labelled account number refused "
+          f"({len(refused)}) — 23514, column named", f"{bad}")
 
 
 async def y_numbers(conn):

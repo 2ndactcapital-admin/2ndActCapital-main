@@ -115,14 +115,35 @@ BANK_CHANGE_FIELDS = ("bank_name", "account_type", "last_four", "payee_reference
 FREE_FIELDS = ("display_name", "legal_name", "contact_name", "contact_email", "bank_name", "payee_reference", "notes",
                "pending_bank_name", "pending_payee_reference", "pending_contact_email", "bank_change_request_contact",
                "bank_change_reason", "callback_person", "sloa_revoke_reason", "suspend_reason", "retire_reason")
+#: a whole-value phone number (the payee's call-back number on file, the request's number, the dialled number)
 PHONE_FIELDS = ("contact_phone", "pending_contact_phone", "bank_change_request_phone", "callback_number")
+#: free text that RECORDS HOW SOMEONE WAS REACHED — it may quote phone numbers (the call-back rule compares them), so a
+#: phone-shaped token is exempt there; every other digit in it is held to the bank rule. Never a bank field.
+CONTACT_TEXT_FIELDS = ("bank_change_request_contact",)
+BANK_FIELDS = ("bank_name", "payee_reference", "pending_bank_name", "pending_payee_reference", "last_four",
+               "pending_last_four", "notes")
+assert not set(CONTACT_TEXT_FIELDS) & set(BANK_FIELDS) and set(CONTACT_TEXT_FIELDS) <= set(FREE_FIELDS)
 LIMITS = {"display_name": 200, "legal_name": 200, "contact_name": 200, "contact_email": 200, "bank_name": 120,
           "payee_reference": 200, "notes": 2000}
 
 _RUN5 = re.compile(r"[0-9]{5,}")
 _RUN9 = re.compile(r"[0-9]{9,}")
 _SEP = re.compile(r"[\s./-]")
-_PHONE = re.compile(r"^[+0-9 ().-]{7,25}$")
+# PHONE SHAPE (mirrors cash_payees_is_phone() in docs/cash08_part1.sql — keep the two identical):
+#   * only digits, '+', spaces, '.', '-', '(' and ')'; no run of five or more digits (so a number is always separated);
+#   * NANP: optional +1 / 1, then 3-3-4 digits with separators — "212-555-0100", "(212) 555-0100", "+1 212.555.0100";
+#   * or international E.164: a leading '+', a 1–3 digit country code, then groups of 1–4 digits, 10–15 digits total.
+#   Anything else is not a phone: "1234 5678 9012" (12 digits, no phone shape), "2125550100" (unseparated — as likely an
+#   account number), a 7-digit local number (no area code). A bank number never passes as a phone in a bank field: bank
+#   fields never use this exemption.
+_PHONE_CHARS = re.compile(r"^[+0-9 ().-]+$")
+_NANP = re.compile(r"^(\+?1[ .-]?)?(\([0-9]{3}\) ?|[0-9]{3}[ .-])[0-9]{3}[ .-][0-9]{4}$")
+_INTL = re.compile(r"^\+[0-9]{1,3}([ .-]+\(?[0-9]{1,4}\)?)+$")
+#: a phone-shaped candidate inside free contact text (a token starts with '+', '(' or a digit and ends with a digit)
+_PHONE_TOKEN = re.compile(r"\+?[0-9(][0-9 ().-]{6,24}[0-9]")
+#: a number LABELLED as a bank number in contact text ("acct 212-555-0100", "routing #: …") — refused whatever its shape
+_ACCOUNT_LABEL = re.compile(r"(^|[^a-z])(acct|account|routing|aba|iban|a/c)s?[^a-z0-9]{0,4}(no|number|num|#)?"
+                            r"[^a-z0-9]{0,4}[+(]?[0-9]", re.I)
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -175,9 +196,14 @@ def number_refusal(field: str, value) -> str | None:
     if field in ("last_four", "pending_last_four"):
         return None if re.fullmatch(r"[0-9]{4}", v) else f"{field}: exactly the last four digits, never more"
     if field in PHONE_FIELDS:
-        if not _PHONE.match(v) or _RUN5.search(v):
-            return f"{field}: a phone number is digits with separators (e.g. 212-555-0100), no run over four digits"
+        if not is_phone(v):
+            return (f"{field}: a phone number is 212-555-0100 / (212) 555-0100 / +1 212 555 0100, or +<country> in "
+                    "groups of up to four digits (10–15 digits) — never an account or routing number")
         return None
+    if field in CONTACT_TEXT_FIELDS:
+        if _ACCOUNT_LABEL.search(v):
+            return f"{field}: a number labelled as an account or routing number — never stored"
+        v = contact_text_without_phones(v)
     if _RUN5.search(v):
         return (f"{field}: a run of more than four digits looks like an account or routing number — store the "
                 "custodian's reference and the last four only")
@@ -188,6 +214,21 @@ def number_refusal(field: str, value) -> str | None:
 
 def number_refusals(values: dict) -> list[str]:
     return [r for r in (number_refusal(k, v) for k, v in values.items()) if r]
+
+
+def is_phone(value) -> bool:
+    """Pure: the phone shape above (NANP 3-3-4 with separators, or +E.164 in groups of up to four; 10–15 digits)."""
+    v = str(value or "").strip(" ")
+    if not v or not _PHONE_CHARS.fullmatch(v) or _RUN5.search(v):
+        return False
+    n = len(re.sub(r"[^0-9]", "", v))
+    return (bool(_NANP.fullmatch(v)) and n in (10, 11)) or (bool(_INTL.fullmatch(v)) and 10 <= n <= 15)
+
+
+def contact_text_without_phones(value) -> str:
+    """Pure: contact text with every phone-shaped token removed — what is left is held to the bank-number rule. A
+    token that is NOT phone-shaped stays (so "1234 5678 9012" is still read as twelve digits)."""
+    return _PHONE_TOKEN.sub(lambda m: " " if is_phone(m.group(0)) else m.group(0), str(value))
 
 
 def phone_digits(v) -> str:
