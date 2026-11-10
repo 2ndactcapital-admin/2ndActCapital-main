@@ -89,6 +89,16 @@ VERB_AUTONOMY: dict[str, dict] = {
                              "writes": "approves a payment instruction (the S30 floor) — a different person only"},
     "cash.payment_send": {"class": NEVER, "money": True,
                           "writes": "sends a payment instruction through its adapter — a person only"},
+    # CASH06 — a cash rule's firing (stage A). DRAFT + SUBMIT only: each instruction lands pending_approval with its
+    # approval task, the rule OWNER as its maker, so a DIFFERENT person approves (the cash07 floor). Approve / send /
+    # reconcile stay never (above, unregistered). Capped: the rule's own per-firing $ and per-day count (≤ the org
+    # ceiling — services.cash_rules) inside the run; here the quantity is the most instructions one firing can draft
+    # (its destinations, ≤ 5) against the org's cap_per_run. Engine-only: never offered to the assistant.
+    "cash.rule_fire": {"class": ELIGIBLE_WITH_CAP, "draft_only": True, "submits_for_approval": True,
+                       "quantity": lambda _ctx: 5,
+                       "writes": "payment instruction DRAFTS submitted for approval (payment_instructions, status "
+                                 "pending_approval + the approval task) and the rule's firing record — never "
+                                 "approves, sends or reconciles"},
 }
 #: CASH04 — the verbs whose write may only ever DRAFT (the run's output is a draft a person adopts)
 DRAFT_ONLY_VERBS = frozenset(k for k, v in VERB_AUTONOMY.items() if v.get("draft_only"))
@@ -713,7 +723,8 @@ async def hold_alerts(pool, *, org_id, run_id, owner, reason: str) -> list:
 #: Event types a trigger may listen for (Task 6). document_confirmed is published by services.chancery_workflow_bridge;
 #: the rest by services.domain_events.publish_event (a document filed, a task completed, a held-away import approved).
 TRIGGER_EVENT_TYPES = ("document_confirmed", "human_task.opened", "human_task.completed",
-                       "held_away.import_loaded", "held_away.import_approved")
+                       "held_away.import_loaded", "held_away.import_approved",
+                       "cash.incoming_credit")   # CASH06 — an incoming credit on the feed (services.cash_rules)
 
 TODO_SOURCE_HOLD = "workflow_autonomy_hold"
 TODO_SOURCE_DIGEST = "workflow_autonomy_digest"

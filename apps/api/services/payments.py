@@ -118,7 +118,11 @@ ACTION_LABELS = {
 }
 RECONCILE_METHOD_LABELS = {"custodian_data": "Matched to the custodian's transaction feed",
                            "manual": "Confirmed manually (a different person from the sender)"}
-PURPOSE_REF_LABELS = {"cash_obligation": "Cash obligation", "cash_proposal": "Cash proposal"}
+PURPOSE_REF_LABELS = {"cash_obligation": "Cash obligation", "cash_proposal": "Cash proposal",
+                      "cash_rule": "Cash rule"}   # CASH06 — an instruction a standing rule drafted
+#: what a PERSON may link a draft to (CASH06: only a rule's firing — draft_and_submit — links an instruction to a rule)
+PERSON_PURPOSE_REFS = ("cash_obligation", "cash_proposal")
+RULE_ONLY_REF = "only a cash rule's own firing links a payment instruction to a cash rule"
 EDITABLE = ("source_account_id", "destination_account_id", "amount", "rail", "value_date", "purpose",
             "purpose_ref_type", "purpose_ref_id")
 
@@ -413,6 +417,14 @@ async def _purpose_ref(conn, org_id, household_id, ref_type, ref_id) -> dict | N
         if r is None or str(r["entity_id"]) not in members:
             raise PaymentError("the linked obligation is not one of this household's")
         return {"type": ref_type, "id": str(r["id"]), "label": f"{r['name']} — due {r['due_date'].isoformat()}"}
+    if ref_type == "cash_rule":
+        # CASH06 — the rule's stable id (cash_rules.rule_id); the rule must be this household's
+        r = await conn.fetchrow("SELECT rule_id, name FROM public.cash_rules WHERE rule_id = $1::uuid AND org_id = "
+                                "$2::uuid AND household_id = $3::uuid AND system_to IS NULL ORDER BY version_no DESC "
+                                "LIMIT 1", _uuid(ref_id, "cash rule"), str(org_id), str(household_id))
+        if r is None:
+            raise PaymentError("the linked cash rule is not one of this household's")
+        return {"type": ref_type, "id": str(r["rule_id"]), "label": f"Cash rule — {r['name']}"}
     r = await conn.fetchrow("SELECT p.id, p.status, a.household_id FROM public.rebalance_proposals p JOIN public.accounts "
                             "a ON a.id = p.account_id AND a.system_to IS NULL AND a.valid_to IS NULL WHERE p.id = "
                             "$1::uuid AND p.org_id = $2::uuid AND p.proposal_kind = 'cash' AND p.system_to IS NULL",
@@ -519,6 +531,8 @@ def _terms(f: dict) -> dict:
 
 # ── draft / edit / submit ───────────────────────────────────────────────────────────────────────────────────────────
 async def draft(pool, *, org_id, actor_id, household_id, data: dict) -> dict:
+    if data.get("purpose_ref_type") == "cash_rule":
+        raise PaymentError(RULE_ONLY_REF)
     t = today()
     async with pool.acquire() as conn:
         actor = await _human(conn, actor_id, org_id)
@@ -547,6 +561,8 @@ async def edit(pool, *, org_id, actor_id, payment_id, changes: dict) -> dict:
     bad = set(changes) - set(EDITABLE)
     if bad:
         raise PaymentError(f"not editable: {sorted(bad)}")
+    if changes.get("purpose_ref_type") == "cash_rule":
+        raise PaymentError(RULE_ONLY_REF)
     t = today()
     async with pool.acquire() as conn:
         actor = await _human(conn, actor_id, org_id)
@@ -611,6 +627,66 @@ async def submit(pool, *, org_id, actor_id, payment_id) -> dict:
         await _withdraw_task(pool, task["id"], "the payment instruction could not be submitted")
         raise
     await _publish(pool, org_id, "submit", new["id"], {"task_id": task["id"]}, actor["id"], eid)
+    return {**new, "task": task}
+
+
+async def draft_and_submit(pool, *, org_id, actor_id, household_id, data: dict) -> dict:
+    """CASH06 — the ONE verb a cash rule's firing calls: draft + submit, the instruction row written in ONE database
+    transaction (it is never seen as a lone draft). ``actor_id`` is the RULE OWNER — the maker of the instruction, so
+    the cash07 floor makes its checker someone else. Every rule a person's draft passes is checked first (same owner,
+    the declared rail, a business-day value date, both authority checks for the owner).
+
+    The approval task is opened FIRST, by the engine on its own connections (services.human_tasks.open_task — the same
+    reason ``submit`` is two steps), for an instruction id chosen here; then the INSERT (status draft — the DB writes the
+    'create' event) and the move to pending_approval (the 'submit' event) commit together. On any failure the task is
+    withdrawn and nothing remains. NOTHING IS APPROVED OR SENT HERE: the result is pending_approval."""
+    t = today()
+    async with pool.acquire() as conn:
+        actor = await _human(conn, actor_id, org_id)
+        f = await _validate(pool, conn, org_id=org_id, actor_id=actor["id"], household_id=household_id, data=data, t=t,
+                            what="draft a payment instruction from a cash rule")
+    aid = uuid.UUID(str(actor["id"]))
+    pid = uuid.uuid4()
+    probe = {"amount": f["amount"], "rail": f["rail"], "value_date": f["value_date"]}
+    task = await HT.open_task(
+        pool, org_id=org_id, kind=TASK_KIND, subject_type=SUBJECT, subject_id=pid, maker_id=actor["id"],
+        eligible_permission=APPROVE, title=_task_title(probe, f["_src"], f["_dst"]),
+        payload={"amount": money(f["amount"]), "currency": "USD", "rail": f["rail"],
+                 "value_date": f["value_date"].isoformat(), "source": f["_src"]["account_number_masked"],
+                 "destination": f["_dst"]["account_number_masked"], "purpose": f["purpose"],
+                 "drafted_by_rule": str(f["purpose_ref_id"]) if f["purpose_ref_type"] == "cash_rule" else None,
+                 "maker_ids": [str(aid)], "floor": "no self-approval, ever (S30 floor — Super Admin included); the "
+                                                   "rule's owner is this instruction's maker"},
+        action_path=f"/portfolio/households/{household_id}?tab=treasury&payment={pid}#treasury-payments")
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await _event_context(conn, action="create", actor_id=aid, detail={"terms": _terms(f), "by_rule": True})
+                row = await conn.fetchrow(
+                    f"""INSERT INTO {T} (id, org_id, household_id, source_account_id, destination_account_id, amount,
+                            rail, value_date, purpose, purpose_ref_type, purpose_ref_id, status, maker_id, maker_ids)
+                        VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', $12,
+                                ARRAY[$12]::uuid[]) RETURNING *""",
+                    pid, str(org_id), str(household_id), f["source_account_id"], f["destination_account_id"],
+                    f["amount"], f["rail"], f["value_date"], f["purpose"], f["purpose_ref_type"], f["purpose_ref_id"],
+                    aid)
+                await _clear_event_context(conn)
+                await _audit(conn, org_id, aid, "created", row["id"], {"household_id": str(household_id), **_terms(f),
+                                                                        "source": f["_src"]["account_number_masked"],
+                                                                        "destination": f["_dst"]["account_number_masked"],
+                                                                        "by_rule": True})
+                new, eid = await _update(conn, dict(row), {"status": "pending_approval", "approval_task_id":
+                                                           uuid.UUID(task["id"]), "maker_ids": [aid]},
+                                         action="submit", actor_id=aid,
+                                         detail={"task_id": task["id"], "notified": task.get("notified", []),
+                                                 "by_rule": True})
+                await _audit(conn, org_id, aid, "submitted", row["id"], {"event_id": eid, "task_id": task["id"],
+                                                                          "by_rule": True})
+    except Exception:
+        await _withdraw_task(pool, task["id"], "the rule's payment instruction could not be drafted")
+        raise
+    await _publish(pool, org_id, "create", new["id"], {"status": "draft", "by_rule": True}, actor["id"])
+    await _publish(pool, org_id, "submit", new["id"], {"task_id": task["id"], "by_rule": True}, actor["id"], eid)
     return {**new, "task": task}
 
 
@@ -1214,8 +1290,11 @@ async def list_payments(conn, org_id, household_id, *, status: str | None = None
 
 
 async def events_of(conn, org_id, payment_id, *, member: bool = False) -> list[dict]:
+    # cash06 fix 1: created_at is the trigger's now() — the SAME for every transition of one transaction — and id is
+    # random, so draft_and_submit's create + submit (one transaction) read back in either order. The create row (the
+    # only one with no from_status) sorts first among ties.
     rows = await conn.fetch(f"SELECT * FROM {T_EVT} WHERE payment_id = $1::uuid AND org_id = $2::uuid "
-                            "ORDER BY created_at, id", str(payment_id), str(org_id))
+                            "ORDER BY created_at, (from_status IS NOT NULL), id", str(payment_id), str(org_id))
     names = await _names(conn, [r["actor_id"] for r in rows])
     out = []
     for r in rows:
@@ -1325,7 +1404,8 @@ def vocabularies(*, can_write: bool) -> dict:
             "rails": [{"key": k, "label": v} for k, v in RAILS],
             "channels": [{"key": k, "label": v} for k, v in PA.CHANNEL_LABELS.items()] if can_write else [],
             "reconcile_methods": [{"key": k, "label": v} for k, v in RECONCILE_METHOD_LABELS.items()] if can_write else [],
-            "purpose_links": [{"key": k, "label": v} for k, v in PURPOSE_REF_LABELS.items()] if can_write else [],
+            "purpose_links": [{"key": k, "label": PURPOSE_REF_LABELS[k]} for k in PERSON_PURPOSE_REFS] if can_write
+            else [],
             "editable": list(EDITABLE) if can_write else [], "inline_editable": []}
 
 

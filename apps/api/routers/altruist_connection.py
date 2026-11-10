@@ -131,7 +131,7 @@ def _sync_summary(environment: str, identity_result: dict, sync_result) -> dict:
     }
 
 
-async def _run_sync(conn, *, org_id: str, environment: str) -> dict:
+async def _run_sync(conn, *, org_id: str, environment: str, collect: list | None = None) -> dict:
     """The Sprint 5 entrypoint: resolve_identity then sync_resolved_accounts,
     end to end, for one org+environment. Shared by the HTTP endpoint below
     and the auto-trigger-on-connect background task, so both go through the
@@ -144,7 +144,17 @@ async def _run_sync(conn, *, org_id: str, environment: str) -> dict:
     await altruist_oauth.require_active_connection(conn, org_id=org_id, environment=environment)
     identity_result = await resolve_identity(conn, org_id=org_id, environment=environment)
     sync_result = await sync_resolved_accounts(conn, org_id=org_id, environment=environment)
+    if collect is not None:   # CASH06 — the caller publishes incoming-credit events once this connection commits
+        collect.extend(sync_result.new_transaction_ids)
     return _sync_summary(environment, identity_result, sync_result)
+
+
+async def _publish_credits(org_id: str, transaction_ids: list) -> None:
+    """CASH06 — after the sync COMMITTED: one cash.incoming_credit event per new credit to a watched account."""
+    if transaction_ids:
+        from services import cash_rules
+
+        await cash_rules.publish_incoming_credits(org_id, transaction_ids)
 
 
 async def _run_auto_sync(org_id: str, environment: str) -> None:
@@ -157,8 +167,10 @@ async def _run_auto_sync(org_id: str, environment: str) -> None:
     """
     try:
         pool = await get_pool()
+        new_txns: list = []
         async with pool.acquire() as conn:
-            await _run_sync(conn, org_id=org_id, environment=environment)
+            await _run_sync(conn, org_id=org_id, environment=environment, collect=new_txns)
+        await _publish_credits(org_id, new_txns)
     except Exception as exc:  # pragma: no cover - defensive
         print(f"ERROR in altruist auto-sync (org_id={org_id}, environment={environment}): {exc}")
         print(traceback.format_exc())
@@ -303,10 +315,12 @@ async def altruist_sync(request: Request, body: SyncRequest):
     _user_id, org_id = await _require(request, WRITE_PERMISSION)
 
     pool = await get_pool()
+    new_txns: list = []
     async with pool.acquire() as conn:
         try:
-            summary = await _run_sync(conn, org_id=org_id, environment=environment)
+            summary = await _run_sync(conn, org_id=org_id, environment=environment, collect=new_txns)
         except AltruistNotConnected as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await _publish_credits(org_id, new_txns)
 
     return summary

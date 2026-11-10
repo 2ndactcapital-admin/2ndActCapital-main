@@ -147,12 +147,21 @@ class AccountSyncResult:
     transactions_errors: list[RowError] = field(default_factory=list)
     #: PORTENTRY1 — what superseding the account's provisional (one-time import) rows did, or None
     provisional: dict | None = None
+    #: CASH06 — the ids of the transactions this sync created (the incoming-credit emitter reads them)
+    transaction_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
 class SyncResult:
     accounts_synced: int = 0
     accounts: list[AccountSyncResult] = field(default_factory=list)
+
+    @property
+    def new_transaction_ids(self) -> list[str]:
+        """CASH06 — every transaction this sync created. The CALLER publishes the incoming-credit events from them
+        AFTER its connection commits (services.cash_rules.publish_incoming_credits): a subscriber re-reads each
+        transaction by id, and an uncommitted one would be invisible to it."""
+        return [t for a in self.accounts for t in a.transaction_ids]
 
 
 def _security_key(row: dict) -> str:
@@ -421,6 +430,7 @@ async def _sync_transactions(
                 external_id=ext_id, record_type="transaction", record_id=transaction_id,
             )
             result.transactions_created += 1
+            result.transaction_ids.append(str(transaction_id))
         except (PortfolioError, ValueError) as exc:
             result.transactions_errors.append(RowError(external_id=ext_id, reason=str(exc)))
 

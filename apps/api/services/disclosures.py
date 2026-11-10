@@ -130,6 +130,11 @@ KEYS: dict[str, dict] = {
     "cash.payments": {"title": "Payments between your accounts", "category": "risk", "audience": "both",
                       "description": "What a payment instruction is and is not: ACH return risk, provisional "
                                      "settlement, value dates on business days, and that the custodian moves the money."},
+    # CASH06 — on the cash-rule editor and a member's read-only rules list
+    "cash.rules": {"title": "Cash rules", "category": "risk", "audience": "both",
+                   "description": "What a standing cash rule does and does not do: it prepares payment instructions "
+                                  "between the family's own accounts for a person to approve; no money moves without "
+                                  "a person approving it."},
     "prices.internal_use_notice": {"title": "Price data — internal use only", "category": "licence",
                                    "audience": "staff",
                                    "description": "The free end-of-day price source is licensed for internal use "
@@ -267,6 +272,12 @@ def _fallback_payments() -> str:
     return PS.PAYMENTS_DISCLOSURE
 
 
+def _fallback_rules() -> str:
+    from services import cash_rules as CR
+
+    return CR.RULES_DISCLOSURE
+
+
 def _fallback_member_notice() -> str:
     from services import model_provider as PM
 
@@ -283,6 +294,7 @@ FALLBACK_SOURCES = {
     "cash.tax_estimate": _fallback_tax_estimate,
     "cash.sweep_rate": _fallback_sweep_rate,
     "cash.payments": _fallback_payments,
+    "cash.rules": _fallback_rules,
     "prices.internal_use_notice": _fallback_prices,
     "replica.fund_affiliation": _fallback_replica,
 }

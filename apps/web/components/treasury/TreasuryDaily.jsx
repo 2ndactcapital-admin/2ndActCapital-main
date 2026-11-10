@@ -3,7 +3,7 @@
 /**
  * TreasuryDaily — what a family sees day to day on Household → Treasury (CASH05), at the top of the EXISTING Treasury
  * tab (no second tab): an entity filter, then Overview, Holdings, Activity (+ the Earnings dialog and the detail drawer)
- * and Documents, then (CASH07) Payments. Each screen is ONE read through its Next.js proxy (/api/cash/households/{id}/overview | holdings |
+ * and Documents, then (CASH07) Payments, then (CASH06) Rules. Each screen is ONE read through its Next.js proxy (/api/cash/households/{id}/overview | holdings |
  * activity | activity/{entry} | earnings | documents) — never FastAPI from the browser. Until the overview read
  * arrives (and on the server render) cash01's coverage card renders from the Treasury envelope (``fallback``).
  * ``initial`` ({overview, holdings, activity, documents, earnings, drawer}) renders without fetching (render tests).
@@ -17,6 +17,7 @@ import TreasuryHoldings from "@/components/treasury/TreasuryHoldings";
 import TreasuryActivity, { EarningsDialog } from "@/components/treasury/TreasuryActivity";
 import TreasuryDocuments from "@/components/treasury/TreasuryDocuments";
 import TreasuryPayments from "@/components/treasury/TreasuryPayments";
+import TreasuryRules from "@/components/treasury/TreasuryRules";
 
 const input = "rounded border border-[#E2E8F0] px-2 py-1 text-sm";
 
@@ -84,6 +85,8 @@ export default function TreasuryDaily({ env, fallback = null, initial = null }) 
       {data.documents ? <TreasuryDocuments data={data.documents} /> : null}
       {/* CASH07 — payment instructions between the family's own accounts (same tab; its own reads) */}
       <TreasuryPayments householdId={hid} initial={initial ? (initial.payments || null) : null} />
+      {/* CASH06 — standing cash rules that DRAFT payment instructions for approval (same tab; its own reads) */}
+      <TreasuryRules householdId={hid} initial={initial ? (initial.rules || null) : null} />
       {err ? <p className="text-sm text-[#9B2335]" role="alert">{err}</p> : null}
     </div>
   );

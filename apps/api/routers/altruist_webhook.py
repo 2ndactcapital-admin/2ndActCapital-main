@@ -53,11 +53,18 @@ async def altruist_webhook(request: Request):
         payload = {"_unparseable_body": True}
 
     tokens = set_rls_context(None, True)
+    new_txns: list = []
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            result = await process_event(conn, payload=payload)
+            result = await process_event(conn, payload=payload, collect=new_txns)
     finally:
         reset_rls_context(tokens)
+    # CASH06 — after the sync committed: one cash.incoming_credit event per new credit to a watched account (never
+    # raises; a webhook's receipt never depends on it)
+    if new_txns and isinstance(result, dict) and result.get("org_id"):
+        from services import cash_rules
+
+        await cash_rules.publish_incoming_credits(str(result["org_id"]), new_txns)
 
     return result

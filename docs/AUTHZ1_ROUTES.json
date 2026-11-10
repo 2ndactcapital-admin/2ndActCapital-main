@@ -1,5 +1,5 @@
 {
- "app_route_count": 1008,
+ "app_route_count": 1016,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -18283,6 +18283,160 @@
    "name": "payment_action_route",
    "note": "",
    "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}/{action}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(view_portfolio|initiate_payment|approve_payment)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_payment",
+     "initiate_payment",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash_rules",
+   "name": "list_rules_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/rules",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz initiate_payment; any(view_portfolio|initiate_payment|approve_payment)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash_rules",
+   "name": "rule_options_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/rules/options",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz initiate_payment; any(view_portfolio|initiate_payment|approve_payment)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_rules",
+   "name": "rule_preview_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/rules/preview",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz initiate_payment; any(view_portfolio|initiate_payment|approve_payment)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_rules",
+   "name": "rule_create_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/rules",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(view_portfolio|initiate_payment|approve_payment)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_payment",
+     "initiate_payment",
+     "view_portfolio"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.cash_rules",
+   "name": "rule_detail_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/rules/{version_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz approve_payment; any(view_portfolio|initiate_payment|approve_payment)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_rules",
+   "name": "rule_approve_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/rules/{version_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_payment; any(view_portfolio|initiate_payment|approve_payment)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_rules",
+   "name": "rule_reject_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/rules/{version_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz initiate_payment; any(view_portfolio|initiate_payment|approve_payment)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.cash_rules",
+   "name": "rule_action_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/rules/{version_id}/{action}",
    "public": false,
    "write": true
   },

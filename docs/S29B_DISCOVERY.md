@@ -39,9 +39,20 @@ workflow verb. No registered verb submits a trade or changes roles / permissions
 (`entity.link_ownership`); two move money (`spv.record_transaction`, `spv.subscribe`). There is no
 `eligible_with_cap` verb today (no registered bulk verb) — the class exists, with its cap, for the first one.
 
+*Rows added 2026-11-09 (CASH06): the CASH04 and CASH07 verbs declared in `VERB_AUTONOMY` after this table was
+written, and `cash.rule_fire` — the first `eligible_with_cap` verb (a cash rule's firing: drafts + submits only).*
+
 | verb | tier | duty (S30) | permission | workflow-invocable | writes | money | custody / authority | trades | contacts a member / outside party | platform job | class |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `ai.drift_monitor` | 2 | write | run_platform_jobs | yes | ai_drift_alerts (opens / closes drift alerts) + alert to-dos | no | no | no | no | yes | eligible |
+| `cash.maturity_waterfall` | 2 | propose | run_platform_jobs | yes | draft cash proposals (rebalance_proposals kind cash, status draft) + one review task per household — never submits or routes (CASH04) | no | no | no | no | yes | eligible |
+| `cash.payment_approve` | — (not registered) | approve | — | no | approves a payment instruction (the S30 floor) — a different person only (CASH07) | yes | no | no | no | no | never |
+| `cash.payment_draft` | — (not registered) | propose | — | no | a payment instruction DRAFT (payment_instructions, status draft) — never submits (CASH07) | yes | no | no | no | no | never |
+| `cash.payment_send` | — (not registered) | write | — | no | sends a payment instruction through its adapter — a person only (CASH07) | yes | no | no | no | no | never |
+| `cash.payment_submit` | — (not registered) | write | — | no | submits a payment instruction for approval — a person only (CASH07) | yes | no | no | no | no | never |
+| `cash.proposal_route` | — (not registered) | — | — | no | routes an approved cash proposal to execution instructions — a person only (CASH04) | no | no | yes | no | no | never |
+| `cash.proposal_submit` | — (not registered) | — | — | no | submits a cash proposal for approval (a trade list) — a person only (CASH04) | no | no | yes | no | no | never |
+| `cash.rule_fire` | 2 | propose | initiate_payment | yes (workflow-only: never listed to the assistant) | payment instruction DRAFTS submitted for approval + the rule's firing record — never approves, sends or reconciles (CASH06) | drafts only | no | no | no | no | eligible_with_cap |
 | `crm.draft_note` | 2 | propose | — | no | a CRM note draft (crm notes) | no | no | no | no | no | eligible |
 | `edgar.launch_pipeline_job` | 2 | write | author_workflows | yes | edgar_pipeline_runs; launches a Render job that fetches public SEC filings | no | no | no | no | yes | eligible |
 | `entities.count` | 3 | read | — | no | — | no | no | no | no | no | eligible |

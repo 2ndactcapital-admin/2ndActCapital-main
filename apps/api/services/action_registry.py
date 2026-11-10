@@ -69,8 +69,18 @@ class AssistantAction:
 class ActionRegistry:
     def __init__(self) -> None:
         self._actions: dict[str, AssistantAction] = {}
+        #: CASH06 — verbs only the workflow ENGINE may invoke (a cash rule's firing). Never offered to the assistant
+        #: (``list_for_user``) and refused by /assistant/confirm (``is_workflow_only``): no agent reaches them.
+        self._workflow_only: set[str] = set()
 
-    def register(self, action: AssistantAction) -> None:
+    def is_workflow_only(self, key: str) -> bool:
+        return key in self._workflow_only
+
+    def register(self, action: AssistantAction, *, workflow_only: bool = False) -> None:
+        if workflow_only:
+            if not action.workflow_invocable:
+                raise ValueError(f"{action.key}: a workflow-only action must be workflow_invocable")
+            self._workflow_only.add(action.key)
         if action.duty is None:
             from services.sod import verb_duty
 
@@ -92,7 +102,8 @@ class ActionRegistry:
     def list_for_user(self, user_id: str, permissions: set[str]) -> list[AssistantAction]:
         return [
             a for a in self._actions.values()
-            if a.required_permission is None or a.required_permission in permissions
+            if (a.required_permission is None or a.required_permission in permissions)
+            and a.key not in self._workflow_only
         ]
 
     def to_tool_specs(self, actions: list[AssistantAction]) -> list[dict]:
