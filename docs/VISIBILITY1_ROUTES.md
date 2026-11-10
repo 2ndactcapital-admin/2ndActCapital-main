@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 1009 · guarded 237 · sql-scope 53 · body-check 15 · legacy-rule 3
+Routes: 1024 · guarded 248 · sql-scope 53 · body-check 15 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -258,9 +258,20 @@ Routes: 1009 · guarded 237 · sql-scope 53 · body-check 15 · legacy-rule 3
 | GET | `/api/v1/cash/households/{household_id}/documents` | cash | guard:household_id, sql-scope, scrub |
 | GET | `/api/v1/cash/households/{household_id}/earnings` | cash | guard:household_id, sql-scope, scrub |
 | GET | `/api/v1/cash/households/{household_id}/holdings` | cash | guard:household_id, sql-scope, scrub |
+| GET | `/api/v1/cash/households/{household_id}/invoices` | cash_payees | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/invoices/record` | cash_payees | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/invoices/tag` | cash_payees | guard:household_id, scrub |
 | POST | `/api/v1/cash/households/{household_id}/notices` | cash | guard:household_id, body-check, scrub |
 | POST | `/api/v1/cash/households/{household_id}/obligations` | cash | guard:household_id, body-check, scrub |
 | GET | `/api/v1/cash/households/{household_id}/overview` | cash | guard:household_id, sql-scope, scrub |
+| GET | `/api/v1/cash/households/{household_id}/payees` | cash_payees | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payees` | cash_payees | guard:household_id, scrub |
+| GET | `/api/v1/cash/households/{household_id}/payees/{payee_id}` | cash_payees | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payees/{payee_id}/approve` | cash_payees | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payees/{payee_id}/bank-change/approve` | cash_payees | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payees/{payee_id}/bank-change/reject` | cash_payees | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payees/{payee_id}/reject` | cash_payees | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payees/{payee_id}/{action}` | cash_payees | guard:household_id, scrub |
 | GET | `/api/v1/cash/households/{household_id}/payments` | payments | guard:household_id, scrub |
 | POST | `/api/v1/cash/households/{household_id}/payments` | payments | guard:household_id, scrub |
 | GET | `/api/v1/cash/households/{household_id}/payments/options` | payments | guard:household_id, scrub |
@@ -289,6 +300,10 @@ Routes: 1009 · guarded 237 · sql-scope 53 · body-check 15 · legacy-rule 3
 | POST | `/api/v1/cash/obligations/{obligation_id}/end` | cash | body-check, scrub |
 | POST | `/api/v1/cash/obligations/{obligation_id}/revise` | cash | body-check, scrub |
 | POST | `/api/v1/cash/proposals/{proposal_id}/adopt` | cash | body-check, scrub |
+| GET | `/api/v1/cash/third-party` | cash_payees | scrub |
+| POST | `/api/v1/cash/third-party/approve` | cash_payees | scrub |
+| POST | `/api/v1/cash/third-party/reject` | cash_payees | scrub |
+| POST | `/api/v1/cash/third-party/request` | cash_payees | scrub |
 | GET | `/api/v1/config` | marketplace | scrub |
 | POST | `/api/v1/crm-relationships/{rel_id}/end` | crm_detail | guard:rel_id, scrub |
 | GET | `/api/v1/crm/vocabularies` | crm_detail | scrub |

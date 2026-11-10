@@ -63,3 +63,4 @@ apps/api/scripts/verify_cash04.py
 apps/api/scripts/verify_cash05.py
 apps/api/scripts/verify_cash07.py
 apps/api/scripts/verify_cash06.py
+apps/api/scripts/verify_cash08.py

@@ -191,6 +191,32 @@ manual reconciliation must be by someone other than the sender (`payment_instruc
 `payment`) calls `payments.decide` per item. An org with one eligible checker (2nd Act today) waits — by design.
 See docs/cash/CASH07_NOTES.md §4.
 
+## CASH08 — payees, bank-detail changes, the first payment, the third-party switch (four FLOOR item types)
+
+All four are floor class **`transfer`**, never self-approval capable, with a platform `floor:` rule and a `policy:`
+(never; enforce_floor true) each — no organization setting and no role (Super Admin included) relaxes them.
+
+- **`payee`** — maker duty `create_payee` (`manage_payees`), checker duty `approve_payee` (`approve_payees`). Makers =
+  the creator, every editor, the submitter (`cash_payees.maker_ids`); the DB CHECK `cash_payees_maker_checker_chk` backs
+  it. Sites: `cash_payees.decide` → `human_tasks.complete_task` (kind `payee_approval`) → `cash_payees._precheck` →
+  `cash_payees._apply`. A resumed (manually suspended) payee is re-approved the same way; the resumer is a maker.
+- **`payee_bank_change`** — maker duty `change_bank_details` (`manage_payees`), checker duty `approve_bank_change`
+  (`approve_payees`). The requester never approves (`cash_payees_bank_change_checker_chk` backs it), and an approval
+  carries the CALL-BACK attestation (who, the number ON FILE, when — never a number from the request). Sites:
+  `cash_payees.decide_bank_change` → `human_tasks.complete_task` (kind `payee_bank_change_approval`) →
+  `cash_payees._bank_precheck` (refuses the generic inbox: no attestation) → `cash_payees._bank_apply`.
+- **`first_payment_to_new_payee`** — maker duty `create_payee`, checker duty `approve_first_payment`
+  (`approve_payment`): the first payment instruction to a payee is approved by someone who is neither the payee's
+  creator nor its approver (makers = creator, approver and the instruction's makers). Site `cash_payees.first_payment_gate`
+  (called from `payments._precheck`) — DORMANT while third-party payments are off.
+- **`third_party_payments_setting`** — maker duty `request_third_party_switch`, checker duty
+  `approve_third_party_switch` (`manage_org_settings`). Both people must be Super Admins (checked by the service on
+  each principal — S30 itself has no notion of it) and the request names a counsel sign-off document. Sites:
+  `cash_payees.decide_third_party_switch` / `_switch_precheck` (`_switch_checks`) → `human_tasks.complete_task` (kind
+  `third_party_switch_approval`). In this release every approval of the switch is refused (`THIRD_PARTY_RELEASE_LOCKED`).
+
+See docs/cash/CASH08_NOTES.md §4 and docs/cash/CASH_PAYEES.md.
+
 ## CASH06 — cash rules (a FLOOR item type)
 
 Item type `cash_rule`, floor class **`transfer`**: a standing rule that drafts payment instructions between a family's

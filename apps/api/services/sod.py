@@ -102,6 +102,10 @@ WORKFLOW_AUTONOMY_OPTIN = "workflow_autonomy_optin"       # S29B: a workflow ver
 CASH_POLICY = "cash_policy"                               # CASH02: a household's / entity's cash policy (a target)
 PAYMENT_INSTRUCTION = "payment_instruction"               # CASH07: money between a family's own accounts — FLOOR
 CASH_RULE = "cash_rule"                                   # CASH06: a standing rule that drafts payments — FLOOR
+PAYEE = "payee"                                           # CASH08: a household payee — FLOOR
+PAYEE_BANK_CHANGE = "payee_bank_change"                   # CASH08: a payee's bank-detail change (call-back) — FLOOR
+FIRST_PAYEE_PAYMENT = "first_payment_to_new_payee"        # CASH08: first payment to a payee (dormant) — FLOOR
+THIRD_PARTY_SETTING = "third_party_payments_setting"      # CASH08: the third-party switch (two Super Admins) — FLOOR
 
 ITEM_TYPES = (
     AGENT_PROPOSAL, WORKFLOW_STEP, WORKFLOW_USER_TASK, HUMAN_TASK, ACCOUNT_MODEL_LINK, AUTHORITY_CHANGE,
@@ -111,7 +115,7 @@ ITEM_TYPES = (
     HYPOTHETICAL_POLICY, SUBSTITUTION_SET, SUBSTITUTION_DENIAL, TAX_PROFILE, LOSS_CARRYFORWARD,
     REPLICA_TERMS_VERSION, WORKFLOW_TEMPLATE_VERSION, DISCLOSURE_VERSION, DATA_UPLOAD, FEE_RUN, CARRY_RUN,
     MONEY_MOVEMENT, ROLE_GRANT, SOD_RULE, SOD_PLATFORM_RULE, WORKFLOW_AUTONOMY_SETTING, WORKFLOW_AUTONOMY_OPTIN,
-    CASH_POLICY, PAYMENT_INSTRUCTION, CASH_RULE,
+    CASH_POLICY, PAYMENT_INSTRUCTION, CASH_RULE, PAYEE, PAYEE_BANK_CHANGE, FIRST_PAYEE_PAYMENT, THIRD_PARTY_SETTING,
 )
 
 # services.human_tasks kinds → the item type their task decides (a kind not listed is the generic HUMAN_TASK)
@@ -142,6 +146,9 @@ TASK_KIND_ITEM_TYPES: dict[str, str] = {
     "cash_policy_approval": CASH_POLICY,
     "payment_instruction_approval": PAYMENT_INSTRUCTION,   # CASH07 — the floor item type (transfer)
     "cash_rule_approval": CASH_RULE,                       # CASH06 — activate / resume a cash rule (floor, transfer)
+    "payee_approval": PAYEE,                               # CASH08 — approve a payee (floor)
+    "payee_bank_change_approval": PAYEE_BANK_CHANGE,       # CASH08 — approve a bank-detail change (floor, call-back)
+    "third_party_switch_approval": THIRD_PARTY_SETTING,    # CASH08 — the third-party switch (floor, two Super Admins)
 }
 
 

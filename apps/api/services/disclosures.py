@@ -130,6 +130,12 @@ KEYS: dict[str, dict] = {
     "cash.payments": {"title": "Payments between your accounts", "category": "risk", "audience": "both",
                       "description": "What a payment instruction is and is not: ACH return risk, provisional "
                                      "settlement, value dates on business days, and that the custodian moves the money."},
+    # CASH08 — on the payee screens (staff and a member's read-only payee list); third-party payments stay off
+    "cash.third_party": {"title": "Third-party payments", "category": "risk", "audience": "both",
+                         "description": "What third-party payments (to a payee other than the account owner) involve: "
+                                        "an SLOA, a second person's approval, a call-back before any change of bank "
+                                        "details, custody, and that a sent payment may not be recoverable. Not "
+                                        "offered until counsel signs off."},
     # CASH06 — on the cash-rule editor and a member's read-only rules list
     "cash.rules": {"title": "Cash rules", "category": "risk", "audience": "both",
                    "description": "What a standing cash rule does and does not do: it prepares payment instructions "
@@ -278,6 +284,12 @@ def _fallback_rules() -> str:
     return CR.RULES_DISCLOSURE
 
 
+def _fallback_third_party() -> str:
+    from services import cash_payees as CPY
+
+    return CPY.THIRD_PARTY_DISCLOSURE
+
+
 def _fallback_member_notice() -> str:
     from services import model_provider as PM
 
@@ -295,6 +307,7 @@ FALLBACK_SOURCES = {
     "cash.sweep_rate": _fallback_sweep_rate,
     "cash.payments": _fallback_payments,
     "cash.rules": _fallback_rules,
+    "cash.third_party": _fallback_third_party,
     "prices.internal_use_notice": _fallback_prices,
     "replica.fund_affiliation": _fallback_replica,
 }
