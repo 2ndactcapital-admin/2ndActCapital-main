@@ -77,8 +77,13 @@ async def drive(name: str, section: str | None) -> int:
     seed_name = next((n for n in order if n in ("seed", "seed_users")), None) or \
         next((n for n in ("seed", "seed_users") if hasattr(MOD, n)), None)
     after = order[order.index(seed_name) + 1:] if seed_name in order else []
+    # VERIFYFIX1 fix 1: the y_ sections main runs BEFORE the seed run first, as in a real run — they hold no fixtures
+    # but some seeds read state they fill (verify_rep7's y_seed_literals sets S["instrument_class"]).
+    pre_seed = [] if "--no-pre" in sys.argv else [
+        n for n in (order[:order.index(seed_name)] if seed_name in order else [])
+        if n.startswith("y_") and hasattr(MOD, n)]
     pick = section or next((n for n in after if n.startswith("y_") and hasattr(MOD, n)), None)
-    print(f"[INFO] one-off {name}: seed = {seed_name}; section = {pick}; main order = {order}")
+    print(f"[INFO] one-off {name}: pre-seed = {pre_seed}; seed = {seed_name}; section = {pick}; main order = {order}")
     dsn, how = await MOD.admin_dsn()
     if not dsn:
         check(False, "a working database DSN", how)
@@ -92,6 +97,8 @@ async def drive(name: str, section: str | None) -> int:
         await _call(MOD.teardown, conn)
         if hasattr(MOD, "counts"):
             pre = await _call(MOD.counts, conn)
+        for n in pre_seed:
+            await _call(getattr(MOD, n), conn)
         await _call(getattr(MOD, seed_name), conn)
         if pick:
             await _call(getattr(MOD, pick), conn)
