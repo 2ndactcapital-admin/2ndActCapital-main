@@ -1290,8 +1290,11 @@ async def list_payments(conn, org_id, household_id, *, status: str | None = None
 
 
 async def events_of(conn, org_id, payment_id, *, member: bool = False) -> list[dict]:
+    # cash06 fix 1: created_at is the trigger's now() — the SAME for every transition of one transaction — and id is
+    # random, so draft_and_submit's create + submit (one transaction) read back in either order. The create row (the
+    # only one with no from_status) sorts first among ties.
     rows = await conn.fetch(f"SELECT * FROM {T_EVT} WHERE payment_id = $1::uuid AND org_id = $2::uuid "
-                            "ORDER BY created_at, id", str(payment_id), str(org_id))
+                            "ORDER BY created_at, (from_status IS NOT NULL), id", str(payment_id), str(org_id))
     names = await _names(conn, [r["actor_id"] for r in rows])
     out = []
     for r in rows:

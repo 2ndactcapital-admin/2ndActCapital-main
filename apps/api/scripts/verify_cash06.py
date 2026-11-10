@@ -773,8 +773,8 @@ async def rule_payments(conn, rule_id) -> list[dict]:
 
 async def pay_events(conn, pid) -> list[dict]:
     return [dict(r) for r in await platform(
-        conn, "SELECT action, from_status, to_status, actor_id FROM public.payment_events WHERE payment_id = $1::uuid "
-              "ORDER BY created_at, id", pid)]
+        conn, "SELECT action, from_status, to_status, actor_id, created_at FROM public.payment_events WHERE payment_id "
+              "= $1::uuid ORDER BY created_at, (from_status IS NOT NULL), id", pid)]
 
 
 async def refusals(conn, item_type: str, item_id) -> list[dict]:
@@ -1491,7 +1491,20 @@ async def y_engine(conn):
           "approval task open, maker = the rule owner", f"{r1} {[(p['amount'], p['status']) for p in pays]}")
     ev1 = await pay_events(conn, p1.get("id")) if p1 else []
     check(bool([e["action"] for e in ev1] == ["create", "submit"] and all(e["actor_id"] == U_OWN for e in ev1)),
-          "its payment_events: create + submit, both by the owner (written by the database)", f"{ev1}")
+          "its payment_events: create + submit, both by the owner (written by the database)",
+          f"{[(e['action'], e['actor_id']) for e in ev1]}")
+    # cash06 fix 1 — REPRODUCED: both transitions share one created_at (the trigger's now(), one transaction) and the
+    # id is random, so `ORDER BY created_at, id` (the app's history before the fix) had no defined order — the first
+    # run of this section read submit before create. The fix is in PS.events_of; read the order through it.
+    hist = []
+    if p1:
+        with _ctx(ORG_A):
+            async with (await get_pool()).acquire() as c:
+                hist = await PS.events_of(c, ORG_A, p1["id"])
+    check(bool(len(ev1) == 2 and ev1[0]["created_at"] == ev1[1]["created_at"]
+               and [h["action"] for h in hist] == ["create", "submit"]),
+          "the tie is real (create + submit share one created_at) and the app's own history (payments.events_of) "
+          "still reads create → submit", f"{[e['created_at'] for e in ev1]} {[h['action'] for h in hist]}")
     check(bool(len(fs) == 1 and fs[0]["outcome"] == "drafted" and fs[0]["period_key"] == "d:2026-11-10"
           and fs[0]["instruction_ids"] == [p1.get("id")] and fs[0]["workflow_run_id"] == UUID(str(r1.get("run_id")))),
           "one firing record: period d:2026-11-10 → that instruction, linked to the engine run", f"{fs}")
@@ -1707,6 +1720,26 @@ async def y_visibility(conn):
     c5, _ = await api(U_B, "GET", rp(H1))
     check(bool(c3 == 404 and c4 == 200 and c5 == 404), "staff see only their visible families (restricted → H1 is a 404, H2 "
           "200); org B → org A's household is a 404", f"{c3} {c4} {c5}")
+    # cash06 fix 1 — the cross-cutting WRITE-scope defect (cash03 fix 1 / cash07 fix 1: member_entity_scope on a write
+    # scoped an internal non-staff role to an EMPTY set → 404 on its OWN family). Every cash06 route reaches
+    # routers.payments._open (the VISIBILITY1 path); prove it on a WRITE, both directions, with the rows re-read.
+    n_rs = "SELECT count(*) FROM cash_rules WHERE org_id = $1 AND household_id = $2 AND created_by = $3"
+    before_h1 = int(await scoped(conn, ORG_A, n_rs, ORG_A, H1, U_RS, fetch="fetchval"))
+    c6, b6 = await api(U_RS, "POST", rp(H2), rule_body("recurring", source_account_id=str(A["A7"]),
+                                                       destinations=[{"account_id": str(A["A8"]), "amount": "100.00"}],
+                                                       name=f"{NAME}rs visible"))
+    c7, b7 = await api(U_RS, "POST", rp(H1), rule_body("gov", name=f"{NAME}rs invisible"))
+    on_h2 = int(await scoped(conn, ORG_A, n_rs, ORG_A, H2, U_RS, fetch="fetchval"))
+    after_h1 = int(await scoped(conn, ORG_A, n_rs, ORG_A, H1, U_RS, fetch="fetchval"))
+    check(bool(c6 == 201 and on_h2 == 1 and c7 == 404 and before_h1 == after_h1 == 0),
+          "an internal non-staff writer (fund finance, restricted to H2) CREATES a rule on its visible family (201, the "
+          "draft persisted) and gets a 404 on an invisible one with nothing written — the VISIBILITY1 write scope, "
+          "never member_entity_scope's empty set", f"{c6} {detail_text(b6)[:200]} rows={on_h2} | {c7} "
+          f"{detail_text(b7)[:120]} h1={before_h1}->{after_h1}")
+    c8, b8 = await api(U_OWN, "POST", rp(H1), rule_body("gov", name=f"{NAME}advisor own family"))
+    check(bool(c8 == 201 and (ver_of(b8).get("status") == "draft")),
+          "an advisor (internal, not staff) creates a rule on its own visible family (201, a draft)",
+          f"{c8} {detail_text(b8)[:200]}")
     a_in_b = int(await scoped(conn, ORG_B, "SELECT count(*) FROM cash_rules WHERE org_id = $1", ORG_A, fetch="fetchval"))
     a_in_a = int(await scoped(conn, ORG_A, "SELECT count(*) FROM cash_rules WHERE org_id = $1", ORG_A, fetch="fetchval"))
     f_in_b = int(await scoped(conn, ORG_B, "SELECT count(*) FROM cash_rule_firings WHERE org_id = $1", ORG_A,
