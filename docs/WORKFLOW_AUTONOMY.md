@@ -30,6 +30,19 @@ Verbs per class today (docs/S29B_DISCOVERY.md 1a has the full table):
   read verb is `eligible`.
 - `eligible_with_cap` — none registered yet.
 
+### CASH06 — `eligible_with_cap` that DRAFTS + SUBMITS only (`cash.rule_fire`)
+
+A cash rule's firing (docs/cash/CASH_RULES.md). Class `eligible_with_cap`, `draft_only`, `submits_for_approval`:
+the verb drafts payment instructions and submits each for approval (`pending_approval` + its approval task, the rule
+OWNER as maker). It never approves, sends or reconciles. Those stay `never` (`cash.payment_approve` / `_send`,
+unregistered). Quantity = 5, the most instructions one firing can draft, against the org's `cap_per_run`. Inside the
+run, the rule's own per-firing $ cap and per-day count (each ≤ the org ceiling `cash.rules.max_amount_per_firing` /
+`cash.rules.max_instructions_per_day`) hold the excess with `hold_alerts`. It is WORKFLOW-ONLY: registered with
+`workflow_only=True`, never listed to the assistant, refused by `/assistant/confirm`, and the handler refuses any call
+that is not the engine running the rule's own trigger as its owner. Every rule is its own definition
+(`system:cash_rule:<rule id>`), so its version is opted in on its own (shadow → on); the kill switches stop every rule.
+Trigger event `cash.incoming_credit` (published by `cash_rules.publish_incoming_credits` after the feed sync commits).
+
 ## The decision, per step, in order
 
 1. A run a PERSON started → attended, unchanged.

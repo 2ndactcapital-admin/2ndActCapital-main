@@ -870,6 +870,81 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY cash_policies_pkey: (id)
 
+-- ===== cash_rule_firings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   rule_id                                  uuid NOT NULL
+--   rule_version_id                          uuid NOT NULL
+--   period_key                               text NOT NULL
+--   trigger_type                             text NOT NULL
+--   workflow_run_id                          uuid
+--   owner_id                                 uuid NOT NULL
+--   evaluated_on                             date NOT NULL
+--   outcome                                  text NOT NULL DEFAULT 'firing'::text
+--   reason                                   text
+--   drafts                                   jsonb NOT NULL DEFAULT '[]'::jsonb
+--   holds                                    jsonb NOT NULL DEFAULT '[]'::jsonb
+--   instruction_ids                          ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   completed_at                             timestamp with time zone
+--   PRIMARY KEY cash_rule_firings_pkey: (id)
+
+-- ===== cash_rules =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   rule_id                                  uuid NOT NULL
+--   version_no                               integer NOT NULL DEFAULT 1
+--   household_id                             uuid NOT NULL
+--   name                                     text NOT NULL
+--   rule_type                                text NOT NULL
+--   source_account_id                        uuid NOT NULL
+--   destinations                             jsonb NOT NULL DEFAULT '[]'::jsonb
+--   basis                                    text
+--   condition                                text
+--   target_amount                            numeric
+--   supporting_account_id                    uuid
+--   frequency                                text NOT NULL
+--   day_of_week                              integer
+--   day_of_month                             integer
+--   rail                                     text NOT NULL
+--   cap_per_firing                           numeric NOT NULL
+--   max_per_day                              integer NOT NULL DEFAULT 1
+--   stage                                    text NOT NULL DEFAULT 'A'::text
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   pending_action                           text
+--   resume_requested_by                      uuid
+--   resume_requested_at                      timestamp with time zone
+--   owner_id                                 uuid NOT NULL
+--   maker_ids                                ARRAY NOT NULL
+--   approval_task_id                         uuid
+--   submitted_by                             uuid
+--   submitted_at                             timestamp with time zone
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   decision_note                            text
+--   rejected_by                              uuid
+--   rejected_at                              timestamp with time zone
+--   reject_reason                            text
+--   paused_by                                uuid
+--   paused_at                                timestamp with time zone
+--   pause_reason                             text
+--   retired_by                               uuid
+--   retired_at                               timestamp with time zone
+--   retire_reason                            text
+--   superseded_by                            uuid
+--   workflow_definition_id                   uuid
+--   workflow_version_id                      uuid
+--   trigger_id                               uuid
+--   reason                                   text
+--   created_by                               uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cash_rules_pkey: (id)
+
 -- ===== charitable_donees =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL

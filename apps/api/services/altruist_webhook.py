@@ -183,7 +183,7 @@ async def _mark_resolved(conn, event_row_id: str, org_id: str) -> None:
     )
 
 
-async def process_event(conn, *, payload: dict) -> dict:
+async def process_event(conn, *, payload: dict, collect: list | None = None) -> dict:
     """The dedup -> lookup -> dispatch pipeline for one already-signature-
     verified webhook payload. Must run on a connection already carrying
     ``is_super_admin=true`` RLS context (see ``routers/altruist_webhook.py``).
@@ -229,6 +229,8 @@ async def process_event(conn, *, payload: dict) -> dict:
         await resolve_identity(conn, org_id=org_id, environment=environment)
         sync_result = await sync_resolved_accounts(conn, org_id=org_id, environment=environment)
         sync_summary = {"triggered": True, "accounts_synced": sync_result.accounts_synced}
+        if collect is not None:   # CASH06 — the router publishes incoming-credit events after this commits
+            collect.extend(sync_result.new_transaction_ids)
     except Exception as exc:  # noqa: BLE001 - a sync failure must not fail webhook receipt
         sync_summary = {"triggered": False, "error": str(exc)}
 

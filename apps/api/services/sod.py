@@ -101,6 +101,7 @@ WORKFLOW_AUTONOMY_SETTING = "workflow_autonomy_setting"   # S29B: an org's auton
 WORKFLOW_AUTONOMY_OPTIN = "workflow_autonomy_optin"       # S29B: a workflow version signed off to run unattended
 CASH_POLICY = "cash_policy"                               # CASH02: a household's / entity's cash policy (a target)
 PAYMENT_INSTRUCTION = "payment_instruction"               # CASH07: money between a family's own accounts — FLOOR
+CASH_RULE = "cash_rule"                                   # CASH06: a standing rule that drafts payments — FLOOR
 
 ITEM_TYPES = (
     AGENT_PROPOSAL, WORKFLOW_STEP, WORKFLOW_USER_TASK, HUMAN_TASK, ACCOUNT_MODEL_LINK, AUTHORITY_CHANGE,
@@ -110,7 +111,7 @@ ITEM_TYPES = (
     HYPOTHETICAL_POLICY, SUBSTITUTION_SET, SUBSTITUTION_DENIAL, TAX_PROFILE, LOSS_CARRYFORWARD,
     REPLICA_TERMS_VERSION, WORKFLOW_TEMPLATE_VERSION, DISCLOSURE_VERSION, DATA_UPLOAD, FEE_RUN, CARRY_RUN,
     MONEY_MOVEMENT, ROLE_GRANT, SOD_RULE, SOD_PLATFORM_RULE, WORKFLOW_AUTONOMY_SETTING, WORKFLOW_AUTONOMY_OPTIN,
-    CASH_POLICY, PAYMENT_INSTRUCTION,
+    CASH_POLICY, PAYMENT_INSTRUCTION, CASH_RULE,
 )
 
 # services.human_tasks kinds → the item type their task decides (a kind not listed is the generic HUMAN_TASK)
@@ -140,6 +141,7 @@ TASK_KIND_ITEM_TYPES: dict[str, str] = {
     "loss_carryforward_approval": LOSS_CARRYFORWARD,
     "cash_policy_approval": CASH_POLICY,
     "payment_instruction_approval": PAYMENT_INSTRUCTION,   # CASH07 — the floor item type (transfer)
+    "cash_rule_approval": CASH_RULE,                       # CASH06 — activate / resume a cash rule (floor, transfer)
 }
 
 
@@ -683,6 +685,9 @@ VERB_DUTIES: dict[str, str] = {
     "cash.payment_submit": "write",
     "cash.payment_approve": "approve",
     "cash.payment_send": "write",
+    # CASH06 — a cash rule's firing DRAFTS + SUBMITS payment instructions for a person's approval (nothing executes
+    # until a different person approves; the custody cliff is unchanged): 'propose'. Engine-only (workflow_only).
+    "cash.rule_fire": "propose",
 }
 
 

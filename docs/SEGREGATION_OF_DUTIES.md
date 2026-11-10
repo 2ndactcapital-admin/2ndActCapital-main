@@ -190,3 +190,20 @@ manual reconciliation must be by someone other than the sender (`payment_instruc
 `payments._precheck` (every maker, before the engine commits) → `payments._apply` (inner gate). Bulk approve (type
 `payment`) calls `payments.decide` per item. An org with one eligible checker (2nd Act today) waits — by design.
 See docs/cash/CASH07_NOTES.md §4.
+
+## CASH06 — cash rules (a FLOOR item type)
+
+Item type `cash_rule`, floor class **`transfer`**: a standing rule that drafts payment instructions between a family's
+own accounts (`cash_rules`) is money-movement CONFIGURATION. Maker duty `initiate_payment`, checker duty
+`approve_payment` (cash07's duties, reused). Platform rules `floor:cash_rule` and `policy:cash_rule` (never;
+enforce_floor true). **No self-approval, ever.** Makers = every drafter / editor / submitter of the version, the rule's
+OWNER (always — `cash_rules_owner_maker_chk`), and a resume's requester; the DB CHECKs `cash_rules_maker_checker_chk` /
+`cash_rules_resume_checker_chk` back it. Sites: `cash_rules.decide` (gate, refusals recorded) →
+`human_tasks.complete_task` (kind `cash_rule_approval`, activate or resume) → `cash_rules._precheck` (every maker, the
+definition re-validated) → `cash_rules._apply` (inner gate). An edit is a new version; the active one runs until it is
+approved. Pause / retire are immediate (tightening).
+
+The rule's OWNER is the trigger owner (S30 Task 8) and the MAKER of every instruction the rule drafts
+(`payments.draft_and_submit`, `maker_ids = [owner]`), so the `payment_instruction` floor makes each instruction's
+checker someone else — the owner's attempt is refused and recorded in `sod_decisions`. See docs/cash/CASH06_NOTES.md §7.
+

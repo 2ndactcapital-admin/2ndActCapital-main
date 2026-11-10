@@ -475,6 +475,9 @@ async def confirm_action(request: Request, body: ConfirmBody):
     action = REGISTRY.get(action_key)
     if action is None:
         raise HTTPException(status_code=404, detail=f"Action {action_key!r} not found")
+    if REGISTRY.is_workflow_only(action_key):
+        # CASH06 — an engine-only verb (a cash rule's firing): never confirmed from the assistant (the custody cliff)
+        raise HTTPException(status_code=403, detail=f"Action {action_key!r} runs only inside its own workflow")
     if action.access_type != "write":
         raise HTTPException(status_code=400, detail="Only WRITE actions can be confirmed")
 

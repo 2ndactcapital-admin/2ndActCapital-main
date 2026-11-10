@@ -292,6 +292,16 @@ out to build them. Check first.
   authority is not on the trade path (rep7b authority is); a Treasury position's quantity is assumed
   to be par; a note's buy limit is par (no coupon recorded); a maturity the custodian already removed
   from positions is seen only as cash.
+- ⬜ CASH06 operator steps: run verify_cash06.py (regressions verify_cash07.py + verify_s29b.py). Publish the disclosure
+  DRAFT `cash.rules` (`load_disclosure_defaults.py --drafter`, then a SECOND Super Admin publishes; until then the
+  built-in text shows). Before a real rule runs unattended: the org switch `workflows.autonomy` ON and the rule's
+  workflow version opted in after its shadow runs (docs/cash/CASH_RULES.md) — until then each firing suspends for a
+  person and blocks that rule's later firings. Every cash07 prerequisite applies (trading authority, declared rails, a
+  second `approve_payment` holder — an instruction a rule drafts is made by its owner). Open: a held period is not
+  retried (by design; a person drafts it by hand); after clearing a kill switch the suspended rule runs must be
+  cancelled; the held-away import does not publish `cash.incoming_credit` (only the Altruist feed sync does); the
+  generic trigger screen still lists a rule's own `system:cash_rule:` trigger (harmless — the firing re-checks the
+  rule — but it should be hidden there).
 - ⬜ CASH07 operator steps: run verify_cash07.py (regressions verify_cash05.py + verify_s30.py). Before the first real
   payment: grant `limited` trading authority (0 grants exist today); record each custodian's rails (Admin → custodian
   capabilities, with evidence); publish the two disclosure DRAFTS `cash.payments` and `cash.sweep_rate`

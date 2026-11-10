@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 1001 · guarded 229 · sql-scope 53 · body-check 15 · legacy-rule 3
+Routes: 1009 · guarded 237 · sql-scope 53 · body-check 15 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -277,6 +277,14 @@ Routes: 1001 · guarded 229 · sql-scope 53 · body-check 15 · legacy-rule 3
 | POST | `/api/v1/cash/households/{household_id}/policies/{policy_id}/submit` | cash | guard:household_id, body-check, scrub |
 | POST | `/api/v1/cash/households/{household_id}/policy/preview` | cash | guard:household_id, body-check, scrub |
 | POST | `/api/v1/cash/households/{household_id}/proposals` | cash | guard:household_id, sql-scope, body-check, scrub |
+| GET | `/api/v1/cash/households/{household_id}/rules` | cash_rules | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/rules` | cash_rules | guard:household_id, scrub |
+| GET | `/api/v1/cash/households/{household_id}/rules/options` | cash_rules | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/rules/preview` | cash_rules | guard:household_id, scrub |
+| GET | `/api/v1/cash/households/{household_id}/rules/{version_id}` | cash_rules | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/rules/{version_id}/approve` | cash_rules | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/rules/{version_id}/reject` | cash_rules | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/rules/{version_id}/{action}` | cash_rules | guard:household_id, scrub |
 | GET | `/api/v1/cash/households/{household_id}/treasury` | cash | guard:household_id, sql-scope, scrub |
 | POST | `/api/v1/cash/obligations/{obligation_id}/end` | cash | body-check, scrub |
 | POST | `/api/v1/cash/obligations/{obligation_id}/revise` | cash | body-check, scrub |

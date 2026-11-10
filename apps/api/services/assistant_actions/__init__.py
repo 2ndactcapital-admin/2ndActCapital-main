@@ -18,6 +18,9 @@ from services import security_master_jobs
 from services import ai_drift
 # CASH04 — the cash maturity waterfall's Service Task verb (Super Admin only; DRAFTS only; never listed to the assistant)
 from services import cash_waterfall
+# CASH06 — a cash rule's firing (drafts + submits payment instructions for approval). WORKFLOW-ONLY: registered with
+# workflow_only=True, so the assistant never lists it and /assistant/confirm refuses it.
+from services import cash_rules
 
 
 def register_all() -> None:
@@ -35,3 +38,4 @@ def register_all() -> None:
     security_master_jobs.register_actions()
     ai_drift.register_actions()
     cash_waterfall.register_actions()
+    cash_rules.register_actions()
