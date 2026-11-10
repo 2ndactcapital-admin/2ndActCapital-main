@@ -49,6 +49,8 @@ sys.path.insert(0, str(HERE))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "staffroles1"
 BEFORE_REF = "e1feebf"   # main after "merge bugfix2" — the pre-sprint code
@@ -274,6 +276,11 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -427,7 +434,7 @@ async def counts(conn) -> dict:
             out[t] = int(await platform(conn, f"SELECT count(*) FROM {t} WHERE {FIXTURE_SCOPED[t]}", FIXTURE_ORGS,
                                         list(USERS), FIXTURE_ID_PREFIX + "%", fetch="fetchval"))
         else:
-            out[t] = int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval"))
+            out[t] = int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval"))
     return out
 
 
@@ -598,6 +605,9 @@ async def seed(conn) -> None:
             await conn.execute("INSERT INTO profile_permissions (org_id, profile_id, permission_key) "
                                "VALUES ($1, $2, $3)", ORG_A, P_STAFFONLY, k)
         await conn.execute("UPDATE users SET profile_id = $1 WHERE id = $2", P_STAFFONLY, U_SUPPORT)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: {"org": org, "roles": {rname}, "has": perms} for uid, (org, _a, _n, rname, perms) in USERS.items()})
 
 
 async def y_fixtures(conn):

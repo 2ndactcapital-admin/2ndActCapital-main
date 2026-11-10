@@ -129,6 +129,13 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -253,7 +260,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def fingerprint(conn, sql, *args) -> tuple[int, str]:
@@ -654,6 +661,10 @@ async def seed(conn) -> None:
             elif rname:
                 await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", uid,
                                    roles[(org, rname)])
+        # VERIFYFIX1 (bugfix4: user_roles is the ONE role source) — the platform publisher is a Super Admin by its
+        # GRANT of the platform org's existing super_admin role (reused, never created: a fixture user_roles row
+        # only); the users.role string alone no longer makes anyone a Super Admin.
+        await rbac.grant_named_role(conn, U_PLAT, PLATFORM_ORG, "super_admin")
         await conn.execute("INSERT INTO entities (id, org_id, entity_type, display_name) VALUES ($1, $2, "
                            "'individual', 'REP3 Verify Client')", ENT_A, ORG_A)
         for k, name in zip("ABCDF", SEC_NAMES):
@@ -674,6 +685,9 @@ async def seed(conn) -> None:
     users = await platform(conn, "SELECT id FROM users WHERE id = ANY($1::uuid[]) AND is_test", list(USERS))
     check(len(users) == len(USERS), "fixture users created with the token's auth0_sub, is_test = true",
           f"{len(users)}/{len(USERS)}")
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {r for r in (rname,) if r} | ({"super_admin"} if uid == U_PLAT else set())) for uid, (org, _a, _n, rname, _f) in USERS.items()})
 
 
 # ═══ Small readers ══════════════════════════════════════════════════════════
@@ -1557,12 +1571,13 @@ def regression():
     section("[Y] Regression — verify_rep1.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1")
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_rep1.py")], REPO, timeout=1200, env=env)
-    total = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+    nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+    total = [(str(nt.passed), str(nt.failed))] if nt.line else []
     result = re.findall(r"^RESULT: (.*)$", out, re.M)
     fails = [ln for ln in out.splitlines() if ln.lstrip().startswith("[FAIL]")]
-    zero = (bool(total) and total[-1][1] == "0") or (bool(result) and "ALL ASSERTIONS PASSED" in result[-1])
+    zero = (nt.ok) or (bool(result) and "ALL ASSERTIONS PASSED" in result[-1])
     check(zero and not fails and code == 0, "verify_rep1.py: 0 FAIL ('TOTAL:' or 'RESULT:' summary)",
-          f"{total[-1] if total else (result[-1] if result else 'no summary')}; {fails[:3]} "
+          f"{nt.detail() if total else (result[-1] if result else 'no summary')}; {fails[:3]} "
           f"{err[-200:] if not (total or result) else ''}")
 
 

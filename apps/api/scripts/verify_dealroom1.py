@@ -92,6 +92,13 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -218,7 +225,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def gold_fingerprint(conn) -> tuple[int, str]:
@@ -427,6 +434,9 @@ async def seed(conn) -> None:
         await conn.execute("SELECT set_config('app.current_org_id', $1, true), "
                            "set_config('app.is_super_admin', 'false', true)", str(ORG_B))
         await R.init_deal_room(conn, ORG_B, D_B)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {r for r in (rname,) if r} | ({"org_admin"} if uid == U_ORGADMIN else set())) for uid, (org, _a, _n, rname, _f) in USERS.items()})
 
 
 # ═══ The real app, token stubbed by bearer string ══════════════════════════
@@ -1152,10 +1162,11 @@ def regression():
     env = os.environ | {"VERIFY_NESTED": "1"}
     for script in ("verify_authz1.py", "verify_bugfix1.py", "verify_navregroup.py"):
         code, out, err = run_cmd([sys.executable, str(HERE / script)], REPO, timeout=1200, env=env)
-        m = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+        nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+        m = [(str(nt.passed), str(nt.failed))] if nt.line else []
         fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-        check(bool(m) and m[-1][1] == "0" and code == 0, f"{script}: 0 FAIL",
-              f"{m[-1] if m else 'no TOTAL'}; {fails[:3]} {err[-200:] if not m else ''}")
+        check(nt.ok and code == 0, f"{script}: 0 FAIL",
+              f"{nt.detail()}; {fails[:3]} {err[-200:] if not m else ''}")
 
 
 async def run(name, fn, *args):

@@ -131,7 +131,20 @@ Each is still hit by verify_vhk2's static scan, and each is listed in its `INVAR
 | verify_secmaster2.py | `len(etf) == 12` | (CATCHALL1) the committed fixture CSVs (fd_etfs_PCX / fd_funds_NAS) |
 | verify_prices1.py | `len(sp) == 30`, `len(fr) == 71`, `len(days) == 71` | (CATCHALL1) the script's own synthetic bar series (SYN) |
 
-**Handed off, not an invariant (CATCHALL1):** verify_bugfix2.py `len(changed) == 45` compares bugfix2's BEFORE
+| verify_bugfix2.py | `len(own) == 45` | (VERIFYFIX1) bugfix2's OWN reclassified routes, BEFORE_REF → bugfix2's own end ref (both pinned); today's rule ("each still exists and is still gated") is asserted per route |
+| verify_rep14.py | `len(body) == 10`, `len(xs) == 10` | (VERIFYFIX1) the script's own fixture lots (7 in the passing account + 3 in the partial one) |
+| verify_s30.py | `set(v.get("editable") or []) == {"org_rule", "policy"}` | (VERIFYFIX1) the Segregation-of-duties page's own write vocabulary for a writer (a view-only caller's is asserted EMPTY) |
+| verify_cash01.py | `len(sched) == 24` | (VERIFYFIX1) the script's own fixture liability's 24 monthly payments |
+| verify_cash01.py | `editable == {"obligation", "notice"}` | (VERIFYFIX1) the treasury envelope's own write vocabulary for its author |
+| verify_cash02.py | `set(rules) == {"default", "policy"}` | (VERIFYFIX1) the rules of the script's own item type, read for its own fixture org |
+| verify_cash03.py | `set(p["capabilities"]) == {"index_level", "reference"}` | (VERIFYFIX1) the query is filtered to cash03's own two providers |
+| verify_cash07.py | `have == {"initiate_payment", "approve_payment"}` | (VERIFYFIX1) the query is `WHERE name = ANY(['initiate_payment','approve_payment'])`: "these two exist" |
+| verify_cash06.py | `acts == {"create", "submit", "approve"}` | (VERIFYFIX1) the events of the script's OWN rule-drafted instructions (`purpose_ref_id = ANY(<its rule ids>)`) |
+| _apply_disclosures1.py | `perms == {"view_disclosures", "manage_disclosures"}` | (VERIFYFIX1) the query is `WHERE name IN ('view_disclosures', 'manage_disclosures')`: "these two exist" |
+| _apply_s29b.py | `k == {"default", "policy"}` | (VERIFYFIX1) the PLATFORM rules (org_id IS NULL) of s29b's own two item types — the schema's seeded default + policy |
+| verify_cash05.py | `len(pts) == 91` | (VERIFYFIX1) the 91 sampled days of the script's own fixture range |
+
+**Handed off, not an invariant (CATCHALL1) — CLOSED by VERIFYFIX1** (now the `len(own) == 45` row above): verify_bugfix2.py `len(changed) == 45` compares bugfix2's BEFORE
 record with TODAY's AUTHZ1_ROUTES.json, so any later sprint that gates one more of those routes breaks it. It is
 frozen against live state; verify_vhk2 reports it as a `[FIND]` (`HANDED_OFF`) owned by verifyfix1 (read it at
 bugfix2's own end ref, as its line-165 check already does), rather than listing it here.

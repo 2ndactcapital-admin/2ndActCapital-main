@@ -104,8 +104,8 @@ def regression_set() -> list[str]:
 
 
 def total_of(out: str):
-    m = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
-    return (int(m[-1][0]), int(m[-1][1])) if m else None
+    t = VT.final_total(out)   # the script's OWN final ^TOTAL line (_verify_total)
+    return (t[0], t[1]) if t else None
 
 
 def tail(text: str, n: int = 600) -> str:
@@ -165,14 +165,29 @@ INVARIANTS = [
     ("verify_prices1.py", "len(sp) == 30"),
     ("verify_prices1.py", "len(fr) == 71"),
     ("verify_prices1.py", "len(days) == 71"),
+    # VERIFYFIX1 — scripts added after CATCHALL1; each is the script's OWN fixture / own filtered keys / its own
+    # endpoint's write vocabulary (docs/VHK2_FINDINGS.md "Invariants kept")
+    ("verify_rep14.py", "len(body) == 10"),
+    ("verify_rep14.py", "len(xs) == 10"),
+    ("verify_s30.py", 'set(v.get("editable") or []) == {"org_rule", "policy"}'),
+    ("verify_cash01.py", "len(sched) == 24"),
+    ("verify_cash01.py", '.get("editable") or []) == {"obligation", "notice"}'),
+    ("verify_cash02.py", 'set(rules) == {"default", "policy"}'),
+    ("verify_cash03.py", 'set(p["capabilities"]) == {"index_level", "reference"}'),
+    ("verify_cash05.py", "len(pts) == 91"),
+    ("verify_cash07.py", 'have == {"initiate_payment", "approve_payment"}'),
+    ("verify_cash06.py", 'acts == {"create", "submit", "approve"}'),
+    ("_apply_disclosures1.py", 'perms == {"view_disclosures", "manage_disclosures"}'),
+    ("_apply_s29b.py", 'k == {"default", "policy"}'),
+    # VERIFYFIX1 — bugfix2's own 45, now read at its own end ref (pinned history; formerly HANDED_OFF)
+    ("verify_bugfix2.py", "len(own) == 45"),
 ]
 #: CATCHALL1 Task 8 — hits that ARE frozen against live state but belong to a script outside this sprint's scope
 #: (the verify-script migration, verifyfix1). Reported as a [FIND] naming the owner — never silently accepted, and the
 #: list must shrink: an entry whose line is gone is itself reported.
-HANDED_OFF = [
-    ("verify_bugfix2.py", "len(changed) == 45",
-     "verifyfix1: compares bugfix2's BEFORE record with TODAY's AUTHZ1_ROUTES.json — read it at bugfix2's own end ref "
-     "(VS.sprint_end_ref), as its line 165 check already does"),
+HANDED_OFF: list = [
+    # VERIFYFIX1 closed the one entry (verify_bugfix2 `len(changed) == 45` now counts bugfix2's own record at its own
+    # end ref and asserts today's rule per route). The list must stay empty or shrink.
 ]
 #: the frozen forms the 2026-11-02 run failed on, as they stood at BEFORE_REF: the scan must flag each there (it is
 #: not vacuous) and none may remain today
@@ -363,6 +378,11 @@ def y_range(rows, check) -> None:
 
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
 
 
 #: the same query run_regressions.sh's DEFAULT_WORKER_CHECK runs, in a subprocess of this interpreter

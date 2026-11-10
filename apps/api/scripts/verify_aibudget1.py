@@ -106,6 +106,13 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -233,8 +240,14 @@ async def db_today(conn) -> date:
     return await conn.fetchval(f"SELECT {AB.BUDGET_DAY_SQL}")
 
 
+#: VERIFYFIX1 — the two ledgers every REAL model call / the daily document-reading run writes: counted over this
+#: script's own fixture deployments / task keys (plus its users) only.
+FIXTURE_EXTRA = {"public.ai_daily_usage": f"deployment LIKE '{FX}%'", "public.ai_daily_runs": f"task_key LIKE '{FXT}%'"}
+
+
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, [ORG], list(USERS), FIXTURE_EXTRA.get(t)), fetch="fetchval"))
+            for t in COUNTED}
 
 
 async def fingerprint(conn, sql, *args) -> tuple[int, str]:
@@ -612,8 +625,8 @@ async def y_schema(conn):
                                                        "tablename = $1", t)}
         check(cmds == {"SELECT", "INSERT", "UPDATE", "DELETE"}, f"public.{t}: a policy for every operation",
               f"{sorted(cmds)}")
-        seen = await conn.fetchval(f"SELECT count(*) FROM public.{t}")   # no super-admin context
-        total = await platform(conn, f"SELECT count(*) FROM public.{t}", fetch="fetchval")
+        seen = await conn.fetchval(f"SELECT count(*) FROM public.{t}")   # no super-admin context  (rls-read)
+        total = await platform(conn, f"SELECT count(*) FROM public.{t}", fetch="fetchval")  # rls-read
         check(int(seen) == 0 and (int(total) >= 0), f"public.{t}: invisible without super-admin context (RLS)",
               f"without={seen} with={total}")
 
@@ -660,6 +673,8 @@ async def seed(conn) -> None:
                 "VALUES ($1, $2, $3, $4, $5, $6, 'active', true, true)", uid, ORG, email_of(uid),
                 f"AIBUDGET1 {nm}", sub_of(uid), role)
         await rbac.grant_org_admin(conn, U_ADMIN, ORG)
+        # VERIFYFIX1 (bugfix4: user_roles is the ONE role source) — the Super Admin is one by its GRANT, not users.role.
+        await rbac.grant_named_role(conn, U_SUPER, ORG, "super_admin")
         await conn.execute(
             "INSERT INTO ai_system_one_models (key, display_name, provider, model_route, model_version, availability, "
             "is_default, last_verified_at, last_check_detail, notes) VALUES ($1, 'AIB1 fixture System One', "
@@ -679,6 +694,9 @@ async def seed(conn) -> None:
                            fetch="fetchval")
     check(org is True and int(users) == len(USERS), "fixture org and users are is_test = true", f"{org} {users}")
     S["seeded"] = org is True
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {U_SUPER: (ORG, {"super_admin"}), U_ADMIN: (ORG, {"org_admin"})})
 
 
 # ── picker ──────────────────────────────────────────────────────────────────
@@ -1234,10 +1252,11 @@ def regression():
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}
     env.pop("AUTHZ_TEST_MODE", None)   # the child sets its own, before it imports main
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_ensemblesystemone.py")], REPO, timeout=2700, env=env)
-    total = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+    nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+    total = [(str(nt.passed), str(nt.failed))] if nt.line else []
     fails = [ln for ln in out.splitlines() if ln.lstrip().startswith("[FAIL]")]
-    check(bool(total) and total[-1][1] == "0" and not fails and code == 0, "verify_ensemblesystemone.py: 0 FAIL",
-          f"{total[-1] if total else 'no summary'}; {fails[:3]} {err[-300:] if not total else ''}")
+    check(nt.ok and not fails and code == 0, "verify_ensemblesystemone.py: 0 FAIL",
+          f"{nt.detail()}; {fails[:3]} {err[-300:] if not total else ''}")
 
 
 async def run(name, fn, *args):

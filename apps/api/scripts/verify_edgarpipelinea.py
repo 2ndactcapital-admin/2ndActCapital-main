@@ -109,6 +109,12 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_bootstrap import bootstrap_async  # noqa: E402  (also puts apps/api on sys.path)
 from _db_connect import connect as db_connect, resolve_dsn  # noqa: E402
 
@@ -528,6 +534,9 @@ async def seed(conn) -> None:
             await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
                                uid, member_role)
         await grant_org_admin(conn, U_ORGADMIN, ORG)
+        # VERIFYFIX1 (bugfix4: user_roles is the ONE role source) — the Super Admin is one by its GRANT, not users.role.
+        from services.rbac import grant_named_role
+        await grant_named_role(conn, U_SUPER, ORG, "super_admin")
         # An issuer whose include_status is 'no' (no real issuer has it today).
         await conn.execute(
             """INSERT INTO portfolio.structured_note_issuers
@@ -536,6 +545,9 @@ async def seed(conn) -> None:
                        'no', 'edgarpipelinea fixture')""", CIK_NO)
     parsed = ix.parse_index_lines(FIXTURE_LINES)
     await ix.load_records(conn, parsed.filing_records(None), parsed.filer_records())
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {U_SUPER: (ORG, {"member", "super_admin"}), U_ORGADMIN: (ORG, {"org_admin"}), U_MEMBER: (ORG, {"member"})})
 
 
 # ═══════════════════════════════════════════════════════════════════════════

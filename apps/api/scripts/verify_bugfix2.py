@@ -51,6 +51,8 @@ sys.path.insert(0, str(HERE))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "bugfix2"
 BEFORE_REF = "3d5368a"   # bugfix2-work base (rep11 + previewperf merged, schema refreshed) — the pre-sprint code
@@ -230,6 +232,11 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -352,7 +359,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def pk_of(conn, table: str) -> list[str]:
@@ -601,6 +608,9 @@ async def seed(conn) -> None:
                                "bpmn_xml, is_current) VALUES ($1, $2, $3, 1, $4, true)", vid, wid, ORG_A, bpmn)
         await conn.execute("INSERT INTO workflow_runs (id, workflow_version_id, org_id) VALUES ($1, $2, $3)",
                            WFR_RUN, WFV_RUN, ORG_A)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {U_SUPER: (ORG_A, {"super_admin"}), U_STAFF: (ORG_A, {"investment_staff"}), U_ORGADMIN: (ORG_A, {"org_admin"}), U_MEMBER: (ORG_A, {"member"}), U_MEMBER2: (ORG_A, {"member"}), U_OTHER: (ORG_B, {"member"})})
 
 
 async def y_fixtures_are_test(conn):
@@ -819,8 +829,21 @@ async def y_reclassified(conn):
     now = json.loads(ROUTES_JSON.read_text(encoding="utf-8"))
     b = _open_reads(before)
     after = {(tuple(r["methods"]), r["path"], r["name"]): r for r in now["routes"]}
-    changed = [(k, after[k]) for k in b if k in after and after[k]["after"] != "none beyond auth"]
-    check(len(changed) == 45, "45 reclassified read routes found in the record", f"{len(changed)}")
+    # VERIFYFIX1 (handed off by CATCHALL1 / verify_vhk2): the 45 are bugfix2's OWN reclassifications — counted at
+    # bugfix2's own end ref (BEFORE_REF → end, both pinned history), never against TODAY's record, which any later
+    # sprint that gates one more of those open routes would change. Today's rule is asserted per route instead:
+    # each of the 45 still exists and is still gated.
+    end_ref, how = VS.sprint_end_ref(SPRINT_KEY)
+    at_end = {(tuple(r["methods"]), r["path"], r["name"]): r
+              for r in json.loads(VS.git_show(end_ref, "docs/AUTHZ1_ROUTES.json") or "{}").get("routes", [])}
+    own = [k for k in b if k in at_end and at_end[k]["after"] != "none beyond auth"]
+    check(len(own) == 45, "45 reclassified read routes found in bugfix2's own record (BEFORE_REF → its end ref)",
+          f"{len(own)} ({BEFORE_REF} → {how})")
+    gone = [k for k in own if k not in after]
+    reopened = [k for k in own if k in after and after[k]["after"] == "none beyond auth"]
+    check(not gone and not reopened, "each of bugfix2's reclassified routes still exists today and is still gated",
+          f"gone {gone[:4]}; reopened {reopened[:4]}")
+    changed = [(k, after[k]) for k in own if k in after]
     bad_m, bad_s, bad_o = [], [], []
     for k, r in changed:
         path = _fill(r["path"])

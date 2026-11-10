@@ -309,6 +309,13 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -484,7 +491,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def fingerprint(conn, sql, *args) -> tuple[int, str]:
@@ -1011,6 +1018,9 @@ async def seed(conn) -> None:
         check(c == 201 and c2 == 200 and o2.get("status") == "approved",
               f"held-away data for {AccountNumber(ACCOUNTS[acct][4]).masked} approved through rep7's import",
               f"{c} {c2} {str(o2)[:120]}")
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {r for r in (rname,) if r}) for uid, (org, _a, _n, rname, _f) in USERS.items()})
 
 
 async def y_migration(conn):
@@ -1090,11 +1100,11 @@ async def y_migration(conn):
             "'cancel', 'manual', 'manual', 'pre-rep7 style draft (verify)', 'draft', $5, ARRAY[$5::uuid]) "
             "RETURNING id", ORG_A, ACCT_RO, S["sec_FUND2"], today() + timedelta(days=7), U_ADMIN1)
     S["ro_draft"] = iid
-    tasks0 = int(await scoped(conn, ORG_A, "SELECT count(*) FROM public.workflow_run_steps", fetch="fetchval"))
+    tasks0 = int(await scoped(conn, ORG_A, "SELECT count(*) FROM public.workflow_run_steps WHERE org_id = $1", ORG_A, fetch="fetchval"))
     c, o = await api(U_ADMIN1, "POST", f"/api/v1/execution/instructions/{iid}/submit", {})
     row = await scoped(conn, ORG_A, "SELECT status, approval_task_id FROM public.execution_instructions WHERE id = $1 "
                                     "AND system_to IS NULL", iid, fetch="fetchrow")
-    tasks1 = int(await scoped(conn, ORG_A, "SELECT count(*) FROM public.workflow_run_steps", fetch="fetchval"))
+    tasks1 = int(await scoped(conn, ORG_A, "SELECT count(*) FROM public.workflow_run_steps WHERE org_id = $1", ORG_A, fetch="fetchval"))
     check(c == 409 and "read-only" in str(o) and row["status"] == "draft" and row["approval_task_id"] is None
           and tasks0 == tasks1, "an identical draft on a read-only held-away account: submit for approval refused "
           "(409, the reason), the instruction stays a draft, no task opened", f"{c} {str(o)[:140]} {dict(row)}")
@@ -1601,10 +1611,11 @@ def regression():
     self_rep7_diff(check, find)
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_rep7.py")], REPO, timeout=2700, env=env)
-    total = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+    nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+    total = [(str(nt.passed), str(nt.failed))] if nt.line else []
     fails = [ln for ln in out.splitlines() if ln.lstrip().startswith("[FAIL]")]
-    check(bool(total) and total[-1][1] == "0" and not fails and code == 0, "verify_rep7.py: 0 FAIL",
-          f"{total[-1] if total else 'no summary'}; {fails[:3]} {err[-200:] if not total else ''}")
+    check(nt.ok and not fails and code == 0, "verify_rep7.py: 0 FAIL",
+          f"{nt.detail()}; {fails[:3]} {err[-200:] if not total else ''}")
 
 
 async def run(name, fn, *args):

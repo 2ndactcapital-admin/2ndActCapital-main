@@ -134,6 +134,12 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -397,7 +403,7 @@ async def counts(conn) -> dict:
     out = {}
     for t in COUNTED:
         where = fixture_scope(t)
-        out[t] = int(await platform(conn, f"SELECT count(*) FROM {t}" + (f" WHERE {where}" if where else ""),
+        out[t] = int(await platform(conn, (f"SELECT count(*) FROM {t} WHERE {where}" if where else VSC.count_sql(t, FIXTURE_ORGS, list(USERS))),
                                     fetch="fetchval"))
     return out
 

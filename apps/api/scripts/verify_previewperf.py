@@ -103,6 +103,11 @@ def self_checks(check, find) -> None:
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 if __name__ == "__main__" and "--cleanup-only" in sys.argv:
     print("[INFO] PREVIEWPERF seeds no fixtures: nothing to clean")
     print("CLEANUP_SECONDS: 0.0")
@@ -441,13 +446,14 @@ def y_bulkfetchui_full(worker_ok: bool) -> None:
     except subprocess.TimeoutExpired as exc:
         code, out, err = 124, (exc.stdout or b"").decode() if isinstance(exc.stdout, bytes) else (exc.stdout or ""), \
             f"timeout after {SUB_TIMEOUT}s"
-    m = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+    nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+    m = [(str(nt.passed), str(nt.failed))] if nt.line else []
     fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
     timing = [ln.strip() for ln in out.splitlines() if "live preview" in ln or ln.strip().startswith("round ")]
-    print(f"[INFO] verify_bulkfetchui.py: exit {code}, {time.monotonic() - t0:.0f} s, {m[-1] if m else 'no TOTAL'}")
+    print(f"[INFO] verify_bulkfetchui.py: exit {code}, {time.monotonic() - t0:.0f} s, {nt.detail()}")
     for ln in timing:
         print(f"    {ln}")
-    check(code == 0 and bool(m) and m[-1][1] == "0", "verify_bulkfetchui.py full run: exit 0, 0 FAIL "
+    check(code == 0 and nt.ok, "verify_bulkfetchui.py full run: exit 0, 0 FAIL "
           "(includes 'live preview returns under 2 s')", f"exit {code}; {fails[:5]}; {timing}; {tail(out + err)}")
 
 
@@ -463,9 +469,12 @@ async def run() -> None:
         worker_ok = await y_worker(conn)
         await y_index(conn)
         instrument()
-        supers = await scoped(conn, """SELECT id::text AS sub, org_id::text AS org FROM users
-                                        WHERE role = 'super_admin' AND status = 'active' AND is_active
-                                        ORDER BY created_at, id""")
+        # VERIFYFIX1: a real Super Admin is a user_roles grant (BUGFIX4 — users.role is only a mirror)
+        supers = await scoped(conn, """SELECT u.id::text AS sub, u.org_id::text AS org FROM users u
+                                        WHERE u.status = 'active' AND u.is_active
+                                          AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                                                      WHERE ur.user_id = u.id AND r.name = 'super_admin')
+                                        ORDER BY u.created_at, u.id""")
         user = dict(supers[0]) if supers else None
         if user is None:
             find("no admitted real super admin today", "the app-level checks (3a) and (4) need one; (5)'s fixture "

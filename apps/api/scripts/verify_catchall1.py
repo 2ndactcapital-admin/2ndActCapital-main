@@ -50,6 +50,8 @@ sys.path.insert(0, str(API_DIR))
 import _verify_cleanup as VC  # noqa: E402  (stdlib + asyncpg only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "catchall1"
 BEFORE_REF = "8b7e8f2"   # catchall1-work base: "merge s28"
@@ -226,6 +228,11 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.SELF_CHECKS_FLAG in sys.argv:
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -348,7 +355,7 @@ async def core(conn, org, entity, as_of: date) -> dict:
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def pk_of(conn, table: str) -> list[str]:
@@ -600,6 +607,9 @@ async def seed(conn) -> None:
                            "VALUES ($1, $2, 'fund', $1)", SEC_U, NAME + "S&P 500 Fixture ETF")
         await conn.execute("INSERT INTO portfolio.securities_global_identifiers (global_security_id, id_type, "
                            "id_value, is_primary) VALUES ($1, 'ticker', $2, true)", SEC_U, TICKER_U)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: {"org": org, "roles": {rname}, "has": perms} for uid, (org, _a, _n, rname, perms) in USERS.items()})
 
 
 async def y_fixtures(conn):

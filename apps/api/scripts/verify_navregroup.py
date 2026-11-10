@@ -77,6 +77,8 @@ sys.path.insert(0, str(HERE.parent))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "navregroup"
 BASELINE_REF = "e581844"   # the commit this sprint started from (pinned: HEAD moves)
@@ -156,6 +158,11 @@ def self_checks(check, find):
 
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
 
 from _db_bootstrap import bootstrap_async  # noqa: E402  (also puts apps/api on sys.path)
 
@@ -397,7 +404,7 @@ async def cleanup_only(conn) -> int:
 
 
 async def table_counts(conn) -> dict[str, int]:
-    return {t: await rls_val(conn, f"SELECT count(*) FROM {t}") for t in COUNTED}
+    return {t: await rls_val(conn, VSC.count_sql(t, [ORG], FIXTURE_USERS)) for t in COUNTED}
 
 
 async def gold_checksum(conn) -> tuple[int, str]:
@@ -476,6 +483,9 @@ async def seed(conn) -> None:
                            ROLE_MEMBER, perm_ids["view_deals"], ROLE_DEALS, perm_ids["manage_deals"])
         await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $3), ($2, $3), ($4, $5)",
                            U_MEMBER, U_MEMBER2, ROLE_MEMBER, U_DEALS, ROLE_DEALS)
+        # VERIFYFIX1 (bugfix4: user_roles is the ONE role source) — the Super Admin is one by its GRANT, not users.role.
+        from services.rbac import grant_named_role
+        await grant_named_role(conn, U_SUPER, ORG, "super_admin")
         for eid, name, restricted in ((E_MINE, "Mine", False), (E_OTHER, "Other", False), (E_RESTR, "Restricted", True)):
             await conn.execute(
                 """INSERT INTO entities (id, org_id, entity_type, display_name, notes, access_restricted)
@@ -499,6 +509,9 @@ async def seed(conn) -> None:
         await conn.execute(
             """INSERT INTO vdr_deal_proposals (id, org_id, document_drop_id, proposed_fields, status)
                VALUES ($1, $2, $3, $4::jsonb, 'pending')""", PROPOSAL, ORG, DROP, json.dumps({"name": TAG}))
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {U_MEMBER: (ORG, {"navregroup_member"}), U_MEMBER2: (ORG, {"navregroup_member"}), U_DEALS: (ORG, {"navregroup_deals"}), U_STAFF: (ORG, set()), U_SUPER: (ORG, {"super_admin"})})
 
 
 # ═══ Sections ══════════════════════════════════════════════════════════════

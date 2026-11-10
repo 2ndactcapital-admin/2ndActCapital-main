@@ -95,6 +95,13 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -256,7 +263,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def fingerprint(conn, sql, *args) -> tuple[int, str]:
@@ -681,6 +688,9 @@ async def seed(conn) -> None:
                                   "WHERE id = ANY($1::uuid[])", list(USERS), fetch="fetchrow")
     check(flags["t"] == flags["n"] == 2 and uflags["t"] == uflags["n"] == len(USERS),
           "every fixture org and user is is_test = true", f"orgs {dict(flags)} users {dict(uflags)}")
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {r for r in (rname,) if r} | ({"org_admin"} if uid == U_B_ADMIN else set())) for uid, (org, _a, _n, rname, _f) in USERS.items()})
 
 
 DEALS = (("wm", "DR3 Watermark"), ("vo", "DR3 View Only"), ("legacy", "DR3 Legacy Download"),
@@ -1472,10 +1482,11 @@ def regression():
     section("[Y] Regression — verify_dealroom2.py ONCE, flat subprocess AFTER teardown, VERIFY_NESTED=1, 2700 s")
     env = os.environ | {"VERIFY_NESTED": "1"}
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_dealroom2.py")], REPO, timeout=2700, env=env)
-    m = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+    nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+    m = [(str(nt.passed), str(nt.failed))] if nt.line else []
     fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-    check(bool(m) and m[-1][1] == "0" and code == 0, "verify_dealroom2.py: 0 FAIL",
-          f"{m[-1] if m else 'no TOTAL'}; {fails[:3]} {err[-200:] if not m else ''}")
+    check(nt.ok and code == 0, "verify_dealroom2.py: 0 FAIL",
+          f"{nt.detail()}; {fails[:3]} {err[-200:] if not m else ''}")
 
 
 async def run(name, fn, *args):

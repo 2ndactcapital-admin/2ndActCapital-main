@@ -51,6 +51,8 @@ sys.path.insert(0, str(API_DIR))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "bugfix3"
 BEFORE_REF = "9504fff"   # bugfix3-work base: "olivo demo: Muse entry plan v4 (resume pass after portentry2)"
@@ -271,8 +273,29 @@ FIX1_NEEDLES = [
 
 def self_fix1(check, find):
     print("[INFO] FIX 1 — static: verify reproduction soundness + taxonomy wiring")
+    # VERIFYFIX1 — what bugfix3 WROTE is read at bugfix3's own end ref (docs/VERIFY_RULES.md rule 1): ROLLUP2 later
+    # changed key_for_kind's signature (global_security_id), the held-away call and the rollup's unkeyed branch
+    # (counted as 'unclassified' instead of skipped), so the working tree no longer holds bugfix3's exact lines.
+    end_ref, how = VS.sprint_end_ref(SPRINT_KEY)
     for rel, needle, meaning in FIX1_NEEDLES:
-        check(needle in _read(rel), f"FIX 1 — {meaning}", f"{rel}: needle missing")
+        check(needle in (VS.git_show(end_ref, rel) or ""), f"FIX 1 — {meaning} (at bugfix3's own end, {how})",
+              f"{rel}: needle missing at {end_ref}")
+    # …and TODAY's rule: one resolver, still called on every creation path bugfix3 wired.
+    today_calls = {rel: "key_for_kind(" in _read(rel) for rel in (
+        "apps/api/services/portfolio_assets.py", "apps/api/services/portfolio_manual.py",
+        "apps/api/services/held_away.py")}
+    check("async def key_for_kind(" in _read("apps/api/services/portfolio_kind_taxonomy.py")
+          and all(today_calls.values()),
+          "FIX 1 — 4a today: ONE resolver (portfolio_kind_taxonomy.key_for_kind), still called by create_asset, "
+          "manual_asset_for and the held-away asset", f"{today_calls}")
+    rollup = _read("apps/api/services/portfolio_rollup.py")
+    if "reason=NO_TAXONOMY_REASON," not in rollup:
+        find("FIX 1 — 4b today: ROLLUP2 replaced the rollup's skip branch — an unkeyed valued line is COUNTED under "
+             "'unclassified' (portfolio_rollup.UNCLASSIFIED_BUCKET), not skipped", "superseded by design, not lost")
+        check("UNCLASSIFIED_BUCKET" in rollup and "def skipped_of(result) -> dict:" in
+              _read("apps/api/services/portfolio_refresh.py"),
+              "FIX 1 — 4b today: an unkeyed line is never a silent $0 (counted as 'unclassified'; skips still "
+              "reported by skipped_of)", "")
     before = VS.git_show(BEFORE_REF, "apps/api/routers/portfolio_positions.py") or ""
     got = route_calls(before, "get", "/portfolio/positions") if before else None
     names = got[0] if got else set()
@@ -296,9 +319,15 @@ def self_fix1(check, find):
     from services.org_settings import DEFAULT_SETTINGS
     from services.portfolio_manual import KIND_SHAPE
 
+    from services.fund_classification import FUND_KINDS
     m = DEFAULT_SETTINGS.get("portfolio.kind_taxonomy") or {}
+    # VERIFYFIX1 — ROLLUP2 Task 3 removed "mutual_fund" from the kind map by design: a FUND kind is never keyed by
+    # its kind, it is classified by its master category (services.fund_classification.FUND_KINDS) — so the rule
+    # today is "every NON-fund creation kind maps to a key", and no fund kind may be in the map.
     want = ({k for k in DIRECT_KINDS if k != "other"} | {f"private_{k}" for k in PRIVATE_KINDS} | set(KIND_SHAPE)
-            | {"cash"})
+            | {"cash"}) - set(FUND_KINDS)
+    check(not (set(FUND_KINDS) & set(m)), "FIX 1 (4a, ROLLUP2) — no fund kind is keyed by its kind (funds classify "
+          "by category)", f"{sorted(set(FUND_KINDS) & set(m))}")
     check(not (want - set(m)) and "other" not in m,
           "FIX 1 (4a) — every creation kind maps to a key (real estate, collectible, operating business, insurance "
           "cash value, private fund … digital asset, cash); 'other' deliberately unmapped (reported, not guessed)",
@@ -329,6 +358,11 @@ def run_cmd(args, cwd, timeout=600, env=None, stdin_text=None):
 
 if __name__ == "__main__" and VS.SELF_CHECKS_FLAG in sys.argv:
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
 
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
@@ -447,7 +481,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def pk_of(conn, table: str) -> list[str]:
@@ -602,6 +636,8 @@ async def y_catalog(conn):
 
 
 async def seed(conn) -> None:
+    global AS_OF
+    AS_OF = date.today()   # VERIFYFIX1 rule 3 — captured when the fixtures are written
     from services import rbac
 
     async with conn.transaction():
@@ -657,6 +693,9 @@ async def seed(conn) -> None:
                 "$4, $5, $6, $7, $8, $9, false)", aid, ORG_A, HH1, mask,
                 hashlib.sha256(f"{TAG}{mask}".encode()).hexdigest(), ACCOUNT_VALUES["custodian_code"],
                 ACCOUNT_VALUES["registration_type"], ACCOUNT_VALUES["tax_status"], owner)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: {"org": org, "roles": {rname}, "has": perms} for uid, (org, _a, _n, rname, perms) in USERS.items()})
 
 
 async def y_fixtures(conn):
@@ -748,7 +787,9 @@ async def y_role_is_real(conn):
           f"{r['u']}")
 
 
-AS_OF = date.today()
+#: VERIFYFIX1 (docs/VERIFY_RULES.md rule 3: dates at the call) — the fixture anchor date, captured by seed() when
+#: the fixtures are written; never fixed at import (a run crossing midnight).
+AS_OF: date | None = None
 
 
 async def seed_holdings(conn):

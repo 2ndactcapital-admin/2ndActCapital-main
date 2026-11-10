@@ -53,6 +53,8 @@ sys.path.insert(0, str(API_DIR))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "portentry1"
 BEFORE_REF = "e5f5da8"   # portentry1-work base: main a0755ee + "chore: refresh schema snapshot"
@@ -195,25 +197,38 @@ def self_verify_self(check, find):
         e, h = VS.sprint_end_ref(key)
         check(e == tip and VS.sprint_merge(key) == merge, f"{key} (merge commit {merge}) ends at its second parent "
               f"{tip}", f"{e}; {h}")
+    # VERIFYFIX1 — portentry1's OWN change to _verify_self is BEFORE_REF's module vs portentry1's END ref's module
+    # (both pinned, docs/VERIFY_RULES.md rule 1): comparing with TODAY's module failed once CATCHALL1 pinned
+    # previewperf / previewperf fix 1 (SPRINT_PINNED) — a later, stated change, not portentry1's.
     old = _load_verify_self_at(BEFORE_REF)
+    own_end, _how = VS.sprint_end_ref(SPRINT_KEY)
+    mine = _load_verify_self_at(own_end) if own_end != "HEAD" else VS
     keys = sorted({m.group(1) for f in (HERE).glob("verify_*.py")
                    for m in [re.search(r'^SPRINT_KEY = "([^"]+)"', f.read_text(encoding="utf-8"), re.M)] if m})
-    differ = []
+
+    def _end(mod, k):
+        try:
+            return mod.sprint_end_ref(k)[0]
+        except Exception as exc:  # noqa: BLE001
+            return f"raised {type(exc).__name__}"
+
+    differ, later = [], []
     for k in keys:
         if k in ("perms1", "secmaster1", "crmdetail1", SPRINT_KEY):
             continue
-        try:
-            a = old.sprint_end_ref(k)[0]
-        except Exception as exc:  # noqa: BLE001
-            a = f"raised {type(exc).__name__}"
-        try:
-            b = VS.sprint_end_ref(k)[0]
-        except Exception as exc:  # noqa: BLE001
-            b = f"raised {type(exc).__name__}"
+        a, b = _end(old, k), _end(mine, k)
         if a != b and not (a == "HEAD" and b == "HEAD"):
             differ.append((k, a, b))
+        t = _end(VS, k)
+        if t != b and not (b == "HEAD" and t == "HEAD"):
+            later.append((k, b, t))
     check(bool(keys) and not differ, f"every other sprint key ({len(keys) - 3}) resolves its end exactly as the "
-          f"pre-sprint _verify_self did", f"{differ}")
+          f"pre-sprint _verify_self did (portentry1's own _verify_self at {own_end})", f"{differ}")
+    unstated = [x for x in later if not any(x[0] == pk or x[0].startswith(pk) for pk in
+                                            (*VS.SPRINT_PINNED, *VS.SPRINT_LANDED, *VS.SPRINT_MERGES,
+                                             *VS.SPRINT_FASTFORWARD))]
+    check(not unstated, "every key whose end a LATER _verify_self resolves differently is one it states explicitly "
+          "(SPRINT_PINNED / _LANDED / _MERGES / _FASTFORWARD)", f"{unstated}; later: {later}")
     for script in ("verify_perms1.py", "verify_secmaster1.py", "verify_crmdetail1.py"):
         code, out, err = run_cmd([sys.executable, str(HERE / script), VS.SELF_CHECKS_FLAG], REPO, timeout=600)
         nt = VT.nested_total(out, code)
@@ -293,6 +308,11 @@ def run_cmd(args, cwd, timeout=600, env=None):
 if __name__ == "__main__" and VS.SELF_CHECKS_FLAG in sys.argv:
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -340,7 +360,9 @@ E = {
 }
 HH_A = _id(60)
 ACC_HA, ACC_INT, ACC_MEM = _id(70), _id(71), _id(72)
-AS_OF = date.today()
+#: VERIFYFIX1 (docs/VERIFY_RULES.md rule 3: dates at the call) — the fixture anchor date, captured by seed() when
+#: the fixtures are written; never fixed at import (a run crossing midnight).
+AS_OF: date | None = None
 
 COUNTED = ("public.users", "public.organizations", "public.entities", "public.entity_relationships",
            "public.entity_attributes", "public.entity_addresses", "public.entity_notes", "public.households",
@@ -413,7 +435,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def pk_of(conn, table: str) -> list[str]:
@@ -542,6 +564,8 @@ async def y_catalog(conn):
 
 
 async def seed(conn) -> None:
+    global AS_OF
+    AS_OF = date.today()   # VERIFYFIX1 rule 3 — captured when the fixtures are written
     from services import rbac
 
     async with conn.transaction():
@@ -593,6 +617,9 @@ async def seed(conn) -> None:
         # this script's fixture security in the platform master (the relink target) — NEVER the product's
         await conn.execute("INSERT INTO portfolio.securities_global (id, name, security_type, canonical_id) "
                            "VALUES ($1, $2, 'fund', $1)", FIX_SEC, NAME + "Fixture Muni Fund")
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: {"org": org, "roles": {rname}, "has": perms} for uid, (org, _a, _n, rname, perms) in USERS.items()})
 
 
 async def y_fixtures(conn):

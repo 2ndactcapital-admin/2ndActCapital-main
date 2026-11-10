@@ -69,6 +69,7 @@ sys.path.insert(0, str(API_DIR))
 import _verify_cleanup as VC  # noqa: E402  (stdlib + asyncpg only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 
 SPRINT_KEY = "disclosures1"
 BEFORE_REF = "42c5c57"   # disclosures1-work base: "merge catchall1"
@@ -274,6 +275,11 @@ def self_checks(check, find):
 
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
 
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
@@ -654,6 +660,9 @@ async def seed(conn) -> None:
             await conn.execute("INSERT INTO public.disclosures (key, title, category, audience, description) VALUES "
                                "($1, $2, 'other', $3, 'DISCLOSURES1 verify fixture key')", k, f"{NAME}{k}", aud)
     S["seeded"] = True
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {how}) for uid, (org, _a, _n, how) in USERS.items()})
 
 
 async def y_fixtures(conn):

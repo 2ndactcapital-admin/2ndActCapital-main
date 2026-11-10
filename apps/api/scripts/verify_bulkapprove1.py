@@ -64,6 +64,7 @@ sys.path.insert(0, str(API_DIR))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "bulkapprove1"
 BEFORE_REF = "584402a"   # bulkapprove1-work base: "merge bugfix3"
@@ -285,6 +286,11 @@ def run_cmd(args, cwd, timeout=600, env=None):
 if __name__ == "__main__" and VS.SELF_CHECKS_FLAG in sys.argv:
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -424,7 +430,7 @@ def fixture_pred(table: str) -> str:
 
 
 async def counts(conn) -> dict:
-    out = {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    out = {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
     for t in FIXTURE_SCOPED:
         if t in FIXTURE_IDS:
             continue

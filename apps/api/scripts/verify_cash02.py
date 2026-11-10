@@ -165,8 +165,16 @@ def self_static(check, find):
     ba = _src("apps/api/services/bulk_approvals.py")
     check('"cash_policy": BulkType("cash_policy"' in ba and "CP.decide(" in ba,
           "services/bulk_approvals.py decides a cash policy through services.cash_policy.decide (one path)")
-    check('Literal["authority", "held_away", "cash_policy"]' in _src("apps/api/routers/approvals.py"),
-          "routers/approvals.py accepts the cash_policy bulk type")
+    # VERIFYFIX1 — cash02's own line is read at cash02's own end ref (docs/VERIFY_RULES.md rule 1): cash07 later added
+    # "payment" to the same Literal, so the working tree no longer holds cash02's exact text. Today's rule — the
+    # bulk route still accepts cash_policy — is asserted separately.
+    end_ref, how = VS.sprint_end_ref(SPRINT_KEY)
+    check('Literal["authority", "held_away", "cash_policy"]' in (VS.git_show(end_ref, "apps/api/routers/approvals.py")
+                                                               or ""),
+          f"routers/approvals.py accepts the cash_policy bulk type (at cash02's own end, {how})")
+    lit = re.search(r"type: Literal\[([^\]]*)\]", _src("apps/api/routers/approvals.py"))
+    check(bool(lit) and '"cash_policy"' in lit.group(1), "routers/approvals.py still accepts the cash_policy bulk type "
+          "today", f"{lit.group(0) if lit else 'no type Literal'}")
     check('"cash.yield_estimate"' in _src("apps/api/services/disclosures.py"),
           "the disclosure library defines cash.yield_estimate")
     check('("manage_cash_policy", "cash_policy", "manage")' in _src("apps/api/services/rbac.py"),
@@ -197,6 +205,11 @@ def self_checks(check, find):
 
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
 
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 

@@ -112,6 +112,13 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -273,7 +280,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, list(USERS)), fetch="fetchval")) for t in COUNTED}
 
 
 async def fingerprint(conn, sql, *args) -> tuple[int, str]:
@@ -654,6 +661,9 @@ async def seed(conn) -> None:
                                          status="live", rows=stock_rows(F_S1), label="K1")
     S["snap_L1"] = await insert_snapshot(conn, fund="L", as_of=seed_day() - timedelta(days=2), source_key="ssga_spdr",
                                          status="needs_review", rows=stock_rows(F_S1), label="L1")
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: (org, {r for r in (rname,) if r}) for uid, (org, _a, _n, rname, _f) in USERS.items()})
 
 
 # ═══ Small readers ══════════════════════════════════════════════════════════
@@ -1227,13 +1237,13 @@ async def y_monitoring(conn):
     # idempotent
     before = (int(await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.model_versions", fetch="fetchval")),
               int(await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.model_events", fetch="fetchval")),
-              int(await scoped(conn, ORG_A, "SELECT count(*) FROM workflow_runs", fetch="fetchval")))
+              int(await scoped(conn, ORG_A, "SELECT count(*) FROM workflow_runs WHERE org_id = $1", ORG_A, fetch="fetchval")))
     with _ctx(None):
         res2 = await RM.monitor_snapshot(pool, fund_id=S["sec_F"], source_key="ssga_spdr", snapshot_id=str(S["snap_F2"]),
                                          include_test_orgs=True)
     after = (int(await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.model_versions", fetch="fetchval")),
              int(await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.model_events", fetch="fetchval")),
-             int(await scoped(conn, ORG_A, "SELECT count(*) FROM workflow_runs", fetch="fetchval")))
+             int(await scoped(conn, ORG_A, "SELECT count(*) FROM workflow_runs WHERE org_id = $1", ORG_A, fetch="fetchval")))
     check(before == after and bool(res2["models"]) and all(x["outcome"] == "already" for x in res2["models"]),
           "the same snapshot again → nothing new (no version, event or task)", f"{before} → {after}")
     try:
@@ -1471,12 +1481,13 @@ def regression():
     section("[Y] Regression — verify_rep3.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1")
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_rep3.py")], REPO, timeout=1200, env=env)
-    total = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+    nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+    total = [(str(nt.passed), str(nt.failed))] if nt.line else []
     result = re.findall(r"^RESULT: (.*)$", out, re.M)
     fails = [ln for ln in out.splitlines() if ln.lstrip().startswith("[FAIL]")]
-    zero = (bool(total) and total[-1][1] == "0") or (bool(result) and "ALL ASSERTIONS PASSED" in result[-1])
+    zero = (nt.ok) or (bool(result) and "ALL ASSERTIONS PASSED" in result[-1])
     check(zero and not fails and code == 0, "verify_rep3.py: 0 FAIL ('TOTAL:' or 'RESULT:' summary)",
-          f"{total[-1] if total else (result[-1] if result else 'no summary')}; {fails[:3]} "
+          f"{nt.detail() if total else (result[-1] if result else 'no summary')}; {fails[:3]} "
           f"{err[-200:] if not (total or result) else ''}")
 
 

@@ -50,6 +50,8 @@ sys.path.insert(0, str(HERE))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "authz1"
 BEFORE_REF = "a911ac7"
@@ -61,6 +63,11 @@ def self_checks(check, find):
 
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
 
 from _db_connect import admin_dsn, app_service_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
@@ -175,7 +182,7 @@ async def scoped(conn, org, sql, *args, fetch="fetch", sub=None):
 async def counts(conn) -> dict:
     out = {}
     for t in COUNTED:
-        out[t] = int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval"))
+        out[t] = int(await platform(conn, VSC.count_sql(t, FIXTURE_ORGS, FIXTURE_USERS), fetch="fetchval"))
     out["gold_checksum"] = await platform(
         conn, "SELECT md5(COALESCE(string_agg(t::text, ',' ORDER BY t.id), '')) FROM portfolio.note_gold_values t",
         fetch="fetchval")
@@ -295,6 +302,8 @@ async def seed(conn) -> dict:
         await conn.execute("INSERT INTO user_roles VALUES ($1, $2)", U_STAFF, roles[(ORG_A, "investment_staff")])
         await conn.execute("INSERT INTO user_roles VALUES ($1, $2)", U_OTHER, roles[(ORG_B, "member")])
         await rbac.grant_org_admin(conn, U_ORGADMIN, ORG_A)
+        # VERIFYFIX1 (bugfix4: user_roles is the ONE role source) — the Super Admin persona is one by its GRANT.
+        await rbac.grant_named_role(conn, U_SUPER, ORG_A, "super_admin")
         await conn.execute("INSERT INTO entities (id, org_id, entity_type, display_name) VALUES "
                            "($1, $2, 'individual', $3), ($4, $5, 'individual', $6)",
                            E_A, ORG_A, MARK_A, E_B, ORG_B, MARK_B)
@@ -306,6 +315,9 @@ async def seed(conn) -> dict:
                            "AUTHZ1 verify deal")
         await conn.execute("INSERT INTO spvs (id, org_id, deal_id, name) VALUES ($1, $2, $3, $4)",
                            SPV_A, ORG_A, DEAL_A, "AUTHZ1 verify SPV")
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {U_MEMBER: (ORG_A, {"member"}), U_DUP: (ORG_A, {"member"}), U_STAFF: (ORG_A, {"investment_staff"}), U_ORGADMIN: (ORG_A, {"org_admin"}), U_SUPER: (ORG_A, {"super_admin"}), U_NOROLE: (ORG_A, set()), U_PENDING: (ORG_A, set(), False), U_OTHER: (ORG_B, {"member"})})
     return roles
 
 

@@ -1,0 +1,389 @@
+{
+ "portfolio.adviser_quotes": [
+  "execution.teardown"
+ ],
+ "portfolio.catalog_models": [
+  "models.teardown"
+ ],
+ "portfolio.catalog_versions": [
+  "models.teardown"
+ ],
+ "portfolio.liabilities": [
+  "crm.demo_teardown"
+ ],
+ "portfolio.model_column_mappings": [
+  "models.teardown"
+ ],
+ "portfolio.model_events": [
+  "models.teardown"
+ ],
+ "portfolio.model_library_entries": [
+  "models.teardown"
+ ],
+ "portfolio.model_provider_events": [
+  "models.teardown"
+ ],
+ "portfolio.model_providers": [
+  "models.teardown"
+ ],
+ "portfolio.model_publishing_gates": [
+  "models.teardown"
+ ],
+ "portfolio.model_sleeves": [
+  "models.teardown"
+ ],
+ "portfolio.model_subscriptions": [
+  "models.teardown"
+ ],
+ "portfolio.model_upload_events": [
+  "models.teardown"
+ ],
+ "portfolio.model_uploads": [
+  "models.teardown"
+ ],
+ "portfolio.model_version_positions": [
+  "models.teardown"
+ ],
+ "portfolio.model_versions": [
+  "models.teardown"
+ ],
+ "portfolio.models": [
+  "models.teardown"
+ ],
+ "portfolio.note_replicability": [
+  "execution.teardown"
+ ],
+ "portfolio.option_contracts": [
+  "execution.teardown"
+ ],
+ "portfolio.option_package_legs": [
+  "execution.teardown"
+ ],
+ "portfolio.option_packages": [
+  "execution.teardown"
+ ],
+ "portfolio.provider_fee_accruals": [
+  "models.teardown"
+ ],
+ "portfolio.provider_fee_invoice_lines": [
+  "models.teardown"
+ ],
+ "portfolio.provider_fee_invoices": [
+  "models.teardown"
+ ],
+ "portfolio.provider_subscriptions": [
+  "models.teardown"
+ ],
+ "portfolio.replica_holdings_rows": [
+  "replica.teardown"
+ ],
+ "portfolio.replica_holdings_snapshots": [
+  "replica.teardown"
+ ],
+ "portfolio.replica_model_specs": [
+  "models.teardown"
+ ],
+ "portfolio.replica_refresh_events": [
+  "replica.teardown"
+ ],
+ "portfolio.replica_registry_keys": [
+  "models.teardown"
+ ],
+ "portfolio.replica_source_documents": [
+  "replica.teardown"
+ ],
+ "portfolio.replica_term_readings": [
+  "replica.teardown"
+ ],
+ "portfolio.replica_terms_actions": [
+  "replica.teardown"
+ ],
+ "portfolio.replica_terms_versions": [
+  "replica.teardown"
+ ],
+ "portfolio.replica_viability_reports": [
+  "models.teardown"
+ ],
+ "public.account_authority_settings": [
+  "execution.teardown"
+ ],
+ "public.account_lot_method_settings": [
+  "execution.teardown"
+ ],
+ "public.account_model_links": [
+  "execution.teardown"
+ ],
+ "public.account_transition_plans": [
+  "execution.teardown"
+ ],
+ "public.agreement_templates": [
+  "dealroom.signature_teardown"
+ ],
+ "public.agreement_versions": [
+  "dealroom.signature_teardown"
+ ],
+ "public.allocation_corrections": [
+  "execution.teardown"
+ ],
+ "public.allocation_policies": [
+  "execution.teardown"
+ ],
+ "public.backtests": [
+  "execution.teardown"
+ ],
+ "public.block_allocations": [
+  "execution.teardown"
+ ],
+ "public.block_charges": [
+  "execution.teardown"
+ ],
+ "public.block_events": [
+  "execution.teardown"
+ ],
+ "public.block_fills": [
+  "execution.teardown"
+ ],
+ "public.borrow_rates": [
+  "execution.teardown"
+ ],
+ "public.cash_obligations": [
+  "crm.demo_teardown"
+ ],
+ "public.cash_payees": [
+  "payees.teardown"
+ ],
+ "public.cash_policies": [
+  "crm.demo_teardown"
+ ],
+ "public.cash_rule_firings": [
+  "cash_rules.teardown"
+ ],
+ "public.cash_rules": [
+  "cash_rules.teardown"
+ ],
+ "public.charitable_donees": [
+  "execution.teardown"
+ ],
+ "public.completion_settings": [
+  "execution.teardown"
+ ],
+ "public.custodian_capabilities": [
+  "execution.teardown"
+ ],
+ "public.deal_room_activity": [
+  "dealroom.activity_teardown"
+ ],
+ "public.deal_room_watermarks": [
+  "dealroom.activity_teardown"
+ ],
+ "public.deal_signatures": [
+  "dealroom.signature_teardown"
+ ],
+ "public.declared_outside_trades": [
+  "execution.teardown"
+ ],
+ "public.disclosure_acknowledgements": [
+  "execution.teardown"
+ ],
+ "public.disclosure_versions": [
+  "execution.teardown"
+ ],
+ "public.disclosures": [
+  "execution.teardown"
+ ],
+ "public.entities": [
+  "crm.demo_teardown"
+ ],
+ "public.entity_addresses": [
+  "crm.demo_teardown"
+ ],
+ "public.entity_attributes": [
+  "crm.demo_teardown"
+ ],
+ "public.entity_notes": [
+  "crm.demo_teardown"
+ ],
+ "public.entity_ownership": [
+  "crm.demo_teardown"
+ ],
+ "public.entity_relationships": [
+  "crm.demo_teardown"
+ ],
+ "public.execution_accounts": [
+  "execution.teardown"
+ ],
+ "public.execution_fills": [
+  "execution.teardown"
+ ],
+ "public.execution_instruction_events": [
+  "execution.teardown"
+ ],
+ "public.execution_instruction_lots": [
+  "execution.teardown"
+ ],
+ "public.execution_instructions": [
+  "execution.teardown"
+ ],
+ "public.gift_lots": [
+  "execution.teardown"
+ ],
+ "public.gift_proposals": [
+  "execution.teardown"
+ ],
+ "public.harvest_candidates": [
+  "execution.teardown"
+ ],
+ "public.harvest_runs": [
+  "execution.teardown"
+ ],
+ "public.held_away_imports": [
+  "execution.teardown"
+ ],
+ "public.held_away_records": [
+  "execution.teardown"
+ ],
+ "public.held_away_sources": [
+  "execution.teardown"
+ ],
+ "public.household_authority": [
+  "execution.teardown"
+ ],
+ "public.household_lot_method": [
+  "execution.teardown"
+ ],
+ "public.household_memberships": [
+  "crm.demo_teardown"
+ ],
+ "public.households": [
+  "crm.demo_teardown"
+ ],
+ "public.hypothetical_performance_policies": [
+  "execution.teardown"
+ ],
+ "public.instruction_settlements": [
+  "execution.teardown"
+ ],
+ "public.journal_lines": [
+  "ledger.teardown"
+ ],
+ "public.long_short_proposals": [
+  "execution.teardown"
+ ],
+ "public.long_short_settings": [
+  "execution.teardown"
+ ],
+ "public.loss_bank_entries": [
+  "execution.teardown"
+ ],
+ "public.loss_carryforwards": [
+  "execution.teardown"
+ ],
+ "public.note_check_settings": [
+  "execution.teardown"
+ ],
+ "public.note_checks": [
+  "execution.teardown"
+ ],
+ "public.note_replica_comparisons": [
+  "execution.teardown"
+ ],
+ "public.note_replica_legs": [
+  "execution.teardown"
+ ],
+ "public.note_replicas": [
+  "execution.teardown"
+ ],
+ "public.option_settlement_entries": [
+  "execution.teardown"
+ ],
+ "public.options_tax_gate_results": [
+  "execution.teardown"
+ ],
+ "public.payment_events": [
+  "payments.teardown"
+ ],
+ "public.payment_instructions": [
+  "payments.teardown"
+ ],
+ "public.rebalance_proposal_trades": [
+  "execution.teardown"
+ ],
+ "public.rebalance_proposals": [
+  "execution.teardown"
+ ],
+ "public.section351_asset_classes": [
+  "execution.teardown"
+ ],
+ "public.section351_basis_records": [
+  "execution.teardown"
+ ],
+ "public.section351_plan_accounts": [
+  "execution.teardown"
+ ],
+ "public.section351_plans": [
+  "execution.teardown"
+ ],
+ "public.section351_settings": [
+  "execution.teardown"
+ ],
+ "public.section351_sponsor_profiles": [
+  "execution.teardown"
+ ],
+ "public.section351_tracker_steps": [
+  "execution.teardown"
+ ],
+ "public.section351_transfers": [
+  "execution.teardown"
+ ],
+ "public.sod_decisions": [
+  "sod.teardown"
+ ],
+ "public.sod_rules": [
+  "sod.teardown"
+ ],
+ "public.stale_confirmations": [
+  "execution.teardown"
+ ],
+ "public.substitution_denials": [
+  "execution.teardown"
+ ],
+ "public.substitution_set_candidates": [
+  "execution.teardown"
+ ],
+ "public.substitution_sets": [
+  "execution.teardown"
+ ],
+ "public.suitability_records": [
+  "execution.teardown"
+ ],
+ "public.tax_profiles": [
+  "execution.teardown"
+ ],
+ "public.tilt_lines": [
+  "execution.teardown"
+ ],
+ "public.tilt_sets": [
+  "execution.teardown"
+ ],
+ "public.trade_blocks": [
+  "execution.teardown"
+ ],
+ "public.workflow_autonomy_settings": [
+  "sod.teardown"
+ ],
+ "public.workflow_template_copies": [
+  "workflow_templates.teardown"
+ ],
+ "public.workflow_template_versions": [
+  "workflow_templates.teardown"
+ ],
+ "public.workflow_templates": [
+  "workflow_templates.teardown"
+ ],
+ "public.xray_lines": [
+  "execution.teardown"
+ ],
+ "public.xray_runs": [
+  "execution.teardown"
+ ]
+}

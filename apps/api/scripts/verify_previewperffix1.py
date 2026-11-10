@@ -87,6 +87,13 @@ def self_checks(check, find) -> None:
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 HYDRATE_ERROR = hydrate()
@@ -234,7 +241,8 @@ async def leftovers() -> int:
 
 
 async def counts(conn) -> dict:
-    return {t: await scoped(conn, f"SELECT count(*) FROM public.{t}", many=False) for t in COUNTED}
+    return {t: await scoped(conn, VSC.count_sql(f"public.{t}", [FIX_ORG], [U_MAIN, U_PLACE]), many=False)
+            for t in COUNTED}
 
 
 async def seed() -> None:
@@ -268,6 +276,20 @@ async def mutate(sql: str, *args) -> None:
             await op.execute(sql, *args)
     finally:
         await op.close()
+
+
+async def set_super(on: bool) -> None:
+    """VERIFYFIX1 (bugfix4: user_roles is the ONE role source) — make U_MAIN a Super Admin (or not) the way People &
+    Access does: its GRANT of the org's super_admin role, users.role mirrored by rbac.sync_role_string. Writing
+    ``users.role`` alone (this script's pre-bugfix4 form) no longer changes anyone's standing."""
+    async def _do(op, uid, org):
+        if on:
+            await rbac.grant_named_role(op, uid, org, "super_admin")
+        else:
+            await op.execute("DELETE FROM user_roles WHERE user_id = $1 AND role_id IN (SELECT id FROM roles WHERE "
+                             "org_id = $2 AND name = 'super_admin')", uid, org)
+        await rbac.sync_role_string(op, uid)
+    await rbac_call(_do, U_MAIN, FIX_ORG)
 
 
 async def rbac_call(fn, *args) -> None:
@@ -367,13 +389,14 @@ async def y_app(conn) -> None:
           "org_admin granted -> role + manage_org_settings on the next request; revoked -> both gone on the next",
           f"granted {getattr(pa, 'roles', None)}; revoked {getattr(pb, 'roles', None)}")
     catalog = {r["name"] for r in await scoped(conn, "SELECT name FROM permissions")}
-    await mutate("UPDATE users SET role = 'super_admin' WHERE id = $1", U_MAIN)
+    await set_super(True)
     _, _, pc = await api(SUB_MAIN, "GET", "/api/v1/users/me")
-    await mutate("UPDATE users SET role = 'member' WHERE id = $1", U_MAIN)
+    await set_super(False)
     _, _, pd = await api(SUB_MAIN, "GET", "/api/v1/users/me")
     check(pc is not None and pc.is_super_admin and set(pc.permissions) == catalog and pd is not None
           and not pd.is_super_admin and not pd.permissions,
-          "super_admin set -> is_super + the whole catalog on the next request; unset -> neither on the next",
+          "super_admin granted (user_roles) -> is_super + the whole catalog on the next request; revoked -> neither "
+          "on the next",
           f"set {getattr(pc, 'is_super_admin', None)} {len(getattr(pc, 'permissions', ()))}/{len(catalog)}; "
           f"unset {getattr(pd, 'is_super_admin', None)} {len(getattr(pd, 'permissions', ()))}")
     await mutate("UPDATE users SET status = 'pending' WHERE id = $1", U_MAIN)
@@ -388,7 +411,7 @@ async def y_app(conn) -> None:
 
 async def y_timing(conn) -> None:
     section("[Y] (4) bulkfetchui's live preview through the app: best of 3 < 2 s (limit fixed)")
-    await mutate("UPDATE users SET role = 'super_admin' WHERE id = $1", U_MAIN)
+    await set_super(True)
     try:
         last = await eb.last_indexed_date(conn)
         body = {"banks": ["JPMorgan"], "from": "2025-01-01", "to": min(last, date(2025, 12, 31)).isoformat(),
@@ -426,7 +449,7 @@ async def y_timing(conn) -> None:
         check(best < LIMIT_SECONDS * 1000, f"end to end best of 3 < {LIMIT_SECONDS:g} s",
               f"best {best:.0f} ms; load by round {loads}")
     finally:
-        await mutate("UPDATE users SET role = 'member' WHERE id = $1", U_MAIN)
+        await set_super(False)
 
 
 def y_bulkfetchui_full(worker_ok: bool) -> None:
@@ -446,13 +469,14 @@ def y_bulkfetchui_full(worker_ok: bool) -> None:
     except subprocess.TimeoutExpired as exc:
         code, out, err = 124, (exc.stdout or b"").decode() if isinstance(exc.stdout, bytes) else (exc.stdout or ""), \
             f"timeout after {SUB_TIMEOUT}s"
-    m = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+    nt = VT.nested_total(out, None if code == 124 else code)  # its OWN final ^TOTAL line + exit code
+    m = [(str(nt.passed), str(nt.failed))] if nt.line else []
     fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
     timing = [ln.strip() for ln in out.splitlines() if "live preview" in ln or ln.strip().startswith("round ")]
-    print(f"[INFO] verify_bulkfetchui.py: exit {code}, {time.monotonic() - t0:.0f} s, {m[-1] if m else 'no TOTAL'}")
+    print(f"[INFO] verify_bulkfetchui.py: exit {code}, {time.monotonic() - t0:.0f} s, {nt.detail()}")
     for ln in timing:
         print(f"    {ln}")
-    check(code == 0 and bool(m) and m[-1][1] == "0", "verify_bulkfetchui.py full run: exit 0, 0 FAIL "
+    check(code == 0 and nt.ok, "verify_bulkfetchui.py full run: exit 0, 0 FAIL "
           "(includes 'live preview returns under 2 s')", f"exit {code}; {fails[:5]}; {(out + err)[-600:]}")
 
 
@@ -472,6 +496,8 @@ async def run() -> None:
         await y_equivalence(conn)
         instrument()
         await seed()
+        # VERIFYFIX1 (bugfix4) — the app decides both fixture logins as the seed means: plain members, no grant.
+        await VR.check_roles_as_meant(conn, check, {U_MAIN: (FIX_ORG, set()), U_PLACE: (FIX_ORG, set())})
         await y_app(conn)
         if worker_ok:
             await y_timing(conn)
