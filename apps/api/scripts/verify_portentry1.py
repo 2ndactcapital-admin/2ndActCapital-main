@@ -53,6 +53,7 @@ sys.path.insert(0, str(API_DIR))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "portentry1"
@@ -359,7 +360,9 @@ E = {
 }
 HH_A = _id(60)
 ACC_HA, ACC_INT, ACC_MEM = _id(70), _id(71), _id(72)
-AS_OF = date.today()
+#: VERIFYFIX1 (docs/VERIFY_RULES.md rule 3: dates at the call) — the fixture anchor date, captured by seed() when
+#: the fixtures are written; never fixed at import (a run crossing midnight).
+AS_OF: date | None = None
 
 COUNTED = ("public.users", "public.organizations", "public.entities", "public.entity_relationships",
            "public.entity_attributes", "public.entity_addresses", "public.entity_notes", "public.households",
@@ -561,6 +564,8 @@ async def y_catalog(conn):
 
 
 async def seed(conn) -> None:
+    global AS_OF
+    AS_OF = date.today()   # VERIFYFIX1 rule 3 — captured when the fixtures are written
     from services import rbac
 
     async with conn.transaction():
@@ -612,6 +617,9 @@ async def seed(conn) -> None:
         # this script's fixture security in the platform master (the relink target) — NEVER the product's
         await conn.execute("INSERT INTO portfolio.securities_global (id, name, security_type, canonical_id) "
                            "VALUES ($1, $2, 'fund', $1)", FIX_SEC, NAME + "Fixture Muni Fund")
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: {"org": org, "roles": {rname}, "has": perms} for uid, (org, _a, _n, rname, perms) in USERS.items()})
 
 
 async def y_fixtures(conn):

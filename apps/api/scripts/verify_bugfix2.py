@@ -51,6 +51,7 @@ sys.path.insert(0, str(HERE))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "bugfix2"
@@ -607,6 +608,9 @@ async def seed(conn) -> None:
                                "bpmn_xml, is_current) VALUES ($1, $2, $3, 1, $4, true)", vid, wid, ORG_A, bpmn)
         await conn.execute("INSERT INTO workflow_runs (id, workflow_version_id, org_id) VALUES ($1, $2, $3)",
                            WFR_RUN, WFV_RUN, ORG_A)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {U_SUPER: (ORG_A, {"super_admin"}), U_STAFF: (ORG_A, {"investment_staff"}), U_ORGADMIN: (ORG_A, {"org_admin"}), U_MEMBER: (ORG_A, {"member"}), U_MEMBER2: (ORG_A, {"member"}), U_OTHER: (ORG_B, {"member"})})
 
 
 async def y_fixtures_are_test(conn):

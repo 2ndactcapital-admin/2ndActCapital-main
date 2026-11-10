@@ -58,6 +58,7 @@ sys.path.insert(0, str(HERE))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "bugfix1"
@@ -362,6 +363,10 @@ async def seed(conn) -> None:
             await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", uid, roles[(ORG_A, rname)])
         await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", U_OTHER, roles[(ORG_B, "member")])
         await rbac.grant_org_admin(conn, U_ORGADMIN, ORG_A)
+        # VERIFYFIX1 (bugfix4: user_roles is the ONE role source) — the restorer is a Super Admin by its GRANT of the
+        # default org's EXISTING super_admin role (reused, never created: a fixture user_roles row, removed with the
+        # fixture user); the users.role string alone no longer makes anyone a Super Admin.
+        await rbac.grant_named_role(conn, U_RESTORER, DEFAULT_ORG, "super_admin")
 
         # the deal_stages config (labels), in lifecycle order; one investment stage
         for i, label in enumerate(["Sourced", "Submitted", "Under Review", "Active", "Closed", "Archived"]):
@@ -468,6 +473,9 @@ async def seed(conn) -> None:
             await conn.execute(
                 "INSERT INTO portfolio.commitments (id, org_id, position_id, commitment_amount, called_to_date, "
                 "unfunded) VALUES ($1, $2, $3, 1000000, 250000, 750000)", cid, ORG_A, pid)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {U_SUPER: (ORG_A, {"super_admin"}), U_STAFF: (ORG_A, {"investment_staff"}), U_ORGADMIN: (ORG_A, {"admin", "org_admin"}), U_MEMBER: (ORG_A, {"member"}), U_MEMBER2: (ORG_A, {"member"}), U_OTHER: (ORG_B, {"member"}), U_NOROLE: (ORG_A, set()), U_RESTORER: (DEFAULT_ORG, {"super_admin"})})
 
 
 # ═══ The real app, token stubbed by bearer string ══════════════════════════

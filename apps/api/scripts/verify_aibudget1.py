@@ -240,8 +240,14 @@ async def db_today(conn) -> date:
     return await conn.fetchval(f"SELECT {AB.BUDGET_DAY_SQL}")
 
 
+#: VERIFYFIX1 — the two ledgers every REAL model call / the daily document-reading run writes: counted over this
+#: script's own fixture deployments / task keys (plus its users) only.
+FIXTURE_EXTRA = {"public.ai_daily_usage": f"deployment LIKE '{FX}%'", "public.ai_daily_runs": f"task_key LIKE '{FXT}%'"}
+
+
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, VSC.count_sql(t, [ORG], list(USERS)), fetch="fetchval")) for t in COUNTED}
+    return {t: int(await platform(conn, VSC.count_sql(t, [ORG], list(USERS), FIXTURE_EXTRA.get(t)), fetch="fetchval"))
+            for t in COUNTED}
 
 
 async def fingerprint(conn, sql, *args) -> tuple[int, str]:
@@ -619,8 +625,8 @@ async def y_schema(conn):
                                                        "tablename = $1", t)}
         check(cmds == {"SELECT", "INSERT", "UPDATE", "DELETE"}, f"public.{t}: a policy for every operation",
               f"{sorted(cmds)}")
-        seen = await conn.fetchval(f"SELECT count(*) FROM public.{t}")   # no super-admin context
-        total = await platform(conn, f"SELECT count(*) FROM public.{t}", fetch="fetchval")
+        seen = await conn.fetchval(f"SELECT count(*) FROM public.{t}")   # no super-admin context  (rls-read)
+        total = await platform(conn, f"SELECT count(*) FROM public.{t}", fetch="fetchval")  # rls-read
         check(int(seen) == 0 and (int(total) >= 0), f"public.{t}: invisible without super-admin context (RLS)",
               f"without={seen} with={total}")
 

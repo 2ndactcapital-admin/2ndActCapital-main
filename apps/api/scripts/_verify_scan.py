@@ -41,11 +41,11 @@ import _verify_scope as VSC  # noqa: E402  (stdlib only)
 BARE_RE = re.compile(r"^verify_[A-Za-z0-9_]+\.py$")
 COUNT_RE = re.compile(r"count\(\s*\*\s*\)(?:\s+AS\s+\w+)?\s+FROM\s+((?:public\.|portfolio\.)?\w+)\b(.*)$",
                       re.I | re.S)
-GENERIC_WHOLE_RE = re.compile(r"count\(\s*\*\s*\)\s+FROM\s+\{[^}]+\}\s*$", re.I)
+GENERIC_WHOLE_RE = re.compile(r"count\(\s*\*\s*\)\s+FROM\s+(?:\w+\.)?\{[^}]+\}\s*$", re.I)
 UPDATE_ROLE_RE = re.compile(r"UPDATE\s+(?:public\.)?users\s+SET\b[^;]*?\brole\s*=", re.I | re.S)
 INSERT_USERS_RE = re.compile(r"INSERT\s+INTO\s+(?:public\.)?users\s*\(", re.I)
 GRANT_RE = re.compile(r"grant_named_role\s*\(|grant_org_admin\s*\(|INSERT\s+INTO\s+(?:public\.)?user_roles\b", re.I)
-DECIDES_RE = re.compile(r"VR\.check_roles_as_meant\s*\(|decides as meant")
+DECIDES_RE = re.compile(r"VR\.check_roles_as_meant\s*\(|decides as meant|grant the app decides from")
 BESPOKE_TOTAL_RE = re.compile(r"re\.(?:findall|search|match)\(\s*r?[\"']\^?TOTAL")
 NESTED_RUN_RE = re.compile(r"[\"'](?:verify_[A-Za-z0-9_]+\.py)[\"']")
 GUC_RE = re.compile(r"[\"']([a-z_]+\.[a-z_]*teardown[a-z_]*)[\"']")
@@ -149,7 +149,12 @@ def scan_file(path: pathlib.Path) -> dict:
 
     # COUNTS
     unscoped = []
+    src_lines = src.split("\n")
     for ln, s, is_f in strings:
+        # a deliberate whole-table read under an RLS context (an RLS visibility proof, never a before/after count)
+        # is marked "rls-read" on its line
+        if 0 < ln <= len(src_lines) and "rls-read" in src_lines[ln - 1]:
+            continue
         if GENERIC_WHOLE_RE.search(s.strip().rstrip('"')):
             unscoped.append((ln, "generic f\"SELECT count(*) FROM {t}\""))
             continue

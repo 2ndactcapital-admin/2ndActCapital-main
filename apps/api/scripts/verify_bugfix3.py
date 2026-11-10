@@ -51,6 +51,7 @@ sys.path.insert(0, str(API_DIR))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "bugfix3"
@@ -635,6 +636,8 @@ async def y_catalog(conn):
 
 
 async def seed(conn) -> None:
+    global AS_OF
+    AS_OF = date.today()   # VERIFYFIX1 rule 3 — captured when the fixtures are written
     from services import rbac
 
     async with conn.transaction():
@@ -690,6 +693,9 @@ async def seed(conn) -> None:
                 "$4, $5, $6, $7, $8, $9, false)", aid, ORG_A, HH1, mask,
                 hashlib.sha256(f"{TAG}{mask}".encode()).hexdigest(), ACCOUNT_VALUES["custodian_code"],
                 ACCOUNT_VALUES["registration_type"], ACCOUNT_VALUES["tax_status"], owner)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: {"org": org, "roles": {rname}, "has": perms} for uid, (org, _a, _n, rname, perms) in USERS.items()})
 
 
 async def y_fixtures(conn):
@@ -781,7 +787,9 @@ async def y_role_is_real(conn):
           f"{r['u']}")
 
 
-AS_OF = date.today()
+#: VERIFYFIX1 (docs/VERIFY_RULES.md rule 3: dates at the call) — the fixture anchor date, captured by seed() when
+#: the fixtures are written; never fixed at import (a run crossing midnight).
+AS_OF: date | None = None
 
 
 async def seed_holdings(conn):

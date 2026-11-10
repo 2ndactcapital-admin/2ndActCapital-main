@@ -40,6 +40,9 @@ LIVE_WRITTEN: dict[str, tuple[str | None, tuple[str, ...]]] = {
     "public.user_identities": ("org_id", ("user_id",)),
     "public.assistant_conversations": ("org_id", ("user_id",)),
     "public.ai_daily_runs": (None, ("started_by",)),
+    # no org / user column: every real model call upserts its (day, deployment) row — scoped by the caller's
+    # ``extra`` predicate (its own fixture deployments) or not countable at all
+    "public.ai_daily_usage": (None, ()),
 }
 
 #: the three the regression gate names explicitly (verify_verifyfix1 (3)).

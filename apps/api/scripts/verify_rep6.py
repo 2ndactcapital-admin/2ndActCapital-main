@@ -1982,7 +1982,7 @@ async def y_isolation(conn):
     others = {}
     for t in ("harvest_runs", "harvest_candidates", "loss_bank_entries", "substitution_sets", "substitution_denials",
               "declared_outside_trades", "loss_carryforwards"):
-        others[t] = (int(await scoped(conn, ORG_A, f"SELECT count(*) FROM public.{t}", fetch="fetchval")),
+        others[t] = (int(await scoped(conn, ORG_A, f"SELECT count(*) FROM public.{t}", fetch="fetchval")),  # rls-read
                      int(await scoped(conn, ORG_B, f"SELECT count(*) FROM public.{t} WHERE org_id = $1", ORG_A,
                                       fetch="fetchval")))
     check(cb == 201 and int(a_in_a) > 0 and int(b_in_b) > 0 and int(b_in_a) == 0 and int(a_in_b) == 0

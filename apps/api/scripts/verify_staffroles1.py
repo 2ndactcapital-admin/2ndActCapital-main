@@ -49,6 +49,7 @@ sys.path.insert(0, str(HERE))
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
 import _verify_total as VT  # noqa: E402  (stdlib only)
+import _verify_roles as VR  # noqa: E402  — every fixture role is a user_roles grant the app decides as meant
 import _verify_scope as VSC  # noqa: E402  (stdlib only) — live-written tables counted by fixture ids
 
 SPRINT_KEY = "staffroles1"
@@ -604,6 +605,9 @@ async def seed(conn) -> None:
             await conn.execute("INSERT INTO profile_permissions (org_id, profile_id, permission_key) "
                                "VALUES ($1, $2, $3)", ORG_A, P_STAFFONLY, k)
         await conn.execute("UPDATE users SET profile_id = $1 WHERE id = $2", P_STAFFONLY, U_SUPPORT)
+    # VERIFYFIX1 (bugfix4: public.user_roles is the ONE role source; users.role only mirrors it) — assert the APP
+    # decides every fixture user as the seed means (grants exactly, Super Admin / staff / permissions).
+    await VR.check_roles_as_meant(conn, check, {uid: {"org": org, "roles": {rname}, "has": perms} for uid, (org, _a, _n, rname, perms) in USERS.items()})
 
 
 async def y_fixtures(conn):
