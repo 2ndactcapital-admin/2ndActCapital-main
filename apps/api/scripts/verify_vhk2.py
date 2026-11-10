@@ -364,6 +364,11 @@ def y_range(rows, check) -> None:
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 
 #: the same query run_regressions.sh's DEFAULT_WORKER_CHECK runs, in a subprocess of this interpreter
 #: VHK2 FIX 1: the DSN is hydrated from Doppler over HTTPS and probed (``_db_connect.admin_dsn``), the way every other

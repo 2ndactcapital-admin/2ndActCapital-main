@@ -157,6 +157,11 @@ def self_checks(check, find):
 if __name__ == "__main__" and VS.requested():
     sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
 
+# VERIFYFIX1 — TOTAL on every exit path (a crash at import, an early sys.exit, a SIGTERM from `timeout` included).
+import _verify_total as VT  # noqa: E402  (stdlib only)
+if __name__ == "__main__":
+    VT.install_guard(lambda: (globals().get("_n_pass", 0), globals().get("_n_fail", 0)))
+
 from _db_bootstrap import bootstrap_async  # noqa: E402  (also puts apps/api on sys.path)
 
 import asyncpg  # noqa: E402

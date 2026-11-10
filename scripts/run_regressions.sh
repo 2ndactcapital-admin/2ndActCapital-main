@@ -5,16 +5,25 @@
 #
 #     bash scripts/run_regressions.sh
 #
-# Runs every script named in scripts/regression_set.txt (one verify_*.py name per
-# line; blank lines and # comments ignored), ONE AFTER ANOTHER, in the
-# foreground, each as
+# Runs every script named in scripts/regression_set.txt (one BARE verify_*.py name
+# per line, resolved in apps/api/scripts/; blank lines and # comments ignored),
+# ONE AFTER ANOTHER, in the foreground, each as
 #
-#     VERIFY_NESTED=1 timeout 1200 doppler run -p hollisworks -c prd -- \
+#     VERIFY_NESTED=1 timeout 1800 doppler run -p hollisworks -c prd -- \
 #         apps/api/venv/bin/python -u apps/api/scripts/<name>
 #
 # with its full output in sprint_prompts/logs/regressions/<YYYY-MM-DD>/<name>.out.
-# Prints one line per script — name, PASS n, FAIL m, seconds (or TIMEOUT / CRASH)
-# — then a summary, and exits 1 if any script failed, timed out or crashed.
+# Prints one line per script as it finishes — name, PASS n, FAIL m, seconds (or
+# TIMEOUT / CRASH) — KEEPS GOING after a failing script, then prints the per-verify
+# TOTAL table again and a final summary, and exits 1 if any script failed, timed
+# out or crashed. Everything it prints is also written to
+# sprint_prompts/logs/regressions_<YYYY-MM-DD>.out (VERIFYFIX1).
+#
+# THE LIST IS CHECKED FIRST (VERIFYFIX1): an entry that is not a bare verify_*.py
+# name, names no file in apps/api/scripts/, or is listed twice stops the run with
+# exit 2 and every bad entry printed — NOTHING is run (a typo never silently
+# shrinks the suite; the 2026-11 list mixed bare names and paths, and the paths
+# resolved to apps/api/scripts/apps/api/scripts/… — a CRASH for each).
 #
 # BEFORE STARTING it checks for a laptop bulk worker heartbeating in the last
 # 120 s (portfolio.edgar_fetch_workers): the bulkfetchui verifies refuse to run
@@ -26,7 +35,8 @@
 #   REGRESSION_SCRIPTS_DIR   where the scripts live   (apps/api/scripts)
 #   REGRESSION_RUNNER        command prefix           (doppler run … -- apps/api/venv/bin/python -u)
 #   REGRESSION_LOG_ROOT      log root                 (sprint_prompts/logs/regressions)
-#   REGRESSION_TIMEOUT       seconds per script       (1200)
+#   REGRESSION_TIMEOUT       seconds per script       (1800)
+#   REGRESSION_SUMMARY_OUT   the summary file         (sprint_prompts/logs/regressions_<date>.out)
 #   REGRESSION_WORKER_CHECK  command printing the number of live laptop workers
 set -u
 
@@ -36,8 +46,10 @@ cd "$REPO" || exit 2
 LIST="${REGRESSION_SET:-$REPO/scripts/regression_set.txt}"
 SCRIPTS_DIR="${REGRESSION_SCRIPTS_DIR:-$REPO/apps/api/scripts}"
 RUNNER="${REGRESSION_RUNNER:-doppler run -p hollisworks -c prd -- $REPO/apps/api/venv/bin/python -u}"
-LOG_DIR="${REGRESSION_LOG_ROOT:-$REPO/sprint_prompts/logs/regressions}/$(date +%Y-%m-%d)"
-TIMEOUT_S="${REGRESSION_TIMEOUT:-1200}"
+DAY="$(date +%Y-%m-%d)"
+LOG_DIR="${REGRESSION_LOG_ROOT:-$REPO/sprint_prompts/logs/regressions}/$DAY"
+SUMMARY_OUT="${REGRESSION_SUMMARY_OUT:-$REPO/sprint_prompts/logs/regressions_$DAY.out}"
+TIMEOUT_S="${REGRESSION_TIMEOUT:-1800}"
 DEFAULT_WORKER_CHECK="doppler run -p hollisworks -c prd -- $REPO/apps/api/venv/bin/python -c '
 import asyncio, os, asyncpg
 async def main():
@@ -57,6 +69,35 @@ if [[ ! -f "$LIST" ]]; then
   exit 2
 fi
 
+# ── the list, checked BEFORE anything runs ───────────────────────────────────
+names=()
+bad=()
+declare -A seen=()
+while IFS= read -r raw || [[ -n "$raw" ]]; do
+  name="${raw%%#*}"
+  name="$(echo "$name" | tr -d '[:space:]')"
+  [[ -z "$name" ]] && continue
+  if [[ ! "$name" =~ ^verify_[A-Za-z0-9_]+\.py$ ]]; then
+    bad+=("not a bare verify_*.py name: '$name'")
+  elif [[ ! -f "$SCRIPTS_DIR/$name" ]]; then
+    bad+=("no such script: '$name' (looked in $SCRIPTS_DIR)")
+  fi
+  if [[ -n "${seen[$name]:-}" ]]; then
+    bad+=("listed twice: '$name'")
+  fi
+  seen[$name]=1
+  names+=("$name")
+done <"$LIST"
+if (( ${#bad[@]} > 0 )); then
+  echo "run_regressions: the list $LIST has ${#bad[@]} bad entr$( (( ${#bad[@]} == 1 )) && echo y || echo ies) — NOTHING was run:" >&2
+  for b in "${bad[@]}"; do echo "  MISSING/BAD: $b" >&2; done
+  exit 2
+fi
+if (( ${#names[@]} == 0 )); then
+  echo "run_regressions: the list $LIST names no script — NOTHING was run." >&2
+  exit 2
+fi
+
 live="$(bash -c "$WORKER_CHECK" 2>/dev/null | tail -n 1 | tr -d '[:space:]')"
 if [[ ! "$live" =~ ^[0-9]+$ ]]; then
   echo "run_regressions: WARNING — could not check for a laptop bulk worker (got '${live}'). Stopping." >&2
@@ -68,14 +109,17 @@ if (( live > 0 )); then
   exit 2
 fi
 
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR" "$(dirname "$SUMMARY_OUT")"
+: >"$SUMMARY_OUT"
+say() { printf '%s\n' "$*" | tee -a "$SUMMARY_OUT"; }
+
 n_total=0; n_clean=0; n_failed=0; n_timeout=0; n_crash=0
 failed_names=()
+rows=()
+say "run_regressions: ${#names[@]} script(s) from $LIST, timeout ${TIMEOUT_S}s each, started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+say "$(printf '%-34s %-8s %-6s %-6s %s' VERIFY RESULT PASS FAIL SECONDS)"
 
-while IFS= read -r raw || [[ -n "$raw" ]]; do
-  name="${raw%%#*}"
-  name="$(echo "$name" | tr -d '[:space:]')"
-  [[ -z "$name" ]] && continue
+for name in "${names[@]}"; do
   n_total=$((n_total + 1))
   out="$LOG_DIR/$name.out"
   start=$(date +%s)
@@ -83,29 +127,35 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
   VERIFY_NESTED=1 timeout "$TIMEOUT_S" $RUNNER "$SCRIPTS_DIR/$name" >"$out" 2>&1 </dev/null
   rc=$?
   secs=$(( $(date +%s) - start ))
+  # the script's OWN final TOTAL line (anchored; the last one — _verify_total.final_total)
   total_line="$(grep -E '^TOTAL: [0-9]+ PASS, [0-9]+ FAIL' "$out" | tail -n 1)"
-  if (( rc == 124 )); then
-    printf '%-34s TIMEOUT after %ss\n' "$name" "$secs"
-    n_timeout=$((n_timeout + 1)); failed_names+=("$name")
-  elif [[ -z "$total_line" ]]; then
-    printf '%-34s CRASH (exit %s, no TOTAL line)  %ss\n' "$name" "$rc" "$secs"
-    n_crash=$((n_crash + 1)); failed_names+=("$name")
-  else
+  p="-"; f="-"
+  if [[ -n "$total_line" ]]; then
     p="$(echo "$total_line" | sed -E 's/^TOTAL: ([0-9]+) PASS, ([0-9]+) FAIL.*/\1/')"
     f="$(echo "$total_line" | sed -E 's/^TOTAL: ([0-9]+) PASS, ([0-9]+) FAIL.*/\2/')"
-    printf '%-34s PASS %-5s FAIL %-4s %ss\n' "$name" "$p" "$f" "$secs"
-    if (( f > 0 || rc != 0 )); then
-      n_failed=$((n_failed + 1)); failed_names+=("$name")
-    else
-      n_clean=$((n_clean + 1))
-    fi
   fi
-done <"$LIST"
+  if (( rc == 124 )); then
+    result="TIMEOUT"; n_timeout=$((n_timeout + 1)); failed_names+=("$name")
+  elif [[ -z "$total_line" ]]; then
+    result="CRASH"; n_crash=$((n_crash + 1)); failed_names+=("$name")
+  elif (( f > 0 || rc != 0 )); then
+    result="FAIL"; n_failed=$((n_failed + 1)); failed_names+=("$name")
+  else
+    result="PASS"; n_clean=$((n_clean + 1))
+  fi
+  row="$(printf '%-34s %-8s %-6s %-6s %ss (exit %s)' "$name" "$result" "$p" "$f" "$secs" "$rc")"
+  rows+=("$row")
+  say "$row"
+done
 
-echo "----"
-echo "SUMMARY: $n_total script(s): $n_clean clean, $n_failed with failures, $n_timeout timed out, $n_crash crashed. Logs: $LOG_DIR"
+say "----"
+say "PER-VERIFY TOTALS"
+say "$(printf '%-34s %-8s %-6s %-6s %s' VERIFY RESULT PASS FAIL SECONDS)"
+for row in "${rows[@]}"; do say "$row"; done
+say "----"
+say "SUMMARY: $n_total script(s): $n_clean clean, $n_failed with failures, $n_timeout timed out, $n_crash crashed. Logs: $LOG_DIR (summary: $SUMMARY_OUT)"
 if (( ${#failed_names[@]} > 0 )); then
-  echo "NOT CLEAN: ${failed_names[*]}"
+  say "NOT CLEAN: ${failed_names[*]}"
   exit 1
 fi
 exit 0

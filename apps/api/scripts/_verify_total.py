@@ -66,3 +66,126 @@ def nested_total(out: str, returncode: int | None) -> NestedTotal:
     if p == 0:
         return NestedTotal(False, p, f, line, "0 PASS")
     return NestedTotal(True, p, f, line, "")
+
+
+# ── VERIFYFIX1 — TOTAL on EVERY exit path, one shared guard ──────────────────────────────────────────────────────
+#
+# A verify that crashes at import (hydrate, `import main`), raises out of asyncio.run, calls sys.exit() early or is
+# killed by `timeout` used to end with no TOTAL line, and the runner reported "CRASH (no TOTAL line)" with nothing to
+# read. ``install_guard(counts)`` — called right after the --self-checks-only dispatch, before any heavy import —
+# makes every exit print one:
+#
+#   * an uncaught exception (import time included): its traceback, ``[FAIL] the verify crashed — <exc>``;
+#   * SIGTERM (``timeout``'s signal): ``[FAIL] terminated by SIGTERM (a timeout?)`` and exit 124;
+#   * at interpreter exit: if no ``TOTAL:`` line was written since the last crash, ``TOTAL: N PASS, M FAIL`` from the
+#     script's own counters (+1 FAIL for the crash / termination / a missing TOTAL).
+#
+# A script that already prints its TOTAL on every path prints exactly one (the guard watches stdout for it).
+
+import atexit as _atexit
+import os as _os
+import signal as _signal
+import sys as _sys
+import traceback as _traceback
+
+_TOTAL_SEEN_RE = re.compile(r"(?:^|\n)TOTAL: \d+ PASS, \d+ FAIL")
+_GUARD = {"installed": False, "seen": False, "extra": 0, "counts": None}
+
+
+class _StdoutWatch:
+    """Pass-through stdout that notes when a TOTAL line is written."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def write(self, s):
+        if s and "TOTAL: " in s and _TOTAL_SEEN_RE.search(s if s.startswith("\n") else "\n" + s):
+            _GUARD["seen"] = True
+        return self._inner.write(s)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _counts() -> tuple[int, int]:
+    fn = _GUARD["counts"]
+    try:
+        p, f = fn() if fn else (0, 0)
+        return int(p or 0), int(f or 0)
+    except Exception:  # noqa: BLE001 — counters not defined yet (crash at import): count from zero
+        return 0, 0
+
+
+def total_line(passed: int, failed: int) -> str:
+    return f"\nTOTAL: {passed} PASS, {failed} FAIL"
+
+
+def _at_exit() -> None:
+    if _GUARD["seen"]:          # a TOTAL line was written after the last crash / termination (if any)
+        return
+    p, f = _counts()
+    if not _GUARD["seen"] and not _GUARD["extra"]:
+        print("[FAIL] the verify exited without printing its TOTAL line")
+        f += 1
+    try:
+        print(total_line(p, f + _GUARD["extra"]), flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _excepthook(etype, value, tb) -> None:
+    _traceback.print_exception(etype, value, tb)
+    if issubclass(etype, KeyboardInterrupt):
+        print("[FAIL] interrupted (KeyboardInterrupt)")
+    else:
+        print(f"[FAIL] the verify crashed — {etype.__name__}: {value}")
+    _GUARD["extra"] += 1
+    _GUARD["seen"] = False
+
+
+def _on_sigterm(signum, frame) -> None:  # noqa: ARG001
+    print(f"[FAIL] terminated by signal {signum} (a timeout?)", flush=True)
+    _GUARD["extra"] += 1
+    _GUARD["seen"] = False
+    raise SystemExit(124)
+
+
+def install_guard(counts) -> None:
+    """Make every exit path print ``TOTAL: N PASS, M FAIL``; ``counts`` returns the script's (pass, fail) now."""
+    _GUARD["counts"] = counts
+    if _GUARD["installed"]:
+        return
+    _GUARD["installed"] = True
+    if not isinstance(_sys.stdout, _StdoutWatch):
+        _sys.stdout = _StdoutWatch(_sys.stdout)
+    _sys.excepthook = _excepthook
+    try:
+        _signal.signal(_signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):  # not the main thread — the atexit TOTAL still holds
+        pass
+    _atexit.register(_at_exit)
+
+
+def guard_installed() -> bool:
+    return bool(_GUARD["installed"])
+
+
+# ── VERIFYFIX1 — one nested-run helper: run a verify flat, judge it by its OWN final TOTAL line + exit code ────────
+
+def run_nested(script, *args: str, cwd=None, timeout: int = 2700, env_extra: dict | None = None,
+               python: str | None = None):
+    """Run ``python -u <script> *args`` in the foreground with VERIFY_NESTED=1; return (NestedTotal, out, err, code).
+
+    A timeout returns code 124 and a NestedTotal that is never ok (``nested_total(out, None)``)."""
+    import subprocess
+    env = dict(_os.environ)
+    env["VERIFY_NESTED"] = "1"
+    env.update(env_extra or {})
+    cmd = [python or _sys.executable, "-u", str(script), *args]
+    try:
+        p = subprocess.run(cmd, cwd=None if cwd is None else str(cwd), capture_output=True, text=True,
+                           timeout=timeout, env=env, stdin=subprocess.DEVNULL)
+        return nested_total(p.stdout, p.returncode), p.stdout, p.stderr, p.returncode
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        return nested_total(out, None), out, f"timeout after {timeout}s", 124

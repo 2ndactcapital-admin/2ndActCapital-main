@@ -1,5 +1,7 @@
 # The regression suite scripts/run_regressions.sh runs, one after another.
-# One apps/api/scripts/verify_*.py name per line; # starts a comment.
+# One BARE verify_*.py name per line (resolved in apps/api/scripts/ by run_regressions.sh — never a path);
+# # starts a comment. run_regressions.sh refuses the whole list, running nothing, if any entry is not a bare
+# name, does not exist, or is listed twice (VERIFYFIX1).
 # Run on the operator's schedule (weekly / before a big push), not in a sprint.
 verify_authz1.py
 verify_usermgmt1.py
@@ -54,13 +56,13 @@ verify_disclosures1.py
 verify_rep14.py
 verify_rep15.py
 verify_wftemplates1.py
-apps/api/scripts/verify_s30.py
-apps/api/scripts/verify_s29b.py
-apps/api/scripts/verify_cash01.py
-apps/api/scripts/verify_cash02.py
-apps/api/scripts/verify_cash03.py
-apps/api/scripts/verify_cash04.py
-apps/api/scripts/verify_cash05.py
-apps/api/scripts/verify_cash07.py
-apps/api/scripts/verify_cash06.py
-apps/api/scripts/verify_cash08.py
+verify_s30.py
+verify_s29b.py
+verify_cash01.py
+verify_cash02.py
+verify_cash03.py
+verify_cash04.py
+verify_cash05.py
+verify_cash07.py
+verify_cash06.py
+verify_cash08.py
