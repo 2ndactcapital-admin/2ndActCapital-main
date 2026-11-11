@@ -50,6 +50,7 @@ RECEIVER_PATH = "/api/v1/altruist/webhook"
 SIGNATURE_HEADER = "X-Altruist-Signature"
 EVENT_TYPES = {"positions": "account.positions_updated", "transactions": "account.transactions_updated"}
 ORDER_EVENT_TYPES = ("order.updated", "order.filled")
+TRANSFER_EVENT_TYPES = ("transfer.updated",)        # cpsim04 — contract §9.5
 RETRIES = 2
 BACKOFF_S = (0.5, 1.5)
 TIMEOUT_S = 15.0
@@ -87,10 +88,13 @@ def target(behaviour: dict | None) -> str | None:
     return base + RECEIVER_PATH if base.startswith("https://") else None
 
 
-def event_body(event_type: str, account_id: str, occurred_at: datetime | None = None, order: dict | None = None) -> bytes:
+def event_body(event_type: str, account_id: str, occurred_at: datetime | None = None, order: dict | None = None,
+               transfer: dict | None = None) -> bytes:
     doc = {"event_id": f"cpsim-evt-{uuid.uuid4().hex}", "event_type": event_type}
     if order is not None:       # cpsim03 — an order event names the order (contract §8.4)
         doc.update({"order_id": order["order_id"], "client_order_id": order["client_order_id"]})
+    if transfer is not None:    # cpsim04 — a transfer event names the transfer (contract §9.5)
+        doc.update({"transfer_id": transfer["transfer_id"], "client_transfer_id": transfer["client_transfer_id"]})
     doc.update({"account_id": account_id, "environment": "simulator",
                 "occurred_at": (occurred_at or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")})
     return json.dumps(doc, separators=(",", ":")).encode("utf-8")
@@ -107,11 +111,11 @@ async def _log(counterparty_id, slug, path, status, outcome, event_type, latency
 
 
 async def send_event(*, counterparty_id, slug: str, account_id: str, event_type: str, behaviour: dict | None,
-                     order: dict | None = None) -> dict:
+                     order: dict | None = None, transfer: dict | None = None) -> dict:
     """One event, signed, with retries. Returns {event_id, event_type, account_id, status, attempts, outcome}."""
     url = target(behaviour)
     key = secret()
-    body = event_body(event_type, account_id, order=order)
+    body = event_body(event_type, account_id, order=order, transfer=transfer)
     event_id = json.loads(body)["event_id"]
     path = urlsplit(url).path if url else RECEIVER_PATH
     if key is None or url is None:
@@ -194,3 +198,32 @@ async def drain(timeout: float = 120.0) -> list:
         return []
     done, _late = await asyncio.wait(tasks, timeout=timeout)
     return [t.result() for t in done if not t.cancelled()]
+
+
+# ── cpsim04: transfer events (contract §9.5) — same secret, signature, retries, log and after-response delivery ──────
+async def after_transfers(*, counterparty_id, slug: str, items: list[dict], behaviour: dict | None) -> list:
+    """One signed ``transfer.updated`` per transfer that changed, webhooks on only. ``items`` = [{transfer_id,
+    client_transfer_id, account_id (the source)}]."""
+    if not (behaviour or {}).get("webhooks_enabled"):
+        return []
+    return [await send_event(counterparty_id=counterparty_id, slug=slug, account_id=t["account_id"],
+                             event_type="transfer.updated", behaviour=behaviour, transfer=t) for t in items]
+
+
+async def _deliver_transfers(kw: dict) -> list:
+    try:
+        return await after_transfers(**kw)
+    except Exception as exc:  # noqa: BLE001 — a delivery problem never surfaces in a transfer call
+        print(f"[cpsim] transfer webhook delivery failed: {type(exc).__name__}")
+        return []
+
+
+def schedule_transfers(*, counterparty_id, slug: str, items: list[dict], behaviour: dict | None) -> asyncio.Task | None:
+    """cpsim03 fix 1's rule for transfers: delivered AFTER the transaction committed, outside the request (drain())."""
+    if not (behaviour or {}).get("webhooks_enabled") or not items:
+        return None
+    task = asyncio.get_running_loop().create_task(_deliver_transfers(
+        {"counterparty_id": counterparty_id, "slug": slug, "items": items, "behaviour": behaviour}))
+    _PENDING.add(task)
+    task.add_done_callback(_PENDING.discard)
+    return task

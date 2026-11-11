@@ -13,7 +13,7 @@ Validation (D8) — a row is ACCEPTED or REJECTED with its reason, never guessed
   * a cash row (``row_type = cash``) is the documented exception: no identifier, no security, a market value;
   * ``market_value`` blank → quantity × the last PLATFORM price (``org_id IS NULL``) on or before the as-of date, else
     "no price";
-  * a transaction ``type`` is one of the client's 7; each transacted security must have a position in the same account
+  * a transaction ``type`` is one the client maps (its 7 + cpsim04's 7 cash types); each transacted security must have a position in the same account
     (the client records a transaction only against a position — contract §3.4);
   * dates ISO ``YYYY-MM-DD``; numbers decimal strings or JSON numbers; currency three letters.
 
@@ -30,7 +30,9 @@ from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 KINDS = ("households", "accounts", "positions", "transactions")
-TXN_TYPES = ("buy", "sell", "dividend", "interest", "fee", "fee_expense", "adjustment")
+#: the client's 7 + cpsim04 D1 / D2: the cash types the client now maps (transfer / ACH / wire legs, ACH returns)
+TXN_TYPES = ("buy", "sell", "dividend", "interest", "fee", "fee_expense", "adjustment",
+             "transfer_in", "transfer_out", "ach_in", "ach_out", "wire_in", "wire_out", "ach_return")
 ROW_TYPES = ("security", "cash")
 ID_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")

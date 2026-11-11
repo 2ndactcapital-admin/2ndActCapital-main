@@ -16,6 +16,14 @@ cpsim03 — the orders API (contract §8, every field ASSUMED), same access-toke
     GET    …/v2/orders/{order_id}     {"order": {...}}
     DELETE …/v2/orders/{order_id}     cancel while working; 409 once filled / rejected / cancelled
   The outcome comes from the behaviour row (cpsim/orders.py, D6); fills move the book (D7); order webhooks (D9).
+
+cpsim04 — the transfers API (contract §9, every field ASSUMED), same access-token auth:
+    POST   …/v2/transfers                 201 a new transfer / 200 the SAME transfer on a repeat client_transfer_id
+    GET    …/v2/transfers?account_id=     {"transfers": [...]} — either leg; events loaded in ONE query
+    GET    …/v2/transfers/{transfer_id}   {"transfer": {...}}
+    DELETE …/v2/transfers/{transfer_id}   cancel while received / pending_consent; 409 otherwise
+  The lifecycle (cpsim/transfers.py): behaviour reject / consent / delay at receipt, the receiving bank's check, the
+  cash ledger (cpsim/ledger.py), settlement and ACH returns on the clock; ``transfer.updated`` webhooks after commit.
   Resources take an ACCESS token (``Bearer cpsim_at_…``); the cpsim_ key authenticates only the token endpoint. One
   response per resource (no pagination), explicit ids, ISO dates. Behaviour (D9): reject → 503 with the reason;
   delay → sleep min(delay_seconds, MAX_DELAY_S) before answering; partial / ACH do not apply to reads.
@@ -47,6 +55,7 @@ from cpsim import mirror as M
 from cpsim import oauth as O
 from cpsim import orders as SO
 from cpsim import registry as R
+from cpsim import transfers as ST
 
 LOG_KEY = "cpsim.log"
 MAX_DELAY_S = 20            # D9: a delay over the client's 15 s timeout exercises it; never longer than this
@@ -263,7 +272,7 @@ def create_app() -> FastAPI:
     sub.add_api_route("/c/{slug}/v2/transactions", _account_route("transactions", B.transactions), methods=["GET"])
 
     # ── cpsim03: the orders API (contract §8 — every field ASSUMED) ─────────────────────────────────────────────
-    async def _orders(slug: str, request: Request, tail: str, message_type: str, work):
+    async def _orders(slug: str, request: Request, tail: str, message_type: str, work, *, transfers: bool = False):
         """Access-token auth as the read API; then ``work(conn, cp, clock, behaviour)`` in ONE transaction. Behaviour
         decides an order's OUTCOME (D6) — it never turns an orders call into a 503, and delay_seconds stays a
         read-API setting. Webhooks (D9) are scheduled after the transaction commits and delivered outside the
@@ -284,7 +293,7 @@ def create_app() -> FastAPI:
                 beh = await R.behaviour(conn, cp["id"]) or {}
                 clock = await R.business_date(conn, cp["id"]) or R.today()
                 status, body, events = await work(conn, cp, clock, beh)
-        except SO.OrderError as exc:
+        except (SO.OrderError, ST.TransferError) as exc:
             log["shape_valid"] = exc.status != 422
             log["error_count"] = len(exc.errors)
             return _out(exc.status, {"detail": str(exc), **({"errors": exc.errors} if exc.errors else {})})
@@ -296,7 +305,10 @@ def create_app() -> FastAPI:
             from cpsim import webhooks as W
 
             # fix 1: delivered AFTER the transaction committed and OUTSIDE this request — the response never waits
-            W.schedule_orders(counterparty_id=cp["id"], slug=cp["slug"], items=events, behaviour=beh)
+            if transfers:
+                W.schedule_transfers(counterparty_id=cp["id"], slug=cp["slug"], items=events, behaviour=beh)
+            else:
+                W.schedule_orders(counterparty_id=cp["id"], slug=cp["slug"], items=events, behaviour=beh)
         return _out(status, body)
 
     @sub.post("/c/{slug}/v2/orders")
@@ -334,6 +346,49 @@ def create_app() -> FastAPI:
             order = await SO.cancel(conn, cp, order_id[:80])
             return 200, {"order": order}, [(order, ["order.updated"])]
         return await _orders(slug, request, "/v2/orders/{order_id}", "altruist.orders.cancel", work)
+
+    # ── cpsim04: the transfers API (contract §9 — every field ASSUMED) ─────────────────────────────────────────
+    def _tevent(t: dict) -> dict:
+        return {"transfer_id": t["transfer_id"], "client_transfer_id": t["client_transfer_id"],
+                "account_id": t["from_account_id"]}
+
+    @sub.post("/c/{slug}/v2/transfers")
+    async def transfer_create(slug: str, request: Request):
+        raw = await request.body()
+        try:
+            doc = json.loads(raw.decode("utf-8")) if raw else None
+        except (ValueError, UnicodeDecodeError):
+            doc = None
+
+        async def work(conn, cp, clock, beh):
+            t, created, events = await ST.submit(conn, cp, doc, clock=clock, behaviour=beh)
+            return (201 if created else 200), {"transfer": t}, ([_tevent(t)] if events else [])
+        return await _orders(slug, request, "/v2/transfers", "altruist.transfers.create", work, transfers=True)
+
+    @sub.get("/c/{slug}/v2/transfers")
+    async def transfer_list(slug: str, request: Request, account_id: str | None = None):
+        async def work(conn, cp, clock, beh):
+            if not account_id:
+                return 400, {"detail": "account_id is required"}, []
+            if not await B.account_exists(conn, cp["id"], account_id):
+                return 404, {"detail": "no such account in this simulated custodian's book"}, []
+            return 200, {"transfers": await ST.list_for_account(conn, cp["id"], account_id)}, []
+        return await _orders(slug, request, "/v2/transfers", "altruist.transfers.list", work, transfers=True)
+
+    @sub.get("/c/{slug}/v2/transfers/{transfer_id}")
+    async def transfer_get(slug: str, transfer_id: str, request: Request):
+        async def work(conn, cp, clock, beh):
+            return 200, {"transfer": await ST.get(conn, cp["id"], transfer_id[:80])}, []
+        return await _orders(slug, request, "/v2/transfers/{transfer_id}", "altruist.transfers.get", work,
+                             transfers=True)
+
+    @sub.delete("/c/{slug}/v2/transfers/{transfer_id}")
+    async def transfer_cancel(slug: str, transfer_id: str, request: Request):
+        async def work(conn, cp, clock, beh):
+            t = await ST.cancel(conn, cp, transfer_id[:80], clock)
+            return 200, {"transfer": t}, [_tevent(t)]
+        return await _orders(slug, request, "/v2/transfers/{transfer_id}", "altruist.transfers.cancel", work,
+                             transfers=True)
 
     return SimulatedMarker(sub)
 
