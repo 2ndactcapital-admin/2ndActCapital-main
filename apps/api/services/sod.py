@@ -692,6 +692,7 @@ VERB_DUTIES: dict[str, str] = {
     "cash.payment_submit": "write",
     "cash.payment_approve": "approve",
     "cash.payment_send": "write",
+    "cash.payment_refresh": "write",          # cpsim04 — declared, NOT registered (a person's action)
     # CASH06 — a cash rule's firing DRAFTS + SUBMITS payment instructions for a person's approval (nothing executes
     # until a different person approves; the custody cliff is unchanged): 'propose'. Engine-only (workflow_only).
     "cash.rule_fire": "propose",

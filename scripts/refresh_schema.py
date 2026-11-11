@@ -33,9 +33,12 @@ for _path in (str(API_SCRIPTS), str(API_DIR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from _db_connect import admin_dsn  # noqa: E402
+from _db_connect import operator_dsn  # noqa: E402
 
-dsn, provenance = asyncio.run(admin_dsn())
+# operator (postgres) DSN: since the RLS cutover DATABASE_URL is app_service, and
+# information_schema silently hides every table app_service holds no privilege on
+# (all of cpsim, most of litellm) — the snapshot came back 91 tables short.
+dsn, provenance = asyncio.run(operator_dsn())
 if not dsn:
     sys.exit(f"No working DATABASE_URL: {provenance}")
 os.environ["DATABASE_URL"] = dsn

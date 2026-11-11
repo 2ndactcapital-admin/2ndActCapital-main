@@ -16,8 +16,16 @@ the cpsim work runs AS role ``cpsim_app`` (cpsim.db.as_simulator) and the audit 
     PUT  /admin/counterparties/{id}/fix                     (rotate_password → a new password shown ONCE)
     PUT  /admin/counterparties/{id}/behaviour
     POST /admin/counterparties/{id}/clock/advance           one US business day (services/us_business_days); cpsim03:
-                                                             working orders re-evaluated, the response lists the fills
+                                                             working orders re-evaluated, the response lists the fills;
+                                                             cpsim04: transfers acknowledged / settled / returned and
+                                                             settled fills' cash, listed too
     GET  /admin/counterparties/{id}/orders                  cpsim03: the orders received (read-only)
+    GET  /admin/counterparties/{id}/transfers               cpsim04: the transfers a custodian received (+ cash ledger)
+    POST /admin/counterparties/{id}/transfers/{transfer_id}/consent   cpsim04 D8: "Record member consent"
+    GET  /admin/counterparties/{id}/received                cpsim04: a BANK's received transfers (+ its links)
+    POST /admin/counterparties/{id}/links                   cpsim04 D6: link a platform account to an account in a
+                                                             BANK's book (portfolio.external_references, source
+                                                             CPSIM_BANK, last-four references only)
     GET  /admin/counterparties/{id}/requests?limit=N        the request log (no bodies, no keys)
     POST /admin/counterparties/{id}/test-message            posts a sample envelope to the mirror IN-PROCESS with the
                                                              key the admin pastes (never stored) — no network
@@ -44,6 +52,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 from typing import Literal
 from uuid import UUID
 
@@ -57,7 +66,9 @@ from cpsim import book as SB
 from cpsim import db as SDB
 from cpsim import mirror as SM
 from cpsim import orders as SO
+from cpsim import ledger as LG
 from cpsim import registry as R
+from cpsim import transfers as ST
 from services.authz import require_super_admin
 from services.custody.base import parse_text
 from services.database import get_pool
@@ -71,12 +82,22 @@ GROUP_LABELS = {"connection": "Connection", "fix": "FIX session", "bank_domestic
                 "bank_international": "Bank details (international)", "behaviour": "Behaviour", "clock": "Clock"}
 TABS = [("connection", "Connection"), ("fix", "FIX"), ("bank", "Bank details"), ("behaviour", "Behaviour"),
         ("clock", "Clock"), ("activity", "Activity"), ("import_export", "Import / Export"),
-        ("connections", "Connections"), ("webhooks", "Webhooks"), ("conformance", "Conformance"), ("orders", "Orders")]
+        ("connections", "Connections"), ("webhooks", "Webhooks"), ("conformance", "Conformance"), ("orders", "Orders"),
+        ("transfers", "Transfers"), ("received", "Received")]
 #: cpsim02 — the tabs that need a BOOK (a REST + OAuth custodian type); the page enables them per type from this list
-BOOK_TABS = ["import_export", "connections", "webhooks", "conformance", "orders"]
+BOOK_TABS = ["import_export", "connections", "webhooks", "conformance", "orders", "transfers"]
+#: cpsim04 D6 — a simulated BANK keeps a book too (cash accounts) and shows what it received
+BANK_TABS = ["import_export", "received"]
+TRANSFER_STATUS_LABELS = {"received": "Received", "pending_consent": "Awaiting the member's consent",
+                          "acknowledged": "Acknowledged", "settled": "Settled", "rejected": "Rejected",
+                          "returned": "Returned", "cancelled": "Cancelled"}
+#: cpsim04 — what v1 of the simulated money movement does NOT do (shown on the Transfers tab, CPSIM_ADMIN.md)
+TRANSFERS_V1_LIMITS = ["USD only; journals, ACH and wires — no checks, no third-party payees.",
+                       "Fills move cash on their settle date only for an account whose book has a cash row.",
+                       "A later book upload replaces the account and so overwrites its cash ledger."]
 #: cpsim03 — what v1 of the simulated order book does NOT do (shown on the Orders tab, CPSIM_ADMIN.md)
-ORDERS_V1_LIMITS = ["Fills move positions and add buy / sell transactions — there is no cash ledger, no corporate "
-                    "actions and no fees (v2).", "A later book upload replaces the account and so overwrites fills.",
+ORDERS_V1_LIMITS = ["Fills move positions and add buy / sell transactions; a fill's cash moves on its settle date "
+                    "(cpsim04) — no corporate actions and no fees (v2).", "A later book upload replaces the account and so overwrites fills.",
                     "Day orders are not expired; a partial fill's remainder stays working until it is cancelled."]
 EDITABLE = ["name", "notes", "status", "key", "bank_details", "fix_session", "behaviour", "clock", "org_access",
             "book", "connections", "webhooks", "conformance"]
@@ -122,6 +143,7 @@ class BehaviourIn(_Body):
     ach_return_after_days: int | None = Field(default=None, ge=0, le=60)
     webhooks_enabled: bool | None = None
     webhook_url: str | None = Field(default=None, max_length=500, pattern=r"^https://[^\s#?]+$")
+    consent_required: bool | None = None      # cpsim04 D8
 
 
 class OrgAccessIn(_Body):
@@ -147,6 +169,9 @@ def _envelope(principal, body: dict, types: list[dict] | None = None) -> dict:
         "tabs": [{"key": k, "label": v} for k, v in TABS],
         "book_tabs": list(BOOK_TABS),
         "book_institution_types": [t["key"] for t in (types or []) if t.get("protocol") == "rest_oauth"],
+        "bank_tabs": list(BANK_TABS),
+        "bank_institution_types": [t["key"] for t in (types or []) if t.get("protocol") in ("bank_wire_ach",
+                                                                                              "bank_swift")],
         "editable": list(EDITABLE) if su else [], "inline_editable": [],
     }
     return jsonable_encoder({**body, "simulated": True, "permissions": perms, "vocabularies": vocab})
@@ -339,20 +364,33 @@ async def advance_clock(request: Request, counterparty_id: UUID):
 
     async def fn(c):
         moved = await R.advance_clock(c, counterparty_id, request.state.principal.user_id)
-        filled = await SO.reevaluate(c, counterparty_id, _date.fromisoformat(moved["to"]))
+        day = _date.fromisoformat(moved["to"])
+        filled = await SO.reevaluate(c, counterparty_id, day)
+        beh = await R.behaviour(c, counterparty_id) or {}
+        transfers = await ST.advance(c, counterparty_id, day, beh)        # cpsim04 D3: settle / return on the clock
+        fills_cash = await LG.settle_fills(c, counterparty_id, day)       # cpsim04 D3: a settled fill's cash
         cp = await R._require(c, counterparty_id)
-        return {**moved, "filled": filled, "_slug": cp["slug"], "_behaviour": await R.behaviour(c, counterparty_id) or {}}
+        return {**moved, "filled": filled, "transfers": transfers, "fills_cash": fills_cash, "_slug": cp["slug"],
+                "_behaviour": beh}
     principal, out, types = await _sim(
         request, fn, action="counterparty.clock_advanced", resource=counterparty_id,
         audit_payload=lambda o: {"from": o["from"], "to": o["to"],
-                                 "filled": [{k: f[k] for k in ("order_id", "status", "executions")} for f in o["filled"]]})
+                                 "filled": [{k: f[k] for k in ("order_id", "status", "executions")} for f in o["filled"]],
+                                 "transfers": [{k: t[k] for k in ("transfer_id", "from", "status", "return_code")}
+                                               for t in o["transfers"]],
+                                 "fills_cash": [{k: f[k] for k in ("exec_id", "kind", "amount")}
+                                                for f in o["fills_cash"]]})
     slug, beh = out.pop("_slug"), out.pop("_behaviour")
     items = [({"order_id": f["order_id"], "client_order_id": f["client_order_id"], "account_id": f["account_id"]},
               ["order.filled"] if f["executions"] else ["order.updated"]) for f in out["filled"]]
-    if items:
-        from cpsim import webhooks as SW
+    from cpsim import webhooks as SW
 
+    if items:
         await SW.after_orders(counterparty_id=counterparty_id, slug=slug, items=items, behaviour=beh)
+    if out["transfers"]:
+        await SW.after_transfers(counterparty_id=counterparty_id, slug=slug, behaviour=beh,
+                                 items=[{k: t[k] for k in ("transfer_id", "client_transfer_id", "account_id")}
+                                        for t in out["transfers"]])
     return _envelope(principal, out, types)
 
 
@@ -369,6 +407,149 @@ async def orders(request: Request, counterparty_id: UUID, limit: int = 100):
                 "v1_limits": ORDERS_V1_LIMITS}
     principal, out, types = await _sim(request, fn)
     return _envelope(principal, out, types)
+
+
+# ── cpsim04: Transfers (a custodian), Received + links (a bank), Record member consent ─────────────────────────────
+def _transfer_vocab() -> dict:
+    return {"status_labels": [{"key": k, "label": v} for k, v in TRANSFER_STATUS_LABELS.items()],
+            "v1_limits": TRANSFERS_V1_LIMITS}
+
+
+@router.get(f"{_P}/{{counterparty_id}}/transfers")
+async def transfers(request: Request, counterparty_id: UUID, limit: int = 100):
+    """The Transfers tab (a custodian): what it received, each transfer's events, and the cash ledger's last moves.
+    Bank legs show the bank's slug and REFERENCES only (last four digits)."""
+    lim = max(1, min(int(limit), 500))
+
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        return {"rows": await ST.list_recent(c, counterparty_id, lim), "limit": lim,
+                "cash_movements": await LG.movements(c, counterparty_id, None, lim),
+                "behaviour": {"consent_required": bool((await R.behaviour(c, counterparty_id) or {})
+                                                       .get("consent_required"))},
+                **_transfer_vocab()}
+    principal, out, types = await _sim(request, fn)
+    return _envelope(principal, out, types)
+
+
+@router.post(f"{_P}/{{counterparty_id}}/transfers/{{transfer_id}}/consent")
+async def record_consent(request: Request, counterparty_id: UUID, transfer_id: str):
+    """D8 — the custodian's e-consent screen, simulated: a transfer awaiting the member's consent is acknowledged now
+    (the bank check and the debit run), then settles on the clock. Audited; ``transfer.updated`` after commit."""
+    from datetime import date as _date
+
+    if not re.match(r"^sim-t-[0-9a-f]{16}$", transfer_id or ""):
+        raise HTTPException(status_code=404, detail="no such transfer at this simulated custodian")
+
+    async def fn(c):
+        cp = await R._require(c, counterparty_id)
+        beh = await R.behaviour(c, counterparty_id) or {}
+        day = await R.business_date(c, counterparty_id) or R.today()
+        try:
+            t = await ST.record_consent(c, counterparty_id, transfer_id, day if isinstance(day, _date) else R.today(),
+                                        beh)
+        except ST.TransferError as exc:
+            raise R.Conflict(str(exc)) if exc.status == 409 else R.NotFound(str(exc)) from exc
+        return {"transfer": t, "_slug": cp["slug"], "_behaviour": beh}
+    principal, out, types = await _sim(request, fn, action="counterparty.transfer_consent_recorded",
+                                       resource=counterparty_id,
+                                       audit_payload=lambda o: {"transfer_id": transfer_id,
+                                                                "status": o["transfer"]["status"]})
+    slug, beh = out.pop("_slug"), out.pop("_behaviour")
+    from cpsim import webhooks as SW
+
+    t = out["transfer"]
+    await SW.after_transfers(counterparty_id=counterparty_id, slug=slug, behaviour=beh,
+                             items=[{"transfer_id": t["transfer_id"], "client_transfer_id": t["client_transfer_id"],
+                                     "account_id": t["from_account_id"]}])
+    return _envelope(principal, out, types)
+
+
+async def _bank(c, counterparty_id) -> dict:
+    cp = await R._require(c, counterparty_id)
+    if cp["institution_type"] not in ST.BANK_TYPES:
+        raise R.RegistryError("only a simulated bank receives transfers and holds linked accounts")
+    return cp
+
+
+@router.get(f"{_P}/{{counterparty_id}}/received")
+async def received(request: Request, counterparty_id: UUID, limit: int = 100):
+    """The Received tab (a bank): every transfer addressed to it, its book's cash ledger, and the platform accounts
+    linked to its book accounts (masks only)."""
+    from services import payment_custodian as PC
+
+    lim = max(1, min(int(limit), 500))
+
+    async def fn(c):
+        cp = await _bank(c, counterparty_id)
+        return {"slug": cp["slug"], "rows": await ST.list_received(c, cp["slug"], lim), "limit": lim,
+                "cash_movements": await LG.movements(c, counterparty_id, None, lim), **_transfer_vocab()}
+    principal, out, types = await _sim(request, fn)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        out["links"] = await PC.bank_links(conn, out["slug"])
+    return _envelope(principal, out, types)
+
+
+class LinkIn(_Body):
+    target_org_id: UUID
+    account_id: UUID
+    bank_account_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
+
+
+@router.post(f"{_P}/{{counterparty_id}}/links")
+async def link_account(request: Request, counterparty_id: UUID, body: LinkIn):
+    """D6 — crosswalk a platform account (an ALLOWED org; a real org's demo household only) to an account in this
+    BANK's book: ``portfolio.external_references`` source ``CPSIM_BANK``, written in the target org's RLS context
+    through services.portfolio_assets.upsert_external_reference. The external id carries the bank's REFERENCES —
+    the last four digits of its ACH / wire routing numbers (domestic) or of its IBAN plus its BIC (international) —
+    never a full number. Audited."""
+    from services import payment_custodian as PC
+
+    async def fn(c):
+        cp = await _bank(c, counterparty_id)
+        if cp["status"] != "active":
+            raise R.Conflict("activate the bank before linking accounts to it")
+        if not await SB.account_exists(c, counterparty_id, body.bank_account_id):
+            raise R.NotFound("no such account in this bank's book")
+        kind = ST.BANK_TYPES[cp["institution_type"]]
+        d = await c.fetchrow("SELECT aba_wire, aba_ach, bic, iban FROM cpsim.counterparty_bank_details WHERE "
+                             "counterparty_id = $1::uuid AND kind = $2 AND valid_to IS NULL", str(counterparty_id), kind)
+        if d is None:
+            raise R.Conflict("the bank has no routing details — regenerate them first")
+        refs = ({"ach4": ST.last4(d["aba_ach"]), "wire4": ST.last4(d["aba_wire"])} if kind == "domestic" else
+                {"iban4": ST.last4(d["iban"]), "bic": (d["bic"] or "").upper()})
+        return {"slug": cp["slug"], "kind": kind, "refs": refs}
+    principal, out, types = await _sim(request, fn)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _allowed_org(conn, body.target_org_id)
+        hh = await conn.fetchval("SELECT household_id FROM public.accounts WHERE id = $1::uuid AND org_id = $2::uuid "
+                                 "AND system_to IS NULL AND valid_to IS NULL", str(body.account_id),
+                                 str(body.target_org_id))
+        if hh is None:
+            raise HTTPException(status_code=404, detail="no such account in that organization")
+        if not await conn.fetchval("SELECT public.counterparty_sim_may_connect($1::uuid, $2::uuid)",
+                                   str(body.target_org_id), str(hh)):
+            raise HTTPException(status_code=409, detail="not a demo household: in a real organization only a household "
+                                                        "tagged demo may use a simulated counterparty")
+    external_id = PC.bank_xwalk_id(out["slug"], body.bank_account_id, out["refs"])
+
+    async def go():
+        from services.portfolio_assets import upsert_external_reference
+
+        async with pool.acquire() as c2:
+            return await upsert_external_reference(c2, org_id=str(body.target_org_id), source_system=PC.XWALK_BANK,
+                                                   external_id=external_id, record_type="account",
+                                                   record_id=str(body.account_id))
+    ref_id = await _as_target(body.target_org_id, go)
+    async with pool.acquire() as conn:
+        await _audit(conn, principal, "counterparty.bank_account_linked", "counterparty", counterparty_id,
+                     {"target_org_id": str(body.target_org_id), "account_id": str(body.account_id),
+                      "bank_account_id": body.bank_account_id, "reference_id": ref_id, "simulated": True})
+    return _envelope(principal, {"linked": True, "reference_id": ref_id, "bank": out["slug"],
+                                 "bank_account_id": body.bank_account_id,
+                                 "references": PC.mask_refs(out["refs"])}, types)
 
 
 @router.get(f"{_P}/{{counterparty_id}}/requests")

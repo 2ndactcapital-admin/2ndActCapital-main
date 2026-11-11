@@ -15,6 +15,13 @@ INITIATE (``initiate_payment``; a client role is refused even if it ever held it
                   reconcile · close · cancel
 APPROVE (``approve_payment``; the S30 FLOOR — never a maker, Super Admin included):
     POST /api/v1/cash/households/{household_id}/payments/{payment_id}/approve | /reject
+CPSIM04 — the custodian-API route (a SIMULATED custodian only; services.payment_custodian):
+    POST /api/v1/cash/households/{household_id}/payments/{payment_id}/send-to-custodian       initiate_payment — an
+         APPROVED payment whose D4 route holds → the transfers API → the EXISTING mark_sent (custodian_api)
+    POST /api/v1/cash/households/{household_id}/payments/{payment_id}/refresh-from-custodian  initiate_payment OR
+         approve_payment — each NEW custodian status applied through the EXISTING person function, the refresher the actor
+    GET  /api/v1/cash/households/{household_id}/payments/{payment_id}/custodian-transfer      initiate_payment OR
+         approve_payment — the live transfer + the matched feed rows the reconcile picker preselects
 
 Every write goes through services.payments (both authority checks, same owner only, declared rails, business days,
 maker-checker, the DB transition trigger, audit + payment_events). ``org_id`` comes from the verified session only
@@ -272,6 +279,53 @@ async def payment_sheet_route(request: Request, household_id: UUID, payment_id: 
     pdf, filename = await _run(PS.sheet(pool, org_id=org_id, actor_id=p.user_id, payment_id=payment_id))
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+
+
+# ── cpsim04: the custodian-API route (person actions; never registered as an unattended verb) ───────────────────────
+@router.post("/cash/households/{household_id}/payments/{payment_id}/send-to-custodian")
+async def payment_send_to_custodian_route(request: Request, household_id: UUID, payment_id: UUID):
+    """D5 — "Send to custodian (simulated)": an APPROVED payment → POST /v2/transfers → mark_sent (custodian_api).
+    Every mark_sent check runs first (the rail, the value date, BOTH authority checks — every reason reported)."""
+    from services import payment_custodian as PC
+
+    p = require_permission(request, "initiate_payment")
+    _not_client(p)
+    _p, org_id, pool, _m = await _open(request, household_id)
+    await _own(pool, org_id, household_id, payment_id)
+    out = await _run(PC.send_to_custodian(pool, org_id=org_id, actor_id=p.user_id, payment_id=payment_id))
+    async with pool.acquire() as conn:
+        d = await PS.detail(conn, org_id, payment_id)
+    return {"payment": _with_actions([d], p, False)[0], "transfer": out["transfer"], "simulated": True,
+            "counterparty": out["counterparty"]}
+
+
+@router.post("/cash/households/{household_id}/payments/{payment_id}/refresh-from-custodian")
+async def payment_refresh_from_custodian_route(request: Request, household_id: UUID, payment_id: UUID):
+    """D7 — "Refresh status from custodian": each NEW custodian status applied, one edge at a time, the refreshing
+    person the actor of every payment_events row. A repeat applies nothing."""
+    from services import payment_custodian as PC
+
+    p = authz.require_any_permission(request, ("initiate_payment", "approve_payment"))   # a person who sees it through
+    _not_client(p)
+    _p, org_id, pool, _m = await _open(request, household_id)
+    await _own(pool, org_id, household_id, payment_id)
+    out = await _run(PC.refresh_from_custodian(pool, org_id=org_id, actor_id=p.user_id, payment_id=payment_id))
+    async with pool.acquire() as conn:
+        d = await PS.detail(conn, org_id, payment_id)
+    return {"payment": _with_actions([d], p, False)[0], "transfer": out["transfer"], "applied": out["applied"],
+            "pending": out["pending"], "simulated": True}
+
+
+@router.get("/cash/households/{household_id}/payments/{payment_id}/custodian-transfer")
+async def payment_custodian_transfer_route(request: Request, household_id: UUID, payment_id: UUID):
+    """The live custodian transfer and the reconcile picker's preselection (matched feed rows of this transfer)."""
+    from services import payment_custodian as PC
+
+    p = authz.require_any_permission(request, ("initiate_payment", "approve_payment"))   # a person who sees it through
+    _not_client(p)
+    _p, org_id, pool, _m = await _open(request, household_id)
+    await _own(pool, org_id, household_id, payment_id)
+    return await _run(PC.transfer_view(pool, org_id=org_id, payment_id=payment_id))
 
 
 async def _decide(request: Request, household_id: UUID, payment_id: UUID, outcome: str, note: str | None):

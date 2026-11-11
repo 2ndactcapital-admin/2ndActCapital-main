@@ -135,6 +135,18 @@ TRANSACTION_TYPE_MAP: dict[str, str] = {
     "fee": "fee_expense",
     "fee_expense": "fee_expense",
     "adjustment": "adjustment",
+    # cpsim04 D2 — the cash-movement types of contract §9.4 (every one ASSUMED), each mapped to the EXISTING code whose
+    # services.cash_activity.TYPE_MAP sign is right for its leg (no new vocabulary row; CPSIM04_NOTES §1c): money
+    # leaving the holding → sell (−1), arriving → buy (+1); an ACH return reverses BOTH legs, so it carries its own
+    # signed amount → adjustment (the stored sign — and never matched as a payment leg). Additive: these types were
+    # per-row errors before; nothing else in the real path changes.
+    "transfer_out": "sell",
+    "ach_out": "sell",
+    "wire_out": "sell",
+    "transfer_in": "buy",
+    "ach_in": "buy",
+    "wire_in": "buy",
+    "ach_return": "adjustment",
 }
 
 

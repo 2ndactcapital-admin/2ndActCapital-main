@@ -15,6 +15,12 @@ cpsim03 D10 — the ``orders`` group (O01–O13 + O15, contract §8 — every fi
 other target skips it with "no published Altruist orders contract". It PLACES ORDERS and so moves the target's book
 (§8.5), so it runs only when the caller passes a fixture book (``orders=``): the in-process fixture run does; the admin
 page's run against a live counterparty does not (it reports the group as not run, with that reason).
+
+cpsim04 D11 — the ``transfers`` group (T01–T15, contract §9 — every field ASSUMED), driven through the transfers client
+(services/altruist_transfers.py ``post_transfer`` / ``get_transfer`` / ``list_transfers`` / ``delete_transfer``) and
+raw requests. Simulator ONLY ("no published Altruist money-movement contract" for any other target); it MOVES CASH, so
+it runs only with a fixture (``transfers=``: two custodian accounts, a domestic and an international simulated bank).
+The D2 feed types are pinned here too (T02: the served cash rows carry the §9.4 types the client maps).
 """
 
 from __future__ import annotations
@@ -29,7 +35,9 @@ import httpx
 
 from services import altruist_oauth as AO
 
-TXN_TYPES = ("buy", "sell", "dividend", "interest", "fee", "fee_expense", "adjustment")
+#: the types the client maps (services/altruist_positions_sync.TRANSACTION_TYPE_MAP): its 7 + cpsim04's 7 cash types
+TXN_TYPES = ("buy", "sell", "dividend", "interest", "fee", "fee_expense", "adjustment",
+             "transfer_in", "transfer_out", "ach_in", "ach_out", "wire_in", "wire_out", "ach_return")
 POSITION_FIELDS = ("id", "cusip", "isin", "ticker", "name", "asset_type", "quantity", "market_value", "cost_basis",
                    "currency_code")
 TRANSACTION_FIELDS = ("id", "type", "cusip", "isin", "ticker", "name", "trade_date", "settle_date", "quantity", "price",
@@ -71,7 +79,8 @@ def _num_ok(v) -> bool:
 
 async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], transport: Any = None,
               redirect_uri: str = DEFAULT_REDIRECT, scope: str = "accounts:read", timeout: float = 15.0,
-              expect_simulated_header: bool | None = None, max_accounts: int = 25, orders: dict | None = None) -> dict:
+              expect_simulated_header: bool | None = None, max_accounts: int = 25, orders: dict | None = None,
+              transfers: dict | None = None) -> dict:
     """Run every check. Returns ``{"target", "passed", "failed", "results": [...]}``. Never raises for a server
     defect — a defect is a failed check; a client-side refusal (D1) is a failed check too."""
     S = Suite()
@@ -296,6 +305,13 @@ async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], tr
         await _orders_group(S, raw=raw, api=api, access=access, credentials=credentials, transport=transport,
                             timeout=timeout, fx=orders)
 
+    tskip = transfers_group_skip(environment, transfers)
+    if tskip:
+        S.na("T00", "§9 (transfers)", "transfers group", tskip)
+    else:
+        await _transfers_group(S, raw=raw, api=api, access=access, credentials=credentials, transport=transport,
+                               timeout=timeout, fx=transfers)
+
     if sim:
         missing = [u for u, v in seen_headers if v != "true"]
         S.check(seen_headers and not missing, "C18", "§6 (SIMULATED header)",
@@ -483,3 +499,221 @@ async def _orders_group(S: Suite, *, raw, api: str, access: str, credentials, tr
                 "X-Counterparty-Simulated: true", f"{r.headers.get(SIM_HEADER)}")
     except Exception as exc:  # noqa: BLE001
         S.check(False, "O13", "§8.1 O-6", "SIMULATED header", f"{type(exc).__name__}")
+
+
+
+# ── cpsim04 D11: the transfers group (contract §9 — every field ASSUMED) ─────────────────────────────────────────────
+NO_TRANSFERS_CONTRACT = "no published Altruist money-movement contract"
+NOT_A_TRANSFER_FIXTURE = ("not run: the transfers group moves cash, so it runs only against a fixture book and fixture "
+                          "banks (the in-process run)")
+TRANSFER_FIELDS = ("transfer_id", "client_transfer_id", "from_account_id", "to_account_id", "to_bank", "amount",
+                   "currency", "rail", "value_date", "status", "reject_reason", "return_code", "return_reason",
+                   "received_on", "acknowledged_on", "settle_on", "settled_on", "returned_on", "events", "created_at",
+                   "updated_at")
+TRANSFER_STATUSES = ("received", "pending_consent", "acknowledged", "settled", "rejected", "returned", "cancelled")
+CASH_TYPES = ("transfer_in", "transfer_out", "ach_in", "ach_out", "wire_in", "wire_out", "ach_return")
+
+
+def transfers_group_skip(environment: str, transfers: dict | None) -> str | None:
+    """Why the transfers group does not run against this target (None → it runs)."""
+    if environment != AO.SIMULATOR:
+        return NO_TRANSFERS_CONTRACT
+    if transfers is None:
+        return NOT_A_TRANSFER_FIXTURE
+    return None
+
+
+async def _transfers_group(S: Suite, *, raw, api: str, access: str, credentials, transport, timeout: float, fx: dict):
+    """T01–T15. ``fx`` = {from, to (both accounts of this custodian; ``from`` holds ``cash`` USD in its cash row),
+    cash, value_date, domestic: {slug, account_id, ach4, wire4}, international: {slug, account_id, bic, iban4}}."""
+    from decimal import Decimal
+
+    from services import altruist_positions_sync as APS
+    from services import altruist_transfers as AT
+
+    tag = secrets.token_hex(4)
+    hdr = {"Authorization": f"Bearer {access}", "Accept": "application/json"}
+    kw = {"api_base": api, "access_token": access, "timeout": timeout, "transport": transport}
+    src, dst, vd = fx["from"], fx["to"], fx["value_date"]
+    dom, intl = fx["domestic"], fx["international"]
+
+    async def cash(account: str) -> Decimal:
+        r = await raw("GET", f"{api}/v2/positions", params={"account_id": account}, headers=hdr)
+        return sum((Decimal(p["market_value"]) for p in r.json().get("positions") or [] if not p.get("cusip")
+                    and not p.get("isin") and not p.get("ticker") and (p.get("asset_type") in (None, "cash"))),
+                   Decimal(0))
+
+    def body(cid: str, **over) -> dict:
+        b = {"client_transfer_id": f"conf-{tag}-{cid}", "from_account_id": src, "amount": "100.00", "currency": "USD",
+             "rail": "journal", "value_date": vd, "to_account_id": dst}
+        b.update(over)
+        return {k: v for k, v in b.items() if v is not None}
+
+    first, before_src, before_dst = {}, None, None
+    try:
+        before_src, before_dst = await cash(src), await cash(dst)
+        status, first = await AT.post_transfer(transfer=body("journal"), **kw)
+        missing = [k for k in TRANSFER_FIELDS if k not in first]
+        S.check(status == 201 and not missing and first.get("status") == "settled" and first.get("amount") == "100.00"
+                and str(first.get("transfer_id", "")).startswith("sim-t-")
+                and [e.get("status") for e in first.get("events") or []] == ["received", "acknowledged", "settled"]
+                and first.get("settled_on") == vd, "T01", "§9.1 T-1 / §9.3 / §9.6",
+                "POST a journal → 201 with every §9.3 field; same-day value date: received → acknowledged → settled, "
+                "each an event", f"status {status}, missing {missing}, transfer {first}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T01", "§9.1 T-1 / §9.3 / §9.6", "POST a journal", f"{type(exc).__name__}: {exc}")
+    try:
+        after_src, after_dst = await cash(src), await cash(dst)
+        rt = await raw("GET", f"{api}/v2/transactions", params={"account_id": src}, headers=hdr)
+        rd = await raw("GET", f"{api}/v2/transactions", params={"account_id": dst}, headers=hdr)
+        tid = first.get("transfer_id")
+        out_ = [t for t in rt.json().get("transactions") or [] if t.get("id") == f"{tid}-out"]
+        in_ = [t for t in rd.json().get("transactions") or [] if t.get("id") == f"{tid}-in"]
+        mapped = all(t.get("type") in APS.TRANSACTION_TYPE_MAP for t in out_ + in_)
+        S.check(after_src == before_src - Decimal("100") and after_dst == before_dst + Decimal("100") and len(out_) == 1
+                and len(in_) == 1 and out_[0].get("type") == "transfer_out" and in_[0].get("type") == "transfer_in"
+                and out_[0].get("net_amount") == "100" and in_[0].get("net_amount") == "100" and mapped
+                and APS.TRANSACTION_TYPE_MAP["transfer_out"] == "sell" and APS.TRANSACTION_TYPE_MAP["transfer_in"]
+                == "buy", "T02", "§9.4 / D2 (cash ledger + feed types)",
+                "the journal moved the cash rows exactly (−100 / +100) and the feed serves transfer_out / transfer_in "
+                "(explicit ids <transfer>-out / -in) — types the client maps (sell / buy)",
+                f"src {before_src}→{after_src}, dst {before_dst}→{after_dst}, out {out_}, in {in_}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T02", "§9.4 / D2", "cash ledger + feed", f"{type(exc).__name__}: {exc}")
+    try:
+        status, again = await AT.post_transfer(transfer=body("journal", amount="999.00", rail="ach", to_account_id=None,
+                                                             to_bank={"institution_slug": dom["slug"],
+                                                                      "account_id": dom["account_id"],
+                                                                      "routing_last4": dom["ach4"]}), **kw)
+        listed = await AT.list_transfers(account_id=src, **kw)
+        same = [t for t in listed if t.get("client_transfer_id") == f"conf-{tag}-journal"]
+        S.check(status == 200 and again.get("transfer_id") == first.get("transfer_id") and again.get("amount")
+                == "100.00" and again.get("rail") == "journal" and len(same) == 1, "T03", "§9.1 T-1 (repeat rule)",
+                "a repeat POST with a DIFFERENT body → 200, the ORIGINAL transfer unchanged, one transfer",
+                f"status {status}, {again.get('amount')} {again.get('rail')}, {len(same)} transfers")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T03", "§9.1 T-1 (repeat rule)", "repeat POST", f"{type(exc).__name__}: {exc}")
+    try:
+        got = await AT.get_transfer(transfer_id=first.get("transfer_id", "x"), **kw)
+        S.check(got.get("transfer_id") == first.get("transfer_id") and got.get("status") == "settled", "T04",
+                "§9.1 T-2", "GET one transfer", f"{got}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T04", "§9.1 T-2", "GET one transfer", f"{type(exc).__name__}: {exc}")
+    try:
+        r = await raw("GET", f"{api}/v2/transfers", params={"account_id": dst}, headers=hdr)
+        b = r.json()
+        r400 = await raw("GET", f"{api}/v2/transfers", headers=hdr)
+        S.check(r.status_code == 200 and any(t.get("transfer_id") == first.get("transfer_id") for t in b.get("transfers")
+                                             or []) and not any(k in b for k in PAGINATION_KEYS)
+                and r400.status_code == 400, "T05", "§9.1 T-3",
+                "list by account (either leg; the destination finds it), one response, 400 without account_id",
+                f"{r.status_code} / {r400.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T05", "§9.1 T-3", "list transfers", f"{type(exc).__name__}: {exc}")
+    try:
+        r = await raw("POST", f"{api}/v2/transfers", json=body("float", amount=100.0), headers=hdr)
+        made = [t for t in await AT.list_transfers(account_id=src, **kw)
+                if t.get("client_transfer_id") == f"conf-{tag}-float"]
+        errs = r.json().get("errors") or []
+        S.check(r.status_code == 422 and any(e.get("field") == "amount" for e in errs) and not made, "T06",
+                "§9.2 (decimal strings)", "a JSON-number amount → 422 naming the field, nothing created",
+                f"{r.status_code} {errs}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T06", "§9.2 (decimal strings)", "float refused", f"{type(exc).__name__}: {exc}")
+    try:
+        s0 = await cash(src)
+        status, t = await AT.post_transfer(transfer=body("ach", rail="ach", to_account_id=None,
+                                                         to_bank={"institution_slug": dom["slug"],
+                                                                  "account_id": dom["account_id"],
+                                                                  "routing_last4": dom["ach4"]}), **kw)
+        s1 = await cash(src)
+        S.check(status == 201 and t.get("status") == "acknowledged" and t.get("settle_on") and t["settle_on"] > vd
+                and s1 == s0 - Decimal("100") and (t.get("to_bank") or {}).get("routing_last4") == dom["ach4"], "T07",
+                "§9.6 (ACH to a domestic bank)", "an ACH to a domestic bank with its ACH routing reference → acknowledged, "
+                "the source debited, settlement the next business day", f"{t}, cash {s0}→{s1}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T07", "§9.6 (ACH)", "ACH to a domestic bank", f"{type(exc).__name__}: {exc}")
+    try:
+        s0 = await cash(src)
+        wrong = "0000" if dom["wire4"] != "0000" else "1111"
+        status, t = await AT.post_transfer(transfer=body("wire-bad", rail="wire", to_account_id=None,
+                                                         to_bank={"institution_slug": dom["slug"],
+                                                                  "account_id": dom["account_id"],
+                                                                  "routing_last4": wrong}), **kw)
+        s1 = await cash(src)
+        S.check(status == 201 and t.get("status") == "rejected" and "routing number does not match"
+                in (t.get("reject_reason") or "") and s1 == s0, "T08", "§9.6 / D6 (the bank's check)",
+                "a wire with the wrong routing reference → rejected with the receiving bank's reason; nothing debited",
+                f"{t.get('status')} {t.get('reject_reason')}, cash {s0}→{s1}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T08", "§9.6 / D6", "wrong routing", f"{type(exc).__name__}: {exc}")
+    try:
+        status, t = await AT.post_transfer(transfer=body("intl", rail="wire", to_account_id=None,
+                                                         to_bank={"institution_slug": intl["slug"],
+                                                                  "account_id": intl["account_id"], "bic": intl["bic"],
+                                                                  "iban_last4": intl["iban4"]}), **kw)
+        r = await raw("POST", f"{api}/v2/transfers", headers=hdr, json=body(
+            "intl-ach", rail="ach", to_account_id=None, to_bank={"institution_slug": intl["slug"],
+                                                                 "account_id": intl["account_id"], "bic": intl["bic"],
+                                                                 "iban_last4": intl["iban4"]}))
+        S.check(status == 201 and t.get("status") == "settled" and r.status_code == 422, "T09",
+                "§9.2 / §9.6 (international wire)", "a wire to an international bank with its BIC + IBAN reference "
+                "settles on the value date; an ACH to it is refused 422", f"{t.get('status')} {t.get('reject_reason')}"
+                f" / {r.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T09", "§9.6 (international wire)", "international wire", f"{type(exc).__name__}: {exc}")
+    try:
+        bad4 = "ZZZZ" if intl["iban4"] != "ZZZZ" else "YYYY"
+        status, t = await AT.post_transfer(transfer=body("intl-bad", rail="wire", to_account_id=None,
+                                                         to_bank={"institution_slug": intl["slug"],
+                                                                  "account_id": intl["account_id"], "bic": intl["bic"],
+                                                                  "iban_last4": bad4}), **kw)
+        S.check(t.get("status") == "rejected" and "IBAN does not match" in (t.get("reject_reason") or ""), "T10",
+                "§9.6 / D6 (IBAN)", "a wrong IBAN reference → rejected with the bank's reason", f"{t}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T10", "§9.6 / D6 (IBAN)", "wrong IBAN", f"{type(exc).__name__}: {exc}")
+    try:
+        s0 = await cash(src)
+        status, t = await AT.post_transfer(transfer=body("nsf", amount=format((s0 + Decimal("1")).quantize(
+            Decimal("0.01")), "f")), **kw)
+        S.check(t.get("status") == "rejected" and t.get("reject_reason") == "insufficient funds"
+                and await cash(src) == s0, "T11", "§9.6 (insufficient funds)",
+                "more than the cash row holds → rejected 'insufficient funds', nothing moved", f"{t}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T11", "§9.6 (insufficient funds)", "insufficient funds", f"{type(exc).__name__}: {exc}")
+    try:
+        try:
+            await AT.delete_transfer(transfer_id=first.get("transfer_id", "x"), **kw)
+            settled_409 = False
+        except AT.AltruistTransferRefused as e:
+            settled_409 = e.status == 409 and "settled" in (e.detail or "")
+        r = await raw("DELETE", f"{api}/v2/transfers/sim-t-{'0' * 16}", headers=hdr)
+        S.check(settled_409 and r.status_code == 404, "T12", "§9.1 T-4 / T-2 (404)",
+                "DELETE a settled transfer → 409 naming its status; an unknown transfer → 404", f"{r.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T12", "§9.1 T-4", "cancel refused", f"{type(exc).__name__}: {exc}")
+    try:
+        r = await raw("GET", f"{api}/v2/transfers", params={"account_id": src}, headers={"Accept": "application/json"})
+        r2 = await raw("GET", f"{api}/v2/transfers", params={"account_id": src},
+                       headers={"Authorization": f"Bearer {credentials[1]}", "Accept": "application/json"})
+        S.check(r.status_code == 401 and r2.status_code == 401, "T13", "§9.1 T-5",
+                "transfers need an ACCESS token (none / the cpsim_ key → 401)", f"{r.status_code}/{r2.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T13", "§9.1 T-5", "transfers auth", f"{type(exc).__name__}")
+    try:
+        r = await raw("POST", f"{api}/v2/transfers", headers=hdr, json=body(
+            "fullaba", rail="ach", to_account_id=None, to_bank={"institution_slug": dom["slug"],
+                                                                "account_id": dom["account_id"],
+                                                                "routing_last4": "991234567"}))
+        errs = r.json().get("errors") or []
+        S.check(r.status_code == 422 and any(e.get("field") == "to_bank.routing_last4" for e in errs), "T14",
+                "§9.2 (references only)", "a full routing number where the last four belong → 422 naming the field",
+                f"{r.status_code} {errs}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T14", "§9.2 (references only)", "full number refused", f"{type(exc).__name__}")
+    try:
+        r = await raw("GET", f"{api}/v2/transfers/{first.get('transfer_id', 'x')}", headers=hdr)
+        S.check(r.headers.get(SIM_HEADER) == "true", "T15", "§9.1 T-6", "transfer responses carry "
+                "X-Counterparty-Simulated: true", f"{r.headers.get(SIM_HEADER)}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "T15", "§9.1 T-6", "SIMULATED header", f"{type(exc).__name__}")

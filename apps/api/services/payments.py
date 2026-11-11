@@ -60,6 +60,7 @@ from services import authority as AU
 from services import custodian_capabilities as CAP
 from services import human_tasks as HT
 from services import payment_adapters as PA
+from services import payment_custodian as PC
 from services import sod
 from services import trading_authority as TA
 from services import us_business_days as BD
@@ -318,6 +319,11 @@ async def load_account(conn, org_id, account_id, t: date | None = None) -> dict:
         raise PaymentNotFound("account not found")
     acct = dict(row)
     await AU.attach(conn, org_id, acct, t or today())
+    # cpsim04 — an account crosswalked to a SIMULATED custodian (and not to real Altruist) is that custodian's: its
+    # declared rails and its adapter are the simulator's (services.payment_custodian). Every other account: unchanged.
+    sim = await PC.payment_custodian_keys(conn, org_id, [acct["id"]])
+    if sim.get(str(acct["id"])):
+        acct["payment_custodian"] = sim[str(acct["id"])]
     return acct
 
 
@@ -331,9 +337,12 @@ async def household_accounts(conn, org_id, household_id, t: date | None = None) 
     rows = [dict(r) for r in await conn.fetch(
         f"SELECT {ACCOUNT_COLS} FROM public.accounts WHERE org_id = $1::uuid AND household_id = $2::uuid "
         "AND system_to IS NULL AND valid_to IS NULL ORDER BY account_number_masked, id", str(org_id), str(household_id))]
+    sim = await PC.payment_custodian_keys(conn, org_id, [a["id"] for a in rows])   # cpsim04 — one query
     for a in rows:
         await AU.attach(conn, org_id, a, t or today())
         a["owners"] = await _owners(conn, a["id"])
+        if sim.get(str(a["id"])):
+            a["payment_custodian"] = sim[str(a["id"])]
     return rows
 
 
@@ -368,7 +377,7 @@ def same_owner_refusal(src: dict, dst: dict, household_id, src_owners: list, dst
 
 async def declared_rails(conn, account: dict) -> dict[str, dict]:
     """{rail: {available, value, evidence}} for the account's custodian (custodian_capabilities)."""
-    key = PA.custodian_key(account)
+    key = PC.capability_code(PA.custodian_key(account))     # cpsim04: the simulator's code for a simulated custodian
     out = {}
     for rail in RAIL_KEYS:
         try:
@@ -846,7 +855,11 @@ SHEET_STATUSES = ("approved", "sent", "awaiting_client_consent", "acknowledged",
 
 async def adapter_of(conn, org_id, row: dict) -> PA.PaymentAdapter:
     src = await load_account(conn, org_id, row["source_account_id"])
-    return PA.adapter_for(src, await PA.enabled_for_org(conn, org_id))
+    # CPSIM04 FIX 1: D4 is evaluated for every source (its first two conditions are two crosswalk reads), so a
+    # manual decision always carries its reason — a real-Altruist-crosswalked source included. The route is only
+    # ever TAKEN by adapter_for for a source resolved to the simulated custodian with every condition holding.
+    route = await PC.simulator_route(conn, org_id, src, row)
+    return PA.adapter_for(src, await PA.enabled_for_org(conn, org_id), route)
 
 
 async def sheet(pool, *, org_id, actor_id, payment_id) -> tuple[bytes, str]:
@@ -859,6 +872,8 @@ async def sheet(pool, *, org_id, actor_id, payment_id) -> tuple[bytes, str]:
         row = await load(conn, org_id, payment_id)
         _need(row, SHEET_STATUSES, "print the sheet of")
         adapter = await adapter_of(conn, org_id, row)
+        if adapter.key == PA.SIMULATOR_KEY:
+            adapter = PA.manual()        # cpsim04: the payment sheet stays available beside the custodian API
         d = await detail(conn, org_id, payment_id)
         org_name = await conn.fetchval("SELECT name FROM organizations WHERE id = $1::uuid", str(org_id))
         disc = await DS.resolve_safe(conn, DISCLOSURE_KEY, org_id=org_id, household_id=row["household_id"])
@@ -897,11 +912,19 @@ async def _transition(pool, *, org_id, actor_id, payment_id, allowed: tuple, wha
 
 
 async def mark_sent(pool, *, org_id, actor_id, payment_id, channel: str, note: str | None = None,
-                    external_ref: str | None = None) -> dict:
+                    external_ref: str | None = None, adapter: str | None = None, via_custodian: bool = False) -> dict:
     """approved → sent, when the operator confirms the channel they sent the sheet by. Re-checks the sender's two
-    authority checks, the rail and the value date; a not-connected adapter refuses with its reason."""
-    if channel not in PA.CHANNEL_LABELS:
-        raise PaymentError(f"channel is one of {list(PA.CHANNEL_LABELS)}")
+    authority checks, the rail and the value date; a not-connected adapter refuses with its reason. cpsim04: the
+    custodian-API channel is recorded ONLY by services.payment_custodian.send_to_custodian (``via_custodian``, with
+    the custodian's transfer id and adapter ``altruist_simulator``) — "Confirm sent" refuses it."""
+    if via_custodian:
+        if channel != PA.CUSTODIAN_API or adapter != PA.SIMULATOR_KEY or not (external_ref or "").strip():
+            raise PaymentError("a custodian-API send records channel custodian_api, the simulator adapter and the "
+                               "custodian's transfer id")
+    elif channel not in PA.MANUAL_CHANNELS:
+        raise PaymentError(f"channel is one of {list(PA.MANUAL_CHANNELS)} (the custodian API channel is recorded only "
+                           "by Send to custodian)")
+    adapter = adapter if via_custodian else PA.MANUAL
     t = today()
 
     async def _check(conn, row, actor):
@@ -922,9 +945,9 @@ async def mark_sent(pool, *, org_id, actor_id, payment_id, channel: str, note: s
         pool, org_id=org_id, actor_id=actor_id, payment_id=payment_id, allowed=("approved",), what="mark sent",
         action="mark_sent", to_status="sent", check=_check,
         fields=lambda row, a: {"sent_by": uuid.UUID(str(a["id"])), "sent_at": now, "sent_channel": channel,
-                               "sent_note": (note or "").strip() or None, "adapter": PA.MANUAL,
+                               "sent_note": (note or "").strip() or None, "adapter": adapter,
                                "external_ref": (external_ref or "").strip() or None},
-        detail={"channel": channel, "adapter": PA.MANUAL, "note": note, "external_ref": external_ref})
+        detail={"channel": channel, "adapter": adapter, "note": note, "external_ref": external_ref})
 
 
 async def consent_requested(pool, *, org_id, actor_id, payment_id, note: str | None = None) -> dict:
@@ -1357,6 +1380,8 @@ async def detail(conn, org_id, payment_id, *, member: bool = False) -> dict:
         except PaymentError:
             out["purpose_ref_label"] = f"{PURPOSE_REF_LABELS[row['purpose_ref_type']]} (no longer current)"
     out["timeline"] = await events_of(conn, org_id, row["id"], member=member)
+    if not member:                       # cpsim04 — the custodian-API panel (no network; None for every other payment)
+        out["custodian"] = await PC.panel(conn, org_id, row)
     return out
 
 
@@ -1412,8 +1437,13 @@ def actions_for(row: dict, *, can_initiate: bool, can_approve: bool, user_id, me
         acts += [("approve", "Approve"), ("reject", "Return to draft")]
     if can_initiate and st in SHEET_STATUSES:
         acts.append(("sheet", "Download payment sheet"))
+    cust = row.get("custodian") or {}
+    if can_initiate and st == "approved" and cust.get("send_available") is True:
+        acts.append(("send_to_custodian", "Send to custodian (simulated)"))        # cpsim04 D5
     if can_initiate and st == "approved":
         acts.append(("mark_sent", "Confirm sent"))
+    if (can_initiate or can_approve) and cust.get("refresh_available") is True:
+        acts.append(("refresh_from_custodian", "Refresh status from custodian"))   # cpsim04 D7
     if can_initiate and st == "sent":
         acts.append(("consent_requested", "Member consent requested"))
     if can_initiate and st in ("sent", "awaiting_client_consent"):
@@ -1436,7 +1466,7 @@ def actions_for(row: dict, *, can_initiate: bool, can_approve: bool, user_id, me
 def vocabularies(*, can_write: bool) -> dict:
     return {"statuses": [{"key": k, "label": v} for k, v in STATUS_LABELS.items()],
             "rails": [{"key": k, "label": v} for k, v in RAILS],
-            "channels": [{"key": k, "label": v} for k, v in PA.CHANNEL_LABELS.items()] if can_write else [],
+            "channels": [{"key": k, "label": PA.CHANNEL_LABELS[k]} for k in PA.MANUAL_CHANNELS] if can_write else [],
             "reconcile_methods": [{"key": k, "label": v} for k, v in RECONCILE_METHOD_LABELS.items()] if can_write else [],
             "purpose_links": [{"key": k, "label": PURPOSE_REF_LABELS[k]} for k in PERSON_PURPOSE_REFS] if can_write
             else [],

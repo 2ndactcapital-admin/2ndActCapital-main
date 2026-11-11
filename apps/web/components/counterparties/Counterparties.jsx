@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import {
-  IMPORT_EXPORT_NOTE, SIMULATED_NOTE, bookKinds, canAccept, canWrite, conformanceSummary, deliveries, exportHref,
-  groupsOf, labelOf, liveKey, rejectionRows, shortDate, tabsFor, templateHref, typeOf, vocab,
+  IMPORT_EXPORT_NOTE, SIMULATED_NOTE, bookKinds, canAccept, canWrite, conformanceSummary, consentOffered, deliveries,
+  exportHref, groupsOf, labelOf, lastFourRef, liveKey, rejectionRows, shortDate, tabsFor, templateHref, transferRow,
+  typeOf, vocab,
 } from "@/lib/counterparties.mjs";
 
 // CPSIM01 — Admin → Counterparties (Super Admin): the registry of SIMULATED counterparties. Every screen carries the
@@ -280,6 +281,7 @@ function BehaviourTab({ env, d, act }) {
         {b.delay_seconds != null ? <Field label="Delay (seconds)" value={String(b.delay_seconds)} /> : null}
         <Field label="ACH return" value={b.ach_return_code ? `${b.ach_return_code} after ${b.ach_return_after_days} business days` : "none"} />
         <Field label="Webhooks" value={b.webhooks_enabled ? "On" : "Off"} />
+        <Field label="Member consent (transfers)" value={b.consent_required === true ? "Required" : "Not required"} />
       </dl>
       {canWrite(env) && outcomes.length ? (
         <div className="mt-3 flex flex-wrap gap-2" data-testid="behaviour-actions">
@@ -289,6 +291,9 @@ function BehaviourTab({ env, d, act }) {
           <button type="button" className={btn}
             onClick={() => act("behaviour", "PUT", { webhooks_enabled: !b.webhooks_enabled })}>
             {b.webhooks_enabled ? "Webhooks off" : "Webhooks on"}</button>
+          <button type="button" className={btn}
+            onClick={() => act("behaviour", "PUT", { consent_required: !(b.consent_required === true) })}>
+            {b.consent_required === true ? "Consent not required" : "Require member consent"}</button>
         </div>
       ) : null}
     </div>
@@ -306,6 +311,12 @@ export function ClockTab({ env, d, act, advance = null }) {
       {filled ? (
         <div className="mt-2 text-sm" data-testid="advance-filled">
           <p>Advanced {advance.from} → {advance.to}. {filled.length ? `Working orders re-evaluated: ${filled.length}.` : "No working order filled."}</p>
+          {Array.isArray(advance?.transfers) && advance.transfers.length ? (
+            <ul className="mt-1 text-xs" data-testid="advance-transfers">{advance.transfers.map((t) => (
+              <li key={t.transfer_id}>{t.transfer_id} — {t.from} → {t.status}{t.reject_reason ? ` (${t.reject_reason})` : ""}{t.return_code ? ` (${t.return_code})` : ""} · {t.amount} {t.rail}</li>))}</ul>
+          ) : null}
+          {Array.isArray(advance?.fills_cash) && advance.fills_cash.length ? (
+            <p className="text-xs" data-testid="advance-fills-cash">Fills settled in cash: {advance.fills_cash.length}.</p>) : null}
           {filled.length ? <ul className="mt-1 text-xs">{filled.map((f) => (
             <li key={f.order_id}>{f.order_id} — {f.status}{f.reject_reason ? ` (${f.reject_reason})` : ""}{f.executions?.length ? ` · ${f.executions.length} execution(s) at ${f.price}` : ""}</li>))}</ul> : null}
         </div>
@@ -570,6 +581,101 @@ export function OrdersTab({ id, initialOrders }) {
   );
 }
 
+// ── cpsim04: Transfers (a custodian) — what it received, events, consent, returns; its cash ledger ─────────────────
+function TransferTable({ rows, statuses, env, onConsent, showSender = false }) {
+  return (
+    <table className="w-full text-left text-xs">
+      <thead className="text-[#64748B]"><tr><th>Transfer</th>{showSender ? <th>From custodian</th> : null}<th>From</th>
+        <th>To</th><th>Rail</th><th>Amount</th><th>Value date</th><th>Status</th><th>Events</th><th /></tr></thead>
+      <tbody>{rows.map((t) => {
+        const r = transferRow(t, statuses);
+        return (
+          <tr key={r.id} className="border-t border-[#ece8dd] align-top" data-transfer={r.id}>
+            <td>{r.id}<span className="ml-1 rounded border border-[#C5A880] px-1 text-[10px] font-semibold" data-testid="simulated-badge">SIMULATED</span></td>
+            {showSender ? <td>{r.sender}</td> : null}
+            <td>{r.from}</td><td>{r.to}</td><td>{r.rail}</td><td>{r.amount}</td><td>{r.valueDate}</td>
+            <td>{r.status}{r.reason ? ` — ${r.reason}` : ""}{r.returnCode ? ` — ${r.returnCode}` : ""}</td>
+            <td>{r.events.map((e, i) => <div key={i}>{e}</div>)}</td>
+            <td>{onConsent && consentOffered(env, t)
+              ? <button type="button" className={btn} onClick={() => onConsent(r.id)}>Record member consent</button> : null}</td>
+          </tr>);
+      })}</tbody>
+    </table>
+  );
+}
+
+function CashLedger({ rows }) {
+  if (!rows.length) return null;
+  return (
+    <div data-testid="cash-ledger">
+      <h3 className="mt-2 text-sm font-semibold text-navy">Cash ledger (latest moves)</h3>
+      <table className="w-full text-left text-xs">
+        <thead className="text-[#64748B]"><tr><th>Account</th><th>Move</th><th>Reference</th><th>Amount</th><th>Balance after</th><th>On</th></tr></thead>
+        <tbody>{rows.map((m, i) => (
+          <tr key={i} className="border-t border-[#ece8dd]"><td>{m.account_id}</td><td>{m.kind}</td><td>{m.source_ref}</td>
+            <td>{m.amount}</td><td>{m.balance_after}</td><td>{m.effective_date}</td></tr>))}</tbody>
+      </table>
+    </div>
+  );
+}
+
+export function TransfersTab({ id, initialTransfers }) {
+  const [env, setEnv, loadError] = useLoaded(initialTransfers, initialTransfers ? null : `${id}/transfers`);
+  const [error, setError] = useState(null);
+  if (loadError) return <p className="text-sm text-[#9B2335]" data-testid="tab-transfers">{loadError}</p>;
+  if (!env) return <p className="text-sm text-[#64748B]" data-testid="tab-transfers">Loading…</p>;
+  const rows = Array.isArray(env.rows) ? env.rows : [];
+  const statuses = Array.isArray(env.status_labels) ? env.status_labels : [];
+  const limits = Array.isArray(env.v1_limits) ? env.v1_limits : [];
+  async function consent(transferId) {
+    setError(null);
+    try {
+      await call(`${id}/transfers/${encodeURIComponent(transferId)}/consent`, "POST");
+      setEnv(await call(`${id}/transfers`));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  return (
+    <div data-testid="tab-transfers" className="space-y-3">
+      <p className="text-xs text-[#64748B]">Transfers sent by Hollisworks to this SIMULATED custodian. A person approved
+        and sent each one; the clock acknowledges, settles and returns them. Bank details show their last four only.</p>
+      {env.behaviour?.consent_required === true ? <p className="text-xs text-navy" data-testid="consent-on">Member consent is required: a received transfer waits for “Record member consent”.</p> : null}
+      {limits.length ? <ul className="text-xs text-[#64748B]" data-testid="transfers-v1-limits">{limits.map((l) => <li key={l}>{l}</li>)}</ul> : null}
+      {error ? <p className="text-sm text-[#9B2335]">{error}</p> : null}
+      {rows.length ? <TransferTable rows={rows} statuses={statuses} env={env} onConsent={consent} />
+        : <p className="text-sm text-[#64748B]" data-testid="transfers-none">No transfers yet.</p>}
+      <CashLedger rows={Array.isArray(env.cash_movements) ? env.cash_movements : []} />
+    </div>
+  );
+}
+
+// ── cpsim04: Received (a bank) — transfers addressed to it, its cash ledger, the platform accounts linked to it ─────
+export function ReceivedTab({ id, initialReceived }) {
+  const [env, , loadError] = useLoaded(initialReceived, initialReceived ? null : `${id}/received`);
+  if (loadError) return <p className="text-sm text-[#9B2335]" data-testid="tab-received">{loadError}</p>;
+  if (!env) return <p className="text-sm text-[#64748B]" data-testid="tab-received">Loading…</p>;
+  const rows = Array.isArray(env.rows) ? env.rows : [];
+  const links = Array.isArray(env.links) ? env.links : [];
+  const statuses = Array.isArray(env.status_labels) ? env.status_labels : [];
+  return (
+    <div data-testid="tab-received" className="space-y-3">
+      <p className="text-xs text-[#64748B]">Transfers SIMULATED custodians sent to this SIMULATED bank — checked against
+        its fake routing details (shown as last four only) and credited to its book.</p>
+      {rows.length ? <TransferTable rows={rows} statuses={statuses} env={env} showSender />
+        : <p className="text-sm text-[#64748B]" data-testid="received-none">Nothing received yet.</p>}
+      <CashLedger rows={Array.isArray(env.cash_movements) ? env.cash_movements : []} />
+      <div data-testid="bank-links">
+        <h3 className="mt-2 text-sm font-semibold text-navy">Linked platform accounts</h3>
+        {links.length ? <ul className="text-xs">{links.map((l) => (
+          <li key={`${l.org_id}-${l.account_id}`}>{l.org_name} · account {lastFourRef(l.account_number_masked)} → {l.bank_account_id}
+            {Object.entries(l.references || {}).map(([k, v]) => ` · ${k.replace(/_/g, " ")} ${lastFourRef(v)}`).join("")}</li>))}</ul>
+          : <p className="text-xs text-[#64748B]">No platform account is linked to this bank yet.</p>}
+      </div>
+    </div>
+  );
+}
+
 // ── cpsim02: Conformance — run the suite against this counterparty; the last result ──────────────────────────────
 export function ConformanceTab({ id, initialConformance }) {
   const [env, setEnv, loadError] = useLoaded(initialConformance, initialConformance ? null : `${id}/conformance`);
@@ -611,7 +717,7 @@ export function ConformanceTab({ id, initialConformance }) {
 }
 
 export function CounterpartyDetail({ envelope, requests, initialTab = "connection", book = null, connections = null,
-  conformance = null, orders = null, initialAdvance = null }) {
+  conformance = null, orders = null, initialAdvance = null, transfers = null, received = null }) {
   const [env, setEnv] = useState(envelope);
   const [advance, setAdvance] = useState(initialAdvance);
   const [log, setLog] = useState(requests);
@@ -644,6 +750,8 @@ export function CounterpartyDetail({ envelope, requests, initialTab = "connectio
     webhooks: <WebhooksTab env={env} d={env} act={act} requests={log} />,
     conformance: <ConformanceTab id={id} initialConformance={conformance} />,
     orders: <OrdersTab id={id} initialOrders={orders} />,
+    transfers: <TransfersTab id={id} initialTransfers={transfers} />,
+    received: <ReceivedTab id={id} initialReceived={received} />,
   };
   return (
     <section className={card} data-testid="cp-detail">

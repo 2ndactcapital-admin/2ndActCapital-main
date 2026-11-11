@@ -172,12 +172,58 @@ def guard_installed() -> bool:
 
 # ── VERIFYFIX1 — one nested-run helper: run a verify flat, judge it by its OWN final TOTAL line + exit code ────────
 
+# ── CPSIM04 FIX 1 — REGRESSION MODE: one full regression run at the end of the sprint cycle ─────────────────────────
+#
+# ``VERIFY_REGRESSIONS`` decides how every nested verify runs (Joe, 2026-11-11):
+#   * unset / ``fast`` (the DEFAULT — what run_sprint.sh gets): the nested verify runs with ``--self-checks-only``
+#     (its static / self-check proof, seconds), still judged by its OWN final TOTAL line + exit code, still a [FAIL]
+#     on any FAIL. A nested script that has no ``--self-checks-only`` mode is a FAIL ("no --self-checks-only") —
+#     never silently skipped. One "[INFO] full regression deferred …" line is printed per process.
+#   * ``full`` (scripts/run_regressions.sh sets it): today's behaviour exactly — the full nested verify, flat, after
+#     teardown, VERIFY_NESTED=1, the caller's timeout (2700 s).
+# Any other value is refused (a typo never silently picks a mode).
+
+REGRESSION_MODES = ("fast", "full")
+FAST_TIMEOUT = 600
+_MODE_NOTED = {"done": False}
+
+
+def regression_mode() -> str:
+    v = (_os.environ.get("VERIFY_REGRESSIONS") or "fast").strip().lower()
+    if v not in REGRESSION_MODES:
+        raise ValueError(f"VERIFY_REGRESSIONS={v!r} — expected one of {REGRESSION_MODES} (unset = fast)")
+    return v
+
+
+def has_self_checks_only(script) -> bool:
+    """True when the nested verify's own source dispatches on ``--self-checks-only``."""
+    try:
+        with open(str(script), encoding="utf-8") as fh:
+            return "--self-checks-only" in fh.read()
+    except OSError:
+        return False
+
+
 def run_nested(script, *args: str, cwd=None, timeout: int = 2700, env_extra: dict | None = None,
                python: str | None = None):
     """Run ``python -u <script> *args`` in the foreground with VERIFY_NESTED=1; return (NestedTotal, out, err, code).
 
+    Honours ``VERIFY_REGRESSIONS`` (see above): in ``fast`` mode ``--self-checks-only`` is appended (once) and the
+    timeout is capped at FAST_TIMEOUT; ``full`` is the unchanged full run.
     A timeout returns code 124 and a NestedTotal that is never ok (``nested_total(out, None)``)."""
     import subprocess
+    mode = regression_mode()
+    args = tuple(args)
+    if mode == "fast":
+        if not _MODE_NOTED["done"]:
+            _MODE_NOTED["done"] = True
+            print("[INFO] full regression deferred to the cycle-end run (VERIFY_REGRESSIONS=full)", flush=True)
+        if not has_self_checks_only(script):
+            return (NestedTotal(False, None, None, None, "no --self-checks-only (fast regression mode cannot run it)"),
+                    "", "no --self-checks-only", 2)
+        if "--self-checks-only" not in args:
+            args = args + ("--self-checks-only",)
+        timeout = min(timeout, FAST_TIMEOUT)
     env = dict(_os.environ)
     env["VERIFY_NESTED"] = "1"
     env.update(env_extra or {})

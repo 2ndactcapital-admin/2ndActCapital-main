@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 1057 · guarded 251 · sql-scope 53 · body-check 15 · legacy-rule 3
+Routes: 1064 · guarded 254 · sql-scope 53 · body-check 15 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -65,9 +65,13 @@ Routes: 1057 · guarded 251 · sql-scope 53 · body-check 15 · legacy-rule 3
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/key/generate` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/key/revoke` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/key/rotate` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/links` | admin_counterparties | scrub |
 | GET | `/api/v1/admin/counterparties/{counterparty_id}/orders` | admin_counterparties | scrub |
+| GET | `/api/v1/admin/counterparties/{counterparty_id}/received` | admin_counterparties | scrub |
 | GET | `/api/v1/admin/counterparties/{counterparty_id}/requests` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/test-message` | admin_counterparties | scrub |
+| GET | `/api/v1/admin/counterparties/{counterparty_id}/transfers` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/transfers/{transfer_id}/consent` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/webhooks/test` | admin_counterparties | scrub |
 | GET | `/api/v1/admin/edgar/bulk/institutions` | edgar_pipeline_admin | scrub |
 | POST | `/api/v1/admin/edgar/bulk/preview` | edgar_pipeline_admin | scrub |
@@ -307,8 +311,11 @@ Routes: 1057 · guarded 251 · sql-scope 53 · body-check 15 · legacy-rule 3
 | GET | `/api/v1/cash/households/{household_id}/payments/options` | payments | guard:household_id, scrub |
 | GET | `/api/v1/cash/households/{household_id}/payments/{payment_id}` | payments | guard:household_id, scrub |
 | POST | `/api/v1/cash/households/{household_id}/payments/{payment_id}/approve` | payments | guard:household_id, scrub |
+| GET | `/api/v1/cash/households/{household_id}/payments/{payment_id}/custodian-transfer` | payments | guard:household_id, scrub |
 | GET | `/api/v1/cash/households/{household_id}/payments/{payment_id}/matches` | payments | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payments/{payment_id}/refresh-from-custodian` | payments | guard:household_id, scrub |
 | POST | `/api/v1/cash/households/{household_id}/payments/{payment_id}/reject` | payments | guard:household_id, scrub |
+| POST | `/api/v1/cash/households/{household_id}/payments/{payment_id}/send-to-custodian` | payments | guard:household_id, scrub |
 | POST | `/api/v1/cash/households/{household_id}/payments/{payment_id}/sheet` | payments | guard:household_id, scrub |
 | POST | `/api/v1/cash/households/{household_id}/payments/{payment_id}/{action}` | payments | guard:household_id, scrub |
 | POST | `/api/v1/cash/households/{household_id}/plan/regenerate` | cash | guard:household_id, sql-scope, body-check, scrub |

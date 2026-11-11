@@ -344,6 +344,52 @@ This file starts with the email item below.
 ---
 
 
+## CPSIM04 — the simulated custodian MOVES MONEY and the simulated BANKS answer: a person sends an approved payment to the simulator's transfers API and refreshes its status through the existing payment steps (counterparty simulator v1 COMPLETE)
+
+Branch cpsim04-work (2026-11-11). Notes: `docs/cpsim/CPSIM04_NOTES.md` (Task 1 findings, D1–D11 as built, reuse
+inventory, differences, loader dry-run, diff review, conformance run). Contract: `ALTRUIST_CONTRACT.md` §9 "Transfers
+(ASSUMED — no published Altruist money-movement API seen)". Operator guide: `CPSIM_ADMIN.md` §13 (incl. the full demo
+script). Payments guide: `docs/cash/CASH_PAYMENTS.md` (Adapters).
+
+- **Schema.** `docs/cpsim04_part1.sql` APPLIED (`scripts/_apply_cpsim04.py --all`, 22/22 read back from the catalog):
+  `cpsim.transfers` (system axis; bank references last four only, a CHECK), `cpsim.transfer_events` and
+  `cpsim.cash_movements` (append-only), `counterparty_behaviour.consent_required`, the book's transaction-type CHECK +
+  the 7 cash types — cpsim_app only (withheld grants added to the ONE shared list). **No public DDL** (catalog: no CHECK
+  on `sent_channel` / `adapter` / `source_system`; `external_ref` exists; D2 maps to existing codes). Snapshot refreshed.
+- **Simulator.** `cpsim/transfers.py` + `POST/GET /v2/transfers`, `GET/DELETE /v2/transfers/{id}`; `cpsim/ledger.py`
+  (the cash row is the running balance; idempotent movements; fills' cash on their settle date); banks' receive path
+  (routing / BIC / IBAN references, the account, the bank's behaviour, receiver-side ACH returns); consent; the clock
+  acknowledges delayed transfers, settles and returns; `transfer.updated` after commit. Admin: Transfers tab (consent,
+  returns, ledger), banks' Received tab + Link, Behaviour → consent, the advance's report.
+- **Hollisworks.** `services/altruist_transfers.py` (simulator only; transport on every call; session-then-release);
+  `AltruistSimulatorPaymentAdapter` — the only connected payment adapter, key `altruist_simulator`;
+  `services/payment_custodian.py` (D4 all-or-manual, Send → the EXISTING `mark_sent` with channel `custodian_api`,
+  Refresh → the EXISTING consent / acknowledge / settle / reject / return functions, one edge at a time, the refresher
+  the actor; the webhook to-do). Routes: `POST …/send-to-custodian` (initiate_payment), `POST …/refresh-from-custodian`
+  and `GET …/custodian-transfer` (initiate OR approve), admin transfers / consent / received / links (Super Admin).
+  D2: the client maps `transfer_*` / `ach_*` / `wire_*` → sell / buy, `ach_return` → adjustment (additive).
+  `cash.payment_refresh` declared NEVER, not registered. Third-party payments untouched and OFF.
+- **Capability loader** `scripts/cpsim04_capabilities.py` — run `--dry-run` only (6 to set); NOT applied. cpsim03's
+  loader skips the payment keys once cpsim04's are recorded.
+- **Conformance.** `transfers` group T01–T16; in-process run **51 PASS, 0 FAIL**, 0 leftovers; `--target sandbox`
+  skips it ("no published Altruist money-movement contract").
+- **UI.** Payment page: custodian panel (Send to custodian (simulated) / why it is manual / the custodian's events /
+  Refresh), the reconcile picker preselecting the transfer's feed rows, SIMULATED badges; the manual route beside it.
+  Admin: Transfers / Received tabs. `tests/cpsim04` 8/8 (with cash07, cpsim01–03: 45/45).
+- **Verify.** `apps/api/scripts/verify_cpsim04.py` WRITTEN, NOT RUN. Regressions: verify_cpsim03, verify_cash07,
+  verify_cash08, verify_authz1. In `scripts/regression_set.txt`. AUTHZ1_ROUTES / VISIBILITY1_ROUTES regenerated (CURRENT).
+- **Operator steps.** (1) `python3 apps/api/scripts/cpsim04_capabilities.py --apply --actor-email <Super Admin>`
+  (and cpsim03's loader); (2) add `altruist_simulator` to `cash.payment_adapters` for the DEMO org only; (3) run the
+  verify.
+- **Findings logged** (CPSIM04_NOTES §4): no cash-transfer vocabulary exists (buy / sell / adjustment by sign — the
+  grid labels a transfer "Buy" / "Sell"); `mark_sent` hard-coded the manual adapter (now an internal argument); a bank's
+  legs are booked on the SENDING custodian's clock; the send-time webhook can arrive before the payment is marked sent
+  (no to-do; later events raise one); fills move cash only where the book has a cash row; cpsim01's Bank details tab
+  still shows the generated fake numbers in full (cpsim01's design, unchanged).
+
+- **Operator step (CPSIM04 FIX 1, regression mode).** full regression: scripts/run_regressions.sh at the end of each sprint cycle — unattended, clear of 07:00 UTC. Sprint verifies now run their nested verifies `--self-checks-only` by default (`VERIFY_REGRESSIONS` unset / `fast`); `run_regressions.sh` sets `VERIFY_REGRESSIONS=full` (docs/VERIFY_RULES.md).
+- **UPDATE (fix 1, 2026-11-11, DONE).** verify_cpsim04 run 1: TOTAL 257 PASS, 9 FAIL. Decided in CPSIM04_NOTES "Fix 1 findings": D1 / D2 VERIFY (hard-wrapped docs; checks match normalised text, D2 stricter); R CODE + VERIFY (the manual decision now always carries its D4 reason; the payment page's panel shows why for a source also crosswalked to real Altruist, never offering Send); G VERIFY (REGISTRY.all(); every action, sweep and the scheduler tick, whose path had been silently skipped; positive control); C VERIFY (isolation sets its own clock; no isolation defect); N1 VERIFY (cpsim03 §8 slice and trade-send scan by module); N2 VERIFY (authz1_routes ANDs any-of gates; 2 routes regenerated). One-offs: routing 106/0, governance 108/0, isolation 89/0, unchanged+safety 100/0, self-checks 55/0, cleanup 0 rows; cpsim03 self-checks 37/0 + governance 97/0; route docs CURRENT. Full verify NOT run (WSL memory). Task 0: VERIFY_REGRESSIONS fast (the default) / full. Run 2: 288 PASS / 1 FAIL — **fix 2: render-test count (VERIFY)**: the cpsim04 render test file now holds 9 tests (fix 1 added the manual-route reason test); the expected count is derived from the file's own `test(` declarations (and must be >= 9), never a constant. One-offs: `--only=front_end` (SKIP_BUILD=1) 3/0 — render tests 9/9, `node --test tests/` 0 fail; `--self-checks-only` 55/0. Full verify and npm build NOT run.
+
 ## CPSIM03 — the simulated custodian TRADES: a person sends an approved instruction to the simulated Altruist-compatible orders API, imports the fills through enter_fill, reconciles against the synced feed
 
 Branch cpsim03-work (2026-11-11). Notes: `docs/cpsim/CPSIM03_NOTES.md` (Task 1 findings, D1–D11 as built, reuse

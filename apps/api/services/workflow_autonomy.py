@@ -89,6 +89,10 @@ VERB_AUTONOMY: dict[str, dict] = {
                              "writes": "approves a payment instruction (the S30 floor) — a different person only"},
     "cash.payment_send": {"class": NEVER, "money": True,
                           "writes": "sends a payment instruction through its adapter — a person only"},
+    # cpsim04 — reading the (simulated) custodian's transfer status and applying it to the payment: a person only
+    "cash.payment_refresh": {"class": NEVER, "money": True,
+                             "writes": "applies a custodian's transfer status (acknowledge / settle / reject / return) "
+                                       "to a payment instruction — a person only"},
     # CASH06 — a cash rule's firing (stage A). DRAFT + SUBMIT only: each instruction lands pending_approval with its
     # approval task, the rule OWNER as its maker, so a DIFFERENT person approves (the cash07 floor). Approve / send /
     # reconcile stay never (above, unregistered). Capped: the rule's own per-firing $ and per-day count (≤ the org

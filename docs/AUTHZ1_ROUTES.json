@@ -1,5 +1,5 @@
 {
- "app_route_count": 1064,
+ "app_route_count": 1071,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -18415,6 +18415,68 @@
    "write": true
   },
   {
+   "after": "authz initiate_payment; any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.payments",
+   "name": "payment_send_to_custodian_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}/send-to-custodian",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(initiate_payment|approve_payment); any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_payment",
+     "initiate_payment"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.payments",
+   "name": "payment_refresh_from_custodian_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}/refresh-from-custodian",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(initiate_payment|approve_payment); any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_payment",
+     "initiate_payment"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.payments",
+   "name": "payment_custodian_transfer_route",
+   "note": "",
+   "path": "/api/v1/cash/households/{household_id}/payments/{payment_id}/custodian-transfer",
+   "public": false,
+   "write": false
+  },
+  {
    "after": "authz approve_payment; any(view_portfolio|initiate_payment|approve_payment); member scope (own family / published deals; staff unscoped)",
    "before": "\u2014",
    "before_effect": "new route",
@@ -20835,6 +20897,78 @@
     "GET"
    ],
    "module": "routers.admin_counterparties",
+   "name": "transfers",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/transfers",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "record_consent",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/transfers/{transfer_id}/consent",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "received",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/received",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "link_account",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/links",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
    "name": "request_log",
    "note": "",
    "path": "/api/v1/admin/counterparties/{counterparty_id}/requests",
@@ -21845,6 +21979,42 @@
    "module": "cpsim.app",
    "name": "transactions_endpoint",
    "path": "/cpsim/c/{slug}/v2/transactions"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "transfer_list",
+   "path": "/cpsim/c/{slug}/v2/transfers"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "POST"
+   ],
+   "module": "cpsim.app",
+   "name": "transfer_create",
+   "path": "/cpsim/c/{slug}/v2/transfers"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "cpsim.app",
+   "name": "transfer_cancel",
+   "path": "/cpsim/c/{slug}/v2/transfers/{transfer_id}"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "transfer_get",
+   "path": "/cpsim/c/{slug}/v2/transfers/{transfer_id}"
   },
   {
    "auth": "none (liveness only)",
