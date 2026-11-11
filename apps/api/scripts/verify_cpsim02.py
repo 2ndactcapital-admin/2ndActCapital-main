@@ -1697,7 +1697,11 @@ async def y_isolation(conn):
     check(cs == HTTP_OK and real_x0 is not None and real_x1["last_seen"] == real_x0["last_seen"] and
           real_p1 == real_p0, "a SIMULATOR sync never touches the account crosswalked to REAL Altruist (same external "
           "id in the book): its last_seen and its positions unchanged", f"{real_p0} → {real_p1}")
-    # the other direction: a SANDBOX sync (mock transport, no network) for org T
+    # the other direction: a SANDBOX sync (mock transport, no network) for org T. cpsim02 fix 1: the simulator
+    # baseline is read HERE, after the simulator sync above (which legitimately re-confirms A1's simulator crosswalk,
+    # advancing its last_seen) — the claim is about the SANDBOX sync, so it is measured across exactly that sync
+    sim_x0 = await _xwalk(conn, ORG_T, SIM_XWALK, A1)
+    sim_p0 = await _acct_counts(conn, ORG_T, ACC_T1)
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true), "
                            "set_config('app.current_org_id', $1, true)", str(ORG_T))
@@ -1725,7 +1729,9 @@ async def y_isolation(conn):
           len(ident["resolved"]) == 1, "a SANDBOX sync never touches an ALTRUIST_SIMULATOR account: the simulator "
           "crosswalk's last_seen and its positions unchanged; the simulator's account id is just an unmatched real "
           "account (its own exception); only the real account syncs (tagged 'altruist')",
-          f"sim {sim_p0}→{sim_p1} real {real_p0}→{real_p2} {exc} {srcs}")
+          f"sim {sim_p0}→{sim_p1} real {real_p0}→{real_p2} {exc} {srcs}; sim last_seen unchanged="
+          f"{sim_x1['last_seen'] == sim_x0['last_seen']}; accounts_synced={res.accounts_synced}; "
+          f"resolved={len(ident['resolved'])}")
     if NETWORK_CALLS:
         check(False, "the sandbox sync made no network call", f"{NETWORK_CALLS[:2]}")
     # the flag off: T2 has no flag yet
