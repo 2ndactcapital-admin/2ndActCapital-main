@@ -969,7 +969,8 @@ async def run_conformance(request: Request, counterparty_id: UUID, body: Conform
         cp = await R._require(c, counterparty_id)
         cid = await c.fetchval("SELECT id::text FROM cpsim.counterparty_credentials WHERE counterparty_id = $1::uuid "
                                "AND kind = 'api_key' AND rotated_at IS NULL AND revoked_at IS NULL", str(counterparty_id))
-        return {"slug": cp["slug"], "status": cp["status"], "client_id": cid}
+        return {"slug": cp["slug"], "status": cp["status"], "client_id": cid,
+                "clock": await R.business_date(c, counterparty_id)}
     principal, cp, types = await _sim(request, fn)
     if not cp["client_id"] or cp["status"] != "active":
         raise HTTPException(status_code=409, detail="the counterparty needs a live key and to be active")
@@ -977,7 +978,7 @@ async def run_conformance(request: Request, counterparty_id: UUID, body: Conform
     root = "https://cpsim.internal/cpsim/c/" + cp["slug"]
     transport = httpx.ASGITransport(app=Starlette(routes=[Mount("/cpsim", app=cpsim_app)]))
     out = await ACF.run(environment="simulator", hosts={"api_base": root, "login_base": root},
-                        credentials=(cp["client_id"], body.key), transport=transport)
+                        credentials=(cp["client_id"], body.key), transport=transport, today=cp["clock"])
 
     async def store(c):
         rid = await c.fetchval(

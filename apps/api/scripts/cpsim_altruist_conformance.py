@@ -24,7 +24,7 @@ import pathlib
 import secrets
 import socket
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -83,18 +83,30 @@ def fixture_book(security: dict | None, as_of: date) -> dict:
     txn = [{"transaction_id": "conf-txn-int", "account_id": acct, "type": "interest",
             "trade_date": as_of.isoformat(), "row_type": "cash", "name": "Cash", "gross_amount": "1.25",
             "net_amount": "1.25", "currency_code": "USD"}]
+    lots = []
     if security:
         pos.append({"position_id": "conf-pos-sec", "account_id": acct, "as_of": as_of.isoformat(),
                     "row_type": "security", security["id_type"]: security["id_value"], "quantity": "10",
-                    "market_value": "1000.00", "currency_code": "USD"})
+                    "market_value": "1000.00", "cost_basis": "900.00", "currency_code": "USD"})
+        # ALTREAD1 — two uploaded tax lots for the security (the cost-basis route serves them)
+        lots = [{"lot_id": "conf-lot-1", "account_id": acct, "as_of": as_of.isoformat(),
+                 security["id_type"]: security["id_value"], "quantity": "6", "market_value": "600.00",
+                 "cost_basis_unadjusted": "500.00", "cost_basis_adjusted": "510.00",
+                 "open_date": (as_of - timedelta(days=730)).isoformat(), "currency_code": "USD"},
+                {"lot_id": "conf-lot-2", "account_id": acct, "as_of": as_of.isoformat(),
+                 security["id_type"]: security["id_value"], "quantity": "4", "market_value": "400.00",
+                 "cost_basis_unadjusted": "390.00", "cost_basis_adjusted": "390.00",
+                 "open_date": as_of.isoformat(), "currency_code": "USD"}]
         txn.append({"transaction_id": "conf-txn-buy", "account_id": acct, "type": "buy",
                     "trade_date": as_of.isoformat(), "row_type": "security", security["id_type"]: security["id_value"],
                     "quantity": "10", "price": "100", "gross_amount": "1000", "net_amount": "1000",
                     "currency_code": "USD"})
-    return {"households": [{"household_id": hh, "name": "Conformance household"}],
+    return {"households": [{"household_id": hh, "name": "Conformance household"},
+                           # ALTREAD1 — a second household so the paging check (C10) walks more than one page
+                           {"household_id": "conf-hh-2", "name": "Conformance household two"}],
             "accounts": [{"account_id": acct, "household_id": hh, "name": "Conformance account"},
                          {"account_id": "conf-acct-2", "household_id": hh, "name": "Conformance account 2"}],
-            "positions": pos, "transactions": txn}
+            "positions": pos, "transactions": txn, "lots": lots}
 
 
 async def _pick_security(conn, as_of: date) -> dict | None:
@@ -167,7 +179,7 @@ def order_webhook_check() -> dict:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-    return {"id": "O14", "contract": "§8.4", "label": "order webhook: {event_id, event_type, order_id, client_order_id, "
+    return {"id": "O14", "contract": "ASSUMED (not published — Realtime / FIX) §8.4", "label": "order webhook: {event_id, event_type, order_id, client_order_id, "
             "account_id, environment, occurred_at}, signed and verified as §6.7 (forces the simulator)", "passed": ok,
             "detail": detail}
 
@@ -197,7 +209,7 @@ def transfer_webhook_check() -> dict:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-    return {"id": "T16", "contract": "§9.5", "label": "transfer webhook: {event_id, event_type, transfer_id, "
+    return {"id": "T16", "contract": "ASSUMED (not published — Realtime / FIX) §9.5", "label": "transfer webhook: {event_id, event_type, transfer_id, "
             "client_transfer_id, account_id, environment, occurred_at}, signed and verified as §6.7 (forces the "
             "simulator)", "passed": ok, "detail": detail}
 
@@ -273,7 +285,7 @@ async def run_in_process(json_out: pathlib.Path, *, transform=None) -> dict:
             tfx = {"from": "conf-acct-1", "to": "conf-acct-2", "cash": "1250.00", "value_date": clock.isoformat(),
                    **banks}
             out = await AC.run(environment=AO.SIMULATOR, hosts=hosts, credentials=(cp["client_id"], cp["key"]),
-                               transport=transport, orders=fx, transfers=tfx)
+                               transport=transport, orders=fx, transfers=tfx, today=clock)
         if not sec:      # cpsim03 — the orders group needs a priced equity / fund: its absence is a failure, not a skip
             out["results"].append({"id": "O00", "contract": "§8 (orders)", "label": "orders group: a priced equity / "
                                    "fund security with a CUSIP exists for the fixture book", "passed": False,

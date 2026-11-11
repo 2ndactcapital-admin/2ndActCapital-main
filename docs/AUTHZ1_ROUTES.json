@@ -1,5 +1,5 @@
 {
- "app_route_count": 1071,
+ "app_route_count": 1072,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -20544,6 +20544,28 @@
    "write": true
   },
   {
+   "after": "authz view_proposals; entity access",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": true
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.custodian_feed",
+   "name": "account_feed",
+   "note": "",
+   "path": "/api/v1/custodian-feed/accounts/{account_id}",
+   "public": false,
+   "write": false
+  },
+  {
    "after": "staff or authz manage_org_settings",
    "before": "\u2014",
    "before_effect": "new route",
@@ -21887,6 +21909,15 @@
     "GET"
    ],
    "module": "cpsim.app",
+   "name": "oauth_authorize",
+   "path": "/cpsim/c/{slug}/api/oauth2/authorize"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
    "name": "households",
    "path": "/cpsim/c/{slug}/api/v2/households"
   },
@@ -21902,20 +21933,11 @@
   {
    "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
    "methods": [
-    "GET"
-   ],
-   "module": "cpsim.app",
-   "name": "oauth_authorize",
-   "path": "/cpsim/c/{slug}/oauth/authorize"
-  },
-  {
-   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
-   "methods": [
     "POST"
    ],
    "module": "cpsim.app",
    "name": "oauth_token",
-   "path": "/cpsim/c/{slug}/oauth/token"
+   "path": "/cpsim/c/{slug}/oauth2/token"
   },
   {
    "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
@@ -21925,6 +21947,33 @@
    "module": "cpsim.app",
    "name": "accounts",
    "path": "/cpsim/c/{slug}/v2/accounts"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "cost_basis_endpoint",
+   "path": "/cpsim/c/{slug}/v2/accounts/{account_id}/cost-basis/"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "positions_endpoint",
+   "path": "/cpsim/c/{slug}/v2/accounts/{account_id}/positions/"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "transactions_endpoint",
+   "path": "/cpsim/c/{slug}/v2/accounts/{account_id}/transactions"
   },
   {
    "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
@@ -21961,24 +22010,6 @@
    "module": "cpsim.app",
    "name": "order_get",
    "path": "/cpsim/c/{slug}/v2/orders/{order_id}"
-  },
-  {
-   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
-   "methods": [
-    "GET"
-   ],
-   "module": "cpsim.app",
-   "name": "positions_endpoint",
-   "path": "/cpsim/c/{slug}/v2/positions"
-  },
-  {
-   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
-   "methods": [
-    "GET"
-   ],
-   "module": "cpsim.app",
-   "name": "transactions_endpoint",
-   "path": "/cpsim/c/{slug}/v2/transactions"
   },
   {
    "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",

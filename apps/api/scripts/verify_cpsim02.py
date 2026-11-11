@@ -111,9 +111,11 @@ ROUTES = {("GET", _I + "/book"): _SA, ("GET", _I + "/book/template"): _SA, ("POS
           ("POST", _I + "/connections/{target_org_id}/connect"): _SA,
           ("POST", _I + "/connections/{target_org_id}/sync"): _SA,
           ("GET", _I + "/conformance"): _SA, ("POST", _I + "/conformance"): _SA}
-SIM_ROUTES = {("GET", "/cpsim/c/{slug}/oauth/authorize"), ("POST", "/cpsim/c/{slug}/oauth/token"),
+# ALTREAD1 — the simulator's OAuth + read routes moved to Altruist's PUBLISHED paths (docs/altruist/ALTREAD1_NOTES.md)
+SIM_ROUTES = {("GET", "/cpsim/c/{slug}/api/oauth2/authorize"), ("POST", "/cpsim/c/{slug}/oauth2/token"),
               ("GET", "/cpsim/c/{slug}/api/v2/households"), ("GET", "/cpsim/c/{slug}/v2/accounts"),
-              ("GET", "/cpsim/c/{slug}/v2/positions"), ("GET", "/cpsim/c/{slug}/v2/transactions")}
+              ("GET", "/cpsim/c/{slug}/v2/accounts/{account_id}/positions/"),
+              ("GET", "/cpsim/c/{slug}/v2/accounts/{account_id}/transactions")}
 NODE_TEST = "tests/cpsim02/cpsim02.test.mjs"
 NODE_TEST_COUNT = 8
 NOTES = REPO / "docs" / "cpsim" / "CPSIM02_NOTES.md"
