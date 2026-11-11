@@ -1,6 +1,7 @@
 """Payment adapters (CASH07, stage A) — the provider-neutral interface a custodian's payment API would implement,
 beside the trade routers (services/execution_routers.py: the same shape — name, capabilities, send, status — and the
-same "not connected" discipline). ONLY THE MANUAL ADAPTER SHIPS.
+same "not connected" discipline). The MANUAL adapter is the default route; cpsim04 adds ONE connected implementation —
+for a SIMULATED custodian only (:class:`AltruistSimulatorPaymentAdapter`, key ``altruist_simulator``).
 
     ManualPaymentAdapter   "sends" by rendering the printable PAYMENT SHEET (services.execution_letter's variant) for
                            the operator to give the custodian; the instruction moves to SENT only when the operator
@@ -10,9 +11,12 @@ same "not connected" discipline). ONLY THE MANUAL ADAPTER SHIPS.
                            no code connects) refuses EVERY call with the reason. No client code, no socket, no HTTP.
 
 REGISTRY (:func:`adapter_for`): the source account → its custodian key (services.custody.registry.trade_custodian_key,
-the key custodian_capabilities uses) → the org's enabled direct adapter for that custodian (org setting
-``cash.payment_adapters``: a list of custodian keys) → else MANUAL. An enabled custodian with no connected
-implementation resolves to NotConnected — refused with its reason, never silently re-routed, so a person sees why.
+the key custodian_capabilities uses — cpsim04: ``altruist_simulator`` for an account crosswalked to a SIMULATED
+Altruist-compatible custodian, set by services.payments.load_account) → the org's enabled direct adapter for that
+custodian (org setting ``cash.payment_adapters``: a list of custodian keys) → else MANUAL. An enabled custodian with
+no connected implementation resolves to NotConnected — refused with its reason, never silently re-routed, so a person
+sees why. The simulator adapter is chosen only when the caller's D4 route (services.payment_custodian.simulator_route)
+holds; otherwise the source routes MANUAL with that reason (``route_reason``).
 
 THE CUSTODY CLIFF. Money movement never gets an agent, and nothing here sends money by itself: a connected adapter
 (none exists) would still send only what a PERSON approved (services.payments: the S30 floor), on a person's action.
@@ -34,11 +38,15 @@ from dataclasses import dataclass, field
 
 MANUAL = "manual"
 ORG_SETTING = "cash.payment_adapters"
+SIMULATOR_KEY = "altruist_simulator"       # cpsim04 — the SIMULATED Altruist-compatible custodian's payment API
+CUSTODIAN_API = "custodian_api"           # cpsim04 — recorded ONLY by "Send to custodian" (never "Confirm sent")
 CHANNEL_LABELS = {
     "custodian_portal": "Custodian portal (uploaded / keyed by the operator)", "email": "Email to the custodian",
     "secure_message": "Custodian secure message", "fax": "Fax", "phone": "Phone (recorded line)",
-    "in_person": "In person", "other": "Other",
+    "in_person": "In person", "other": "Other", CUSTODIAN_API: "Custodian API (simulated)",
 }
+#: the channels a PERSON may confirm with "Confirm sent" (the manual route) — never the custodian API
+MANUAL_CHANNELS = tuple(k for k in CHANNEL_LABELS if k != CUSTODIAN_API)
 NOT_CONNECTED_REASON = ("no payment adapter is connected for {custodian} — none is contracted (cash07 builds the "
                         "interface only: no client code, no network). Use the manual route: download the payment sheet, "
                         "send it to the custodian and confirm the channel")
@@ -63,6 +71,7 @@ class StatusResult:
     known: bool
     status: str | None = None              # acknowledged / settled / rejected / returned (a connected adapter only)
     note: str | None = None
+    detail: dict | None = None             # cpsim04 — the custodian's full status record (events, dates, codes)
 
 
 class PaymentAdapter(ABC):
@@ -119,8 +128,54 @@ class NotConnectedPaymentAdapter(PaymentAdapter):
         raise PaymentAdapterNotConnected(self.reason)
 
 
-#: connected implementations by custodian key — NONE in stage A (the manual adapter is the route, not a custodian's)
-_CONNECTED: dict[str, type[PaymentAdapter]] = {}
+class AltruistSimulatorPaymentAdapter(PaymentAdapter):
+    """cpsim04 D5 — the SIMULATED Altruist-compatible custodian's transfers API (docs/cpsim/ALTRUIST_CONTRACT.md §9,
+    every field ASSUMED), through services/altruist_transfers.py. The checklist above, for a simulator: (1) no real
+    custodian, so no API terms — simulated only, never real Altruist; (2) send is idempotent on the instruction id
+    (``client_transfer_id``); (3) the access token comes from the org's simulator connection (Doppler-held secrets
+    only); (4) ``connected`` because it is certified against itself by the conformance ``transfers`` group, and the
+    capability rows for ``altruist_simulator`` are written only by the operator's loader; (5) manual stays offered and
+    the default. Reached ONLY through services.payment_custodian's person actions — never by itself.
+
+    ``send`` / ``status`` take a SESSION (services.altruist_transfers.transfer_session) read by the caller, which then
+    released its database connection — no transaction is held open across the HTTP call."""
+
+    key = SIMULATOR_KEY
+    label = "Simulated custodian — transfers API (SIMULATED)"
+    connected = True
+    capabilities = ("ach", "wire", "journal", "payment_status_feed")
+
+    def __init__(self, route: dict | None = None):
+        self.route = route or {}
+
+    async def send(self, instruction: dict, *, session: dict | None = None, body: dict | None = None,
+                   transport=None, **kw) -> SendResult:
+        from services import altruist_transfers as AT
+
+        if session is None or body is None:
+            raise PaymentAdapterNotConnected("the simulated custodian is reached only through Send to custodian")
+        http_status, transfer = await AT.submit_with_session(session, transfer=body, transport=transport)
+        res = SendResult(accepted=bool(transfer.get("transfer_id")), adapter=self.key,
+                         reference=transfer.get("transfer_id"),
+                         notes=[f"HTTP {http_status}", f"custodian status {transfer.get('status')}"])
+        res.transfer = transfer          # the custodian's record (the caller checks it is this instruction's)
+        res.http_status = http_status
+        return res
+
+    async def status(self, reference: str | None, *, session: dict | None = None, transport=None) -> StatusResult:
+        from services import altruist_transfers as AT
+
+        if not reference or session is None:
+            return StatusResult(known=False, note="no custodian transfer to read")
+        t = await AT.fetch_with_session(session, transfer_id=reference, transport=transport)
+        st = t.get("status")
+        return StatusResult(known=bool(t), status=st if st in ("acknowledged", "settled", "rejected", "returned")
+                            else None, note=t.get("reject_reason") or t.get("return_reason"), detail=t)
+
+
+#: connected implementations by custodian key — cpsim04: the SIMULATED custodian only (the manual adapter is the route,
+#: not a custodian's; no real custodian's payment API is connected)
+_CONNECTED: dict[str, type[PaymentAdapter]] = {SIMULATOR_KEY: AltruistSimulatorPaymentAdapter}
 
 
 def manual() -> ManualPaymentAdapter:
@@ -134,9 +189,11 @@ def registry() -> dict[str, dict]:
 
 
 def custodian_key(account: dict) -> str:
+    """The payment custodian key: ``altruist_simulator`` when services.payments resolved the account to a SIMULATED
+    custodian (``payment_custodian``), else exactly the trade key as before."""
     from services.custody.registry import trade_custodian_key
 
-    return trade_custodian_key(account.get("custodian_code"))
+    return account.get("payment_custodian") or trade_custodian_key(account.get("custodian_code"))
 
 
 def enabled_from_setting(value) -> set[str]:
@@ -147,10 +204,19 @@ def enabled_from_setting(value) -> set[str]:
     return set()
 
 
-def adapter_for(account: dict, enabled: set[str] | None) -> PaymentAdapter:
+def adapter_for(account: dict, enabled: set[str] | None, route: dict | None = None) -> PaymentAdapter:
     """account → custodian → the org's enabled adapter for it → else manual. An enabled custodian with no connected
-    implementation is NotConnected (refuses with the reason) — never a silent fallback."""
+    implementation is NotConnected (refuses with the reason) — never a silent fallback. cpsim04: the SIMULATED
+    custodian's adapter only when ``route`` (services.payment_custodian.simulator_route) holds; otherwise manual, with
+    the route's reason on ``route_reason`` (today's behaviour, said why)."""
     key = custodian_key(account)
+    if key == SIMULATOR_KEY:
+        if key in (enabled or set()) and route is not None and route.get("ok"):
+            return AltruistSimulatorPaymentAdapter(route)
+        m = manual()
+        m.route_reason = (route or {}).get("reason") or ("the simulated custodian's payment adapter is not enabled for "
+                                                          "this organization")
+        return m
     if key and key != MANUAL and key in (enabled or set()):
         impl = _CONNECTED.get(key)
         return impl() if impl is not None else NotConnectedPaymentAdapter(key)

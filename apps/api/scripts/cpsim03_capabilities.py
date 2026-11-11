@@ -29,6 +29,9 @@ from _db_connect import connect, hydrate, resolve_dsn  # noqa: E402
 
 CODE = "altruist_simulator"
 EVIDENCE = "simulated counterparty — cpsim03"
+#: cpsim04 — the payment keys scripts/cpsim04_capabilities.py owns once applied (this loader then skips them)
+PAYMENT_KEYS = ("ach", "wire", "journal", "check", "payment_status_feed", "payment_sheet")
+CPSIM04_EVIDENCE = "simulated counterparty — cpsim04"
 #: the simulated custodian's declared matrix (docs/cpsim/CPSIM03_NOTES.md D3); payments arrive with cpsim04
 PLAN: dict[str, str] = {
     "equity_trading_api": "yes",
@@ -65,6 +68,9 @@ async def plan_rows(conn) -> list[dict]:
             raise SystemExit(f"[FAIL] {key}={value!r} is not a valid value")
         cur = await capability(conn, CODE, key)
         same = cur.version_no is not None and cur.value == value and cur.evidence == EVIDENCE
+        # cpsim04: the payment keys belong to scripts/cpsim04_capabilities.py once IT has recorded them — never reset
+        if key in PAYMENT_KEYS and cur.version_no is not None and (cur.evidence or "").startswith(CPSIM04_EVIDENCE):
+            same = True
         out.append({"key": key, "current": cur.value if cur.version_no is not None else "(no row)",
                     "planned": value, "action": "skip" if same else "set"})
     return out

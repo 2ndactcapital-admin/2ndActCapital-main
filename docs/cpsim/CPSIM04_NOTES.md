@@ -170,6 +170,56 @@ registers neither Send nor Refresh anywhere; the verify scans every one of these
    power check in v1); transfers never overdraw.
 8. **Same counterparty for two orgs shares a book** (cpsim03 finding 12) — unchanged; the verify gives each org its own.
 
+## 5. The capability loader — `--dry-run` (Task 5, 2026-11-11, run once)
+
+`python3 apps/api/scripts/cpsim04_capabilities.py` (the default `--dry-run`; reads `public.custodian_capabilities`,
+writes nothing):
+
+```
+custodian code 'altruist_simulator' — evidence 'simulated counterparty — cpsim04' (assumed); mode DRY RUN
+  set   ach                                (no row) -> yes
+  set   wire                               (no row) -> yes
+  set   journal                            (no row) -> yes
+  set   check                              (no row) -> no
+  set   payment_status_feed                (no row) -> yes
+  set   payment_sheet                      (no row) -> no
+6 to set, 0 already as planned
+real altruist ach = 'unknown', wire = 'unknown', journal = 'unknown', payment_status_feed = 'no' (never changed by this script)
+DRY RUN — nothing written
+```
+
+NOT applied (operator step). cpsim03's loader covers every key (its own dry-run still prints "22 to set"); it now
+SKIPS a payment key whose live row carries the cpsim04 evidence, so applying the two loaders in either order never
+resets the payment rails to 'no'.
+
+## 6. Sandbox / production / manual unchanged — diff review against main (Task 5)
+
+`git diff main -- services/altruist_oauth.py services/altruist_identity.py routers/altruist_connection.py` is
+**empty**. The transfers client is a NEW module (`services/altruist_transfers.py`) that refuses any environment but
+`simulator` before a request (`NO_CONTRACT`). Changed shared files, line group by line group:
+
+- `services/altruist_positions_sync.py` — `TRANSACTION_TYPE_MAP` gains 7 entries (D2). Additive: a sandbox /
+  production row of one of those types was a per-row error ("unmapped Altruist transaction type") and is now booked as
+  `sell` / `buy` / `adjustment`; every other type, the error path for any other unknown type, and every other line
+  are unchanged.
+- `services/altruist_webhook.py` — after the existing order hook, a `transfer.updated` event SIGNED BY THE SIMULATOR
+  adds a to-do (`payment_custodian.transfer_event_todo`). A real-secret payload never reaches it (the `signed_by`
+  guard, as cpsim03's), and it applies nothing.
+- `services/payment_adapters.py` — `CHANNEL_LABELS` + `custodian_api` (refused by "Confirm sent": `MANUAL_CHANNELS`
+  excludes it and the vocabulary offers only those); `StatusResult.detail` (default None); the simulator adapter
+  registered in `_CONNECTED`; `custodian_key` reads `payment_custodian` first (set only for a simulator-crosswalked
+  account); `adapter_for(…, route=None)`: for key `altruist_simulator` only, the simulator adapter when the route holds,
+  else MANUAL with `route_reason`. Every other key resolves exactly as before — `altruist` enabled is still
+  NotConnected, nothing enabled is still manual.
+- `services/payments.py` — `load_account` / `household_accounts` attach `payment_custodian` for a simulator-crosswalked
+  source (one batched query); `declared_rails` reads the simulator's capability code for it (every other account reads
+  the same code as before); `adapter_of` passes the D4 route; `sheet` always renders the MANUAL sheet (the payment
+  sheet stays downloadable beside the custodian API); `mark_sent(adapter=None, via_custodian=False)` — every existing
+  caller writes `adapter = 'manual'` exactly as before and may not use `custodian_api`; `detail` adds `custodian` (None
+  for every non-simulator payment; no network); `actions_for` adds Send / Refresh only when that panel allows them;
+  the channels vocabulary lists the manual channels (the same seven as before).
+- `scripts/cpsim03_capabilities.py` — the payment-key skip above.
+
 ## 8. Operator steps (cpsim04)
 
 1. When ready to demo payments: `python3 apps/api/scripts/cpsim04_capabilities.py --apply --actor-email <a Super Admin>`

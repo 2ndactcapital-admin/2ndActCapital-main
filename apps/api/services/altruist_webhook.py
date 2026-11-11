@@ -290,6 +290,16 @@ async def process_event(conn, *, payload: dict, collect: list | None = None,
                 out["order"] = await order_event_todo(conn, org_id=org_id, payload=payload)
         except Exception as exc:  # noqa: BLE001 - a to-do failure must not fail webhook receipt
             out["order"] = {"todo": None, "error": type(exc).__name__}
+    if signed_by == SIGNED_SIMULATOR and str(extract_event_type(payload) or "") == "transfer.updated":
+        # cpsim04 D7 — a transfer event from the SIMULATED custodian is a notification: a to-do for the payment's
+        # sender ("custodian status changed — refresh"). Nothing is applied here; a person refreshes.
+        try:
+            from services.payment_custodian import transfer_event_todo
+
+            async with conn.transaction():
+                out["transfer"] = await transfer_event_todo(conn, org_id=org_id, payload=payload)
+        except Exception as exc:  # noqa: BLE001 - a to-do failure must not fail webhook receipt
+            out["transfer"] = {"todo": None, "error": type(exc).__name__}
     return out
 
 
