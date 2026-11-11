@@ -1276,6 +1276,7 @@ async def y_read_api(conn):
 
 async def y_behaviour(conn):
     section("[Y] Behaviour on reads: reject → the client raises; delay → the client's timeout fires")
+    set_sim_creds("main")     # cpsim02 fix 1: self-contained for an --only one-off (was set only by read_api)
     hosts = sim_hosts("main")
     code, state = await authorize_code()
     tok = await AO.exchange_code_for_tokens(environment=AO.SIMULATOR, code=code, hosts=hosts)
@@ -1437,6 +1438,7 @@ async def y_book(conn):
 # ── clock ───────────────────────────────────────────────────────────────────────────────────────────────────────
 async def y_clock(conn):
     section("[Y] Clock: positions follow the clock date; transactions after it are served only once it advances")
+    set_sim_creds("main")     # cpsim02 fix 1: self-contained for an --only one-off (was set only by read_api)
     hosts = sim_hosts("main")
     code, _s = await authorize_code()
     tok = await AO.exchange_code_for_tokens(environment=AO.SIMULATOR, code=code, hosts=hosts)
