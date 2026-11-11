@@ -58,6 +58,13 @@ WHAT THIS SCRIPT IS CAREFUL ABOUT
 
 from __future__ import annotations
 
+import sys as _sc_sys
+if __name__ == "__main__" and "--self-checks-only" in _sc_sys.argv:   # ALTREAD1: static self-checks (fast regressions)
+    import pathlib as _sc_p
+    _sc_sys.path.insert(0, str(_sc_p.Path(__file__).resolve().parent))
+    import _altruist_offline_selfcheck as _SC
+    _sc_sys.exit(_SC.run(__file__, ('parts.index("accounts")', '.endswith("/cost-basis")', '.rstrip("/").endswith("/positions")')))
+
 import os as _authz_os
 _authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
 
