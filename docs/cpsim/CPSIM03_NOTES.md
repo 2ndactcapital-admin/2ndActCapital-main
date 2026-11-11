@@ -277,3 +277,13 @@ included; `held` advanced by the 2 shares each run's buy fills), every in-proces
 - The ORIGINAL fix-2 O03 failure (a fresh fixture, so its list held 1 order) is still not reproduced; its cause is not
   proven. The same class of failure — one call outrunning the 15 s read timeout — was reproduced once (O05, run 8)
   and the slow path that fed it is fixed. The printed-detail guard stays in place. Client timeout NOT lengthened.
+
+**Fix 3, Task 3 — one-offs.** Already recorded, cited and not re-run: routing + governance (incl. the U_MA
+maker-checker refusal) 96 PASS / 0 FAIL — 41a4f5e (schema 15, routing 14, governance 11, teardown 53; no-network PASS);
+`--cleanup-only` 13 / 0 — 448a0aa. Missing, run now (`timeout 600` each):
+
+| one-off | result |
+|---|---|
+| `verify_cpsim02.py --only=seed` (the schema section always runs — it holds the EXACT cpsim_app privilege check built from `_cpsim_fixtures.CPSIM_APP_WITHHELD`) | **70 PASS, 0 FAIL**; exact grants PASS (book_uploads −D/U, order_executions −D/U, orders −D); no network PASS |
+| `verify_rep2.py --only=capabilities` (the evidence section) | **57 PASS, 0 FAIL**; "every seeded capability carries evidence" PASS (43 recorded); [FIND] `('altruist','payment_sheet')` unrecorded → served unknown; no network PASS |
+| `verify_cpsim03.py --cleanup-only` after this fix's runs | **13 PASS, 0 FAIL**; 0 fixture rows before and after (41 tables); 11 real fingerprints unchanged |
