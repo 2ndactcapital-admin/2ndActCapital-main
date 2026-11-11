@@ -102,7 +102,7 @@ clock tab shows what an advance filled.
 | D10 | `services/altruist_conformance.py` `orders` group (O01–O12), simulator only; `--target sandbox` skips it. | as named |
 | D11 | `execution.cancel` → `custodian_execution.cancel_custodian_order` first when the instruction has a working order: 409 (filled) → refused with the reason; cancelled with executions not all booked → the instruction stays and a `custodian_cancel` event says so; else the existing cancel. | as named |
 
-(§3 reuse inventory, §4 differences, §5 the loader dry-run and §6 the diff review are filled in as each task lands.)
+(§3 reuse inventory and §4 differences follow §7 below; §5 the loader dry-run; §6 the diff review.)
 
 ## 5. The capability loader — `--dry-run` (Task 5, 2026-11-11, run once)
 
@@ -165,3 +165,63 @@ receiver's own code. Leftover fixture rows after the run: **0**.
 without `--i-have-sandbox-access`, refuses to start — exit 2, unchanged). In the suite core the skip is
 `orders_group_skip(environment, orders)`: any real environment → that reason; the admin page's run against a live
 counterparty passes no fixture and reports O00 "not run: the orders group places orders and moves the book".
+
+## 3. Reuse inventory
+
+| Piece | Existing construct | Used how |
+|---|---|---|
+| Routing | `custody.trading.route_trade_list`, `AltruistTradeAdapter`, `ManualTradeAdapter` | unchanged order of decisions (held-away → authority × custody → manual flag → adapter); the Altruist adapter adds the D2 decision and passes `routed_via='custodian_api'` to the SAME `ManualTradeAdapter.submit` → `create_instructions` |
+| Drafts, approval | `execution.create_instructions`, `submit`, `decide`, human task `execution_approval`, `services.sod` | unchanged — a custodian-API draft is approved exactly like a manual one |
+| Sending | `execution.mark_sent` | the accepted order moves the instruction to `sent` through it (channel `custodian_api` + the order id) — no second transition path |
+| Fills | `execution.enter_fill` | every imported execution, `entered_by` the importer; over-quantity / future time / status rules unchanged |
+| Reconcile | `execution.reconcile` (`custodian_data`) | unchanged; the UI preselects the synced transactions |
+| Cancel | `execution.cancel` | calls the custodian hook first when a custodian order exists; otherwise byte-identical |
+| Events, audit, domain events | `execution._event`, `publish` | the two new event actions use them |
+| To-dos | `member_todos` (the `expire_due` 'ask' shape) | the reject and fills-available to-dos |
+| Capabilities | `custodian_capabilities.capability / available / set_capability` | D2 condition 7; the loader writes only through `set_capability` |
+| Client conventions | `altruist_oauth.require_active_connection`, `get_decrypted_access_token`, `resolve_hosts`, `check_destination`, `_transport_for`, `AltruistOAuthError` | the orders client is the read client's `_call` shape, call for call |
+| Simulator book | `cpsim.book.platform_price`, `resolve_security`, `generated_id`, `fmt`; `services.bitemporal.archive_live_row` | fill price, security resolution, snapshot ids, decimal strings; orders archived on the system axis |
+| Webhooks | `cpsim.webhooks.send_event` / `event_body` / `sign` | extended with an optional `order` (account events byte-identical); `after_orders` |
+| Receiver | `altruist_webhook.process_event` | the order to-do added after the existing resync, simulator-signed events only |
+| Conformance | `services/altruist_conformance.run` + runner + `_cpsim_fixtures` | the `orders` group added to the same suite and the same fixture run |
+| Unattended guard | `workflow_autonomy.VERB_AUTONOMY`, `sod.VERB_DUTIES` | the two verbs declared NEVER and not registered (CASH07's pattern) |
+
+## 4. Differences from the prompt, and findings
+
+1. **No CHECK limits `sent_channel` or `routed_via`** (catalog). `custodian_api` needed no CHECK change there; a new
+   CHECK instead ties `custodian_order_id` to `sent_channel = routed_via = 'custodian_api'`.
+2. **The instruction guard freezes every non-lifecycle column after submit** — so the new `custodian_order_id` had to
+   be added to `execution_instructions_guard()`'s lifecycle list (re-created identically plus that one element).
+3. **The events action CHECK** needed `custodian_reject` and `custodian_cancel` (a refused order and a custodian
+   cancel that leaves fills to import are both logged human actions with no status change).
+4. **S30 governs approval only.** `mark_sent` has no sod gate, so "Send to custodian" is gated exactly like it
+   (manage_execution, a human actor). The approver MAY send — no rule says otherwise and none was invented.
+5. **ETFs and mutual funds are both `security_type = 'fund'`** — the simulator trades `equity` and `fund`.
+6. **The webhook can arrive before Hollisworks has recorded the order.** The simulator sends `order.updated` inside
+   the POST that Hollisworks is still waiting on, so the receiver finds the instruction still `approved` with no order
+   id and raises no to-do (the send's own response already tells the sender the outcome). The to-do is for events
+   AFTER the send (a delayed or limit order filled at the next clock advance). Logged, not changed (FIND).
+7. **The sync creates UNLINKED tenant assets** (`create_asset` without `global_security_id`), and reconcile's rule
+   requires the transaction's asset to be the instruction's security. Reconciling a custodian-API fill against the
+   synced transaction therefore needs the org's tenant asset to be linked to the security master (an import or a
+   manual link does that; the verify seeds one). Not changed — sandbox / production sync is out of scope. Logged.
+8. **Idempotency on `client_order_id` makes a refused order final**: a second Send re-POSTs the same id and gets the
+   same rejected order. To retry, cancel the instruction and route a new one. Documented, deliberate (D1).
+9. **The partial outcome's remainder never fills on its own** (re-evaluation covers delay orders and unmarketable
+   limits only); a partial order whose limit was not marketable stays working. A person cancels it (D11 then leaves
+   the instruction partially filled). `day` orders are not expired by the simulator (the client sends `gtc`).
+10. **`execution.expire_due` does not cancel a custodian order** — an expired instruction can leave a working order
+    at the simulator (expiry is the only unattended step and must not reach a custodian). Logged.
+11. The capability matrix lists `altruist_simulator` (all 'unknown', not recorded) from the label alone until the loader
+    is applied.
+12. **Isolation at the simulator**: two orgs pointed at the SAME counterparty would share its book (a counterparty is
+    a platform object). The verify gives each org its own counterparty; Hollisworks-side isolation (RLS, org-scoped
+    loads, `client_order_id` = the org's own instruction id) holds either way.
+
+## 8. Operator steps (cpsim03)
+
+1. When ready to demo trading: `python3 apps/api/scripts/cpsim03_capabilities.py --apply --actor-email <a Super
+   Admin>` (writes the `altruist_simulator` matrix through the capability write path; audited). Nothing else changes.
+2. Run `apps/api/scripts/verify_cpsim03.py` (written, not run by the sprint).
+
+Schema `docs/cpsim03_part1.sql` APPLIED 2026-11-11 (`scripts/_apply_cpsim03.py --all`: 20/20 read back).

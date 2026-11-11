@@ -159,7 +159,13 @@ The assistant is mounted on member pages today.
   reply, confirm the exchange covers the rest of the Sprint 0 asks: the real
   OAuth redirect URI, webhook signature docs, and the business inputs (entity
   choice, legal address, contact, launch date, AUM projection).
-- ⏳ **Counterparty Simulator (cpsim01 merged; cpsim02 built 2026-11-10; cpsim03–04 queued).** Run
+- ⏳ **Counterparty Simulator (cpsim01 + cpsim02 merged; cpsim03 built 2026-11-11; cpsim04 queued).** cpsim03: run
+  `verify_cpsim03.py` (written, not run); when ready to demo trading, `scripts/cpsim03_capabilities.py --apply
+  --actor-email <Super Admin>`. cpsim03 follow-ups (CPSIM03_NOTES §4): the order webhook sent DURING a send reaches
+  the receiver before the order id is recorded (no to-do for it — consider sending order webhooks after the
+  response); the Altruist sync creates UNLINKED tenant assets, so reconcile's same-security rule needs a linked
+  asset; `execution.expire_due` leaves a working custodian order at the custodian; the simulator never expires
+  `day` orders and never fills a partial's remainder. cpsim02: run
   `verify_cpsim02.py` in full (fix 1: every section passed one-off, 0 FAIL — the full run + regressions are the operator's). Operator steps in `docs/cpsim/CPSIM_ADMIN.md` §11: generate the simulated
   Altruist key; set `ALTRUIST_SIMULATOR_CLIENT_ID` / `_CLIENT_SECRET`, `ALTRUIST_SIMULATOR_WEBHOOK_SECRET`
   (`cpsim_whsec_…`) and `CPSIM_BASE_URL` in Doppler; redeploy; allow an org; upload a book; connect; run conformance.

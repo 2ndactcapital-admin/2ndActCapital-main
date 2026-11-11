@@ -2455,3 +2455,18 @@ Everything sits behind ONE regulatory gate, **OFF** today. Code: `services/model
    `load_disclosure_defaults.py` loads it.
 7. Super Admins who act for the platform must be users of the Hollisworks org (the provider org is always the
    caller's own org).
+
+## cpsim03 — the simulator route beside manual (2026-11-11)
+
+An approved proposal's instructions (and any instruction routed from the instruction screen) take the
+**custodian API route** only for an account of a SIMULATED Altruist-compatible custodian that meets every condition
+(crosswalked to the simulator and never to real Altruist; the org allowed, pointed and connected; the demo-household
+rule; integrated + managed; the simulator's `equity_trading_api` = yes) — and only for buy / sell at market or a
+limit. Everything else is the manual route exactly as before, and the reason is shown on the instruction page.
+
+Either way **a person approves, sends and imports**: the draft is approved through the same maker-checker task;
+**Send to custodian (simulated)** is a person's action (manage_execution); **Import fills** books each execution through
+the same `enter_fill` with that person as the one who entered it; **Reconcile** (custodian data) matches the fills to
+the transactions the next sync brings in. The manual route (Mark sent, the order execution sheet) stays offered. The
+real Altruist route is unchanged: manual (no published orders contract; `equity_trading_api` 'unknown'). Blocks and
+the FIX router are unchanged (manual / not connected). Notes: `docs/cpsim/CPSIM03_NOTES.md`.

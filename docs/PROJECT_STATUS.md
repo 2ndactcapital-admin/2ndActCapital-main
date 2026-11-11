@@ -344,6 +344,43 @@ This file starts with the email item below.
 ---
 
 
+## CPSIM03 — the simulated custodian TRADES: a person sends an approved instruction to the simulated Altruist-compatible orders API, imports the fills through enter_fill, reconciles against the synced feed
+
+Branch cpsim03-work (2026-11-11). Notes: `docs/cpsim/CPSIM03_NOTES.md` (Task 1 findings, D1–D11 as built, reuse
+inventory, differences, loader dry-run, diff review, conformance run). Contract: `ALTRUIST_CONTRACT.md` §8 "Orders
+(ASSUMED — no published Altruist trading API seen)". Operator guide: `CPSIM_ADMIN.md` §12.
+
+- **Schema.** `docs/cpsim03_part1.sql` APPLIED (`scripts/_apply_cpsim03.py --all`, 20/20 read back from the catalog):
+  `cpsim.orders` (system axis, `client_order_id` unique per counterparty) + `cpsim.order_executions` (append-only) —
+  cpsim_app only; public: `execution_instructions.custodian_order_id` (+ CHECK to `custodian_api`, + the guard's
+  lifecycle list), `execution_fills.custodian_exec_id` (+ unique index), events CHECK + `custodian_reject` /
+  `custodian_cancel`. RLS unchanged; `trade_blocks_route_chk` unchanged. Snapshot refreshed.
+- **Simulator.** `cpsim/orders.py` + routes `POST/GET /v2/orders`, `GET/DELETE /v2/orders/{id}`: D6 outcomes from the
+  behaviour row at the last platform close on the clock date (accept / limit / reject / partial / delay; no price /
+  unsupported instrument / insufficient position); D7 book moves for fills only (no cash, no fees); working orders
+  re-evaluated on every clock advance; order webhooks. Admin → Counterparties: Orders tab (read-only); the clock shows
+  what an advance filled.
+- **Hollisworks.** `services/altruist_trading.py` (orders client — simulator only, refuses sandbox / production before
+  any request; transport on every call); `services/custodian_execution.py` (D2 route rule; Send to custodian → the
+  EXISTING `mark_sent` with channel `custodian_api`; Import fills → the EXISTING `enter_fill`, idempotent by exec id;
+  the custodian side of `cancel`; the order-webhook to-do). `AltruistTradeAdapter`: D2 all → the same drafts routed
+  `custodian_api`; otherwise exactly today's manual result. Routes: `POST …/send-to-custodian`, `POST …/import-fills`
+  (manage_execution), `GET …/custodian-order` (view_execution), `GET /admin/counterparties/{id}/orders` (Super Admin).
+  Send / Import declared NEVER for unattended runs and not registered. The real Altruist route stays manual.
+- **Capability loader** `scripts/cpsim03_capabilities.py` — run `--dry-run` only (22 to set); NOT applied.
+- **Conformance.** `orders` group O01–O14; in-process run **34 PASS, 0 FAIL**, 0 leftovers; `--target sandbox` skips
+  it ("no published Altruist orders contract").
+- **UI.** Instruction page: custodian panel (Send to custodian (simulated) / the reason it is manual / the order and
+  its executions / Import fills), reconcile picker preselecting the synced transactions, SIMULATED badges.
+  `tests/cpsim03` 10/10.
+- **Verify.** `apps/api/scripts/verify_cpsim03.py` WRITTEN, NOT RUN. Regressions: verify_cpsim02, verify_rep2,
+  verify_authz1. In `scripts/regression_set.txt`. AUTHZ1_ROUTES / VISIBILITY1_ROUTES regenerated.
+- **Operator steps.** `python3 apps/api/scripts/cpsim03_capabilities.py --apply --actor-email <Super Admin>` when
+  ready to demo trading; run the verify. Nothing else changes.
+- **Findings logged** (CPSIM03_NOTES §4): the send-time webhook arrives before the order id is recorded (no to-do;
+  later events do raise one); the sync creates unlinked tenant assets, so reconcile needs the asset linked to the
+  security; expiry does not cancel a custodian order; a refused order is final for its client_order_id.
+
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CPSIM02 — the simulated custodian ANSWERS: an Altruist-compatible read API served from an uploaded book; webhooks out; the existing Altruist client pointed at it through a third environment `simulator`; the conformance suite
 
 Branch cpsim02-work (2026-11-10). Notes: `docs/cpsim/CPSIM02_NOTES.md` (Task 1 findings, D1–D11 as built, reuse
