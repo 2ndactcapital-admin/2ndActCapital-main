@@ -295,13 +295,21 @@ function BehaviourTab({ env, d, act }) {
   );
 }
 
-function ClockTab({ env, d, act }) {
+export function ClockTab({ env, d, act, advance = null }) {
   const clock = d.clock || [];
+  const filled = Array.isArray(advance?.filled) ? advance.filled : null;
   return (
     <div data-testid="tab-clock">
       <p className="text-sm">Business date: <span className="font-semibold text-navy">{clock[0]?.business_date || ""}</span></p>
       {canWrite(env) ? <button type="button" className={`${btn} mt-2`} onClick={() => act("clock/advance")}>
         Advance one business day</button> : null}
+      {filled ? (
+        <div className="mt-2 text-sm" data-testid="advance-filled">
+          <p>Advanced {advance.from} → {advance.to}. {filled.length ? `Working orders re-evaluated: ${filled.length}.` : "No working order filled."}</p>
+          {filled.length ? <ul className="mt-1 text-xs">{filled.map((f) => (
+            <li key={f.order_id}>{f.order_id} — {f.status}{f.reject_reason ? ` (${f.reject_reason})` : ""}{f.executions?.length ? ` · ${f.executions.length} execution(s) at ${f.price}` : ""}</li>))}</ul> : null}
+        </div>
+      ) : null}
       <ul className="mt-3 text-xs text-[#64748B]">
         {clock.map((c, i) => <li key={i}>{c.business_date} — {c.reason}</li>)}
       </ul>
@@ -529,6 +537,39 @@ export function WebhooksTab({ env, d, act, requests }) {
   );
 }
 
+// ── cpsim03: Orders — what this simulated custodian received, its outcome and executions (read-only) ──────────────
+export function OrdersTab({ id, initialOrders }) {
+  const [env, , loadError] = useLoaded(initialOrders, initialOrders ? null : `${id}/orders`);
+  if (loadError) return <p className="text-sm text-[#9B2335]" data-testid="tab-orders">{loadError}</p>;
+  if (!env) return <p className="text-sm text-[#64748B]" data-testid="tab-orders">Loading…</p>;
+  const rows = Array.isArray(env.rows) ? env.rows : [];
+  const statuses = Array.isArray(env.status_labels) ? env.status_labels : [];
+  const outcomes = Array.isArray(env.outcome_labels) ? env.outcome_labels : [];
+  const limits = Array.isArray(env.v1_limits) ? env.v1_limits : [];
+  return (
+    <div data-testid="tab-orders" className="space-y-3">
+      <p className="text-xs text-[#64748B]">Orders sent by Hollisworks to this SIMULATED custodian — read-only. A person
+        sent each one after approval; the outcome is the behaviour in force when it arrived.</p>
+      {limits.length ? <ul className="text-xs text-[#64748B]" data-testid="orders-v1-limits">{limits.map((l) => <li key={l}>{l}</li>)}</ul> : null}
+      {rows.length ? (
+        <table className="w-full text-left text-xs">
+          <thead className="text-[#64748B]"><tr><th>Order</th><th>Account</th><th>Side</th><th>Amount</th><th>Type</th>
+            <th>Outcome</th><th>Status</th><th>Executions</th><th>Received</th></tr></thead>
+          <tbody>{rows.map((o) => (
+            <tr key={o.order_id} className="border-t border-[#ece8dd] align-top" data-order={o.order_id}>
+              <td>{o.order_id}<span className="ml-1 rounded border border-[#C5A880] px-1 text-[10px] font-semibold">SIMULATED</span></td>
+              <td>{o.account_id}</td><td>{o.side}</td><td>{o.quantity ?? `${o.notional} notional`}</td>
+              <td>{o.order_type}{o.limit_price ? ` ${o.limit_price}` : ""}</td><td>{labelOf(outcomes, o.outcome)}</td>
+              <td>{labelOf(statuses, o.status)}{o.reject_reason ? ` — ${o.reject_reason}` : ""}</td>
+              <td>{(o.executions || []).map((e) => <div key={e.exec_id}>{e.quantity} @ {e.price} · {e.trade_date}</div>)}</td>
+              <td>{shortDate(o.created_at)}</td>
+            </tr>))}</tbody>
+        </table>
+      ) : <p className="text-sm text-[#64748B]" data-testid="orders-none">No orders yet.</p>}
+    </div>
+  );
+}
+
 // ── cpsim02: Conformance — run the suite against this counterparty; the last result ──────────────────────────────
 export function ConformanceTab({ id, initialConformance }) {
   const [env, setEnv, loadError] = useLoaded(initialConformance, initialConformance ? null : `${id}/conformance`);
@@ -570,8 +611,9 @@ export function ConformanceTab({ id, initialConformance }) {
 }
 
 export function CounterpartyDetail({ envelope, requests, initialTab = "connection", book = null, connections = null,
-  conformance = null }) {
+  conformance = null, orders = null, initialAdvance = null }) {
   const [env, setEnv] = useState(envelope);
+  const [advance, setAdvance] = useState(initialAdvance);
   const [log, setLog] = useState(requests);
   const [tab, setTab] = useState(initialTab);
   const [issued, setIssued] = useState(null);
@@ -584,6 +626,7 @@ export function CounterpartyDetail({ envelope, requests, initialTab = "connectio
     try {
       const out = await call(`${id}/${path}`, method, body);
       setIssued(out.issued && Object.keys(out.issued).length ? out.issued : null);
+      if (path === "clock/advance") setAdvance(out);
       setEnv(await call(id));
       setLog(await call(`${id}/requests`));
     } catch (err) {
@@ -593,13 +636,14 @@ export function CounterpartyDetail({ envelope, requests, initialTab = "connectio
   const body = {
     connection: <ConnectionTab env={env} d={env} act={act} />, fix: <FixTab env={env} d={env} act={act} />,
     bank: <BankTab env={env} d={env} act={act} />, behaviour: <BehaviourTab env={env} d={env} act={act} />,
-    clock: <ClockTab env={env} d={env} act={act} />, activity: <ActivityTab requests={log} />,
+    clock: <ClockTab env={env} d={env} act={act} advance={advance} />, activity: <ActivityTab requests={log} />,
     import_export: tabs.find((t) => t.key === "import_export")?.enabled
       ? <ImportExportTab id={id} initialBook={book} />
       : <p className="text-sm text-[#64748B]" data-testid="tab-import-export">{IMPORT_EXPORT_NOTE}</p>,
     connections: <ConnectionsTab id={id} initialConnections={connections} />,
     webhooks: <WebhooksTab env={env} d={env} act={act} requests={log} />,
     conformance: <ConformanceTab id={id} initialConformance={conformance} />,
+    orders: <OrdersTab id={id} initialOrders={orders} />,
   };
   return (
     <section className={card} data-testid="cp-detail">

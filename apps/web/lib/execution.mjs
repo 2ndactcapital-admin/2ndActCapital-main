@@ -53,7 +53,49 @@ export function instructionControls(envelope) {
     letter: isTrue(p.can_read) && has("letter"),
     // REP9 — the order execution sheet (broker / desk / trader): the manual route, always offered
     orderSheet: isTrue(p.can_read) && has("order_sheet"),
+    // CPSIM03 — the custodian-API route's two PERSON actions (the server lists them only when D2 holds / an order exists)
+    sendToCustodian: canWrite && has("send_to_custodian"),
+    importFills: canWrite && has("import_fills"),
   };
+}
+
+// ── CPSIM03 — the custodian-API route (a SIMULATED custodian only) ─────────────────────────────────────────────────
+/** The instruction's custodian panel, from the server's own `instruction.custodian` (absent → nothing simulated). */
+export function custodianModel(envelope) {
+  const c = envelope?.instruction?.custodian;
+  if (!c || typeof c !== "object") {
+    return { simulated: false, routedVia: null, orderId: null, counterparty: null, sendRefused: null };
+  }
+  return {
+    simulated: c.simulated === true,
+    routedVia: typeof c.routed_via === "string" ? c.routed_via : null,
+    orderId: typeof c.custodian_order_id === "string" ? c.custodian_order_id : null,
+    counterparty: typeof c.counterparty === "string" ? c.counterparty : null,
+    sendRefused: typeof c.send_refused === "string" ? c.send_refused : null,
+  };
+}
+
+/** "Mark sent" offers the MANUAL channels only (the custodian API channel is recorded by Send to custodian). */
+export function manualChannels(v) {
+  const all = Array.isArray(v?.sent_channels) ? v.sent_channels : [];
+  const allowed = Array.isArray(v?.manual_sent_channels) ? new Set(v.manual_sent_channels) : null;
+  return all.filter((c) => c && (allowed ? allowed.has(c.key) : c.key !== "custodian_api"));
+}
+
+/** The reconcile picker's synced transactions (the server's list) and the ids it preselects. */
+export function reconcilePicker(orderView) {
+  const rows = Array.isArray(orderView?.synced_transactions) ? orderView.synced_transactions : [];
+  const pre = new Set(Array.isArray(orderView?.preselect_transaction_ids) ? orderView.preselect_transaction_ids : []);
+  return {
+    rows: rows.map((r) => ({ ...r, checked: pre.has(r.id) })),
+    reference: typeof orderView?.reconcile_reference === "string" ? orderView.reconcile_reference : "",
+  };
+}
+
+/** The custodian order's executions, each marked booked or not. */
+export function orderExecutions(orderView) {
+  const ex = orderView?.order?.executions;
+  return Array.isArray(ex) ? ex.map((e) => ({ ...e, booked: e.booked === true })) : [];
 }
 
 /** Capabilities matrix: Edit only for Super Admin (the server's own flags). */
