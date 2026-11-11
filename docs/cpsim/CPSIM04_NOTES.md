@@ -220,6 +220,28 @@ resets the payment rails to 'no'.
   the channels vocabulary lists the manual channels (the same seven as before).
 - `scripts/cpsim03_capabilities.py` — the payment-key skip above.
 
+## 7. The in-process conformance run with the `transfers` group (Task 8, 2026-11-11)
+
+`python3 apps/api/scripts/cpsim_altruist_conformance.py --target simulator` (fixture custodian `cpsimconf-…` with two
+accounts — the second the journal's destination — plus a fixture DOMESTIC and INTERNATIONAL bank `cpsimconf-dome-…` /
+`cpsimconf-inte-…`, each active with a one-account cash book; all created and torn down by the run): **51 PASS, 0
+FAIL** — cpsim02's C01–C20 and cpsim03's O01–O15 unchanged, plus T01 POST a journal (client `post_transfer`) 201 + every
+§9.3 field, same-day received → acknowledged → settled · T02 the cash rows moved exactly (−100 / +100) and the feed
+serves `transfer_out` / `transfer_in` (`<transfer>-out` / `-in`), types the client maps (sell / buy — D2) · T03 a
+DIFFERENT-body repeat → 200, the original unchanged, one transfer · T04 GET one · T05 list by either leg, 400 without
+account_id · T06 a JSON-number amount 422 naming the field, nothing created · T07 ACH to a domestic bank with its ACH
+routing reference → acknowledged, debited, settle the next business day · T08 a wire with the wrong routing reference →
+rejected with the bank's reason, nothing debited · T09 an international wire (BIC + IBAN reference) settles; an ACH to
+it 422 · T10 a wrong IBAN reference → rejected · T11 insufficient funds → rejected, nothing moved · T12 DELETE a
+settled transfer 409 naming its status, unknown 404 · T13 transfers need an access token · T14 a FULL routing number
+where the last four belong → 422 naming the field · T15 SIMULATED header · T16 the transfer webhook body + signature
+verified by the receiver's own code. Leftover fixture rows after the run: **0** (`cpsim.counterparties`
+`cpsimconf-%`: 0; `cpsim.transfers`: 0; `cpsim.cash_movements`: 0).
+
+`--target sandbox` prints `orders group: skipped — no published Altruist orders contract` and `transfers group: skipped
+— no published Altruist money-movement contract` before anything else (and, without `--i-have-sandbox-access`, refuses
+to start — unchanged). In the suite core: `transfers_group_skip(environment, transfers)`.
+
 ## 8. Operator steps (cpsim04)
 
 1. When ready to demo payments: `python3 apps/api/scripts/cpsim04_capabilities.py --apply --actor-email <a Super Admin>`

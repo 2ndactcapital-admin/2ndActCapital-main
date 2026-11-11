@@ -76,7 +76,10 @@ class _NoNetwork:
 def fixture_book(security: dict | None, as_of: date) -> dict:
     hh, acct = "conf-hh-1", "conf-acct-1"
     pos = [{"position_id": "conf-pos-cash", "account_id": acct, "as_of": as_of.isoformat(), "row_type": "cash",
-            "name": "Cash", "market_value": "1250.00", "currency_code": "USD"}]
+            "name": "Cash", "market_value": "1250.00", "currency_code": "USD"},
+           # cpsim04 — the journal's destination: a second account of the same household, its own cash row
+           {"position_id": "conf-pos-cash2", "account_id": "conf-acct-2", "as_of": as_of.isoformat(), "row_type": "cash",
+            "name": "Cash", "market_value": "0.00", "currency_code": "USD"}]
     txn = [{"transaction_id": "conf-txn-int", "account_id": acct, "type": "interest",
             "trade_date": as_of.isoformat(), "row_type": "cash", "name": "Cash", "gross_amount": "1.25",
             "net_amount": "1.25", "currency_code": "USD"}]
@@ -89,7 +92,8 @@ def fixture_book(security: dict | None, as_of: date) -> dict:
                     "quantity": "10", "price": "100", "gross_amount": "1000", "net_amount": "1000",
                     "currency_code": "USD"})
     return {"households": [{"household_id": hh, "name": "Conformance household"}],
-            "accounts": [{"account_id": acct, "household_id": hh, "name": "Conformance account"}],
+            "accounts": [{"account_id": acct, "household_id": hh, "name": "Conformance account"},
+                         {"account_id": "conf-acct-2", "household_id": hh, "name": "Conformance account 2"}],
             "positions": pos, "transactions": txn}
 
 
@@ -168,6 +172,61 @@ def order_webhook_check() -> dict:
             "detail": detail}
 
 
+def transfer_webhook_check() -> dict:
+    """cpsim04 §9.5 — a TRANSFER event is signed the same way and names the transfer (D7)."""
+    from cpsim import webhooks as W
+    from services import altruist_webhook as AW
+
+    key = "cpsim_whsec_" + secrets.token_hex(20)
+    saved = {k: os.environ.get(k) for k in (AW.SIMULATOR_SECRET_ENV_VAR, AW.SECRET_ENV_VAR)}
+    try:
+        os.environ[AW.SIMULATOR_SECRET_ENV_VAR] = key
+        os.environ[AW.SECRET_ENV_VAR] = "real-" + secrets.token_hex(16)
+        body = W.event_body("transfer.updated", "conf-acct-1", transfer={"transfer_id": "sim-t-" + "0" * 16,
+                                                                        "client_transfer_id": "conf-transfer"})
+        doc = json.loads(body)
+        ok = (AW.verify_signature_source(body, W.sign(key, body)) == AW.SIGNED_SIMULATOR
+              and list(doc) == ["event_id", "event_type", "transfer_id", "client_transfer_id", "account_id",
+                                "environment", "occurred_at"] and doc["environment"] == "simulator")
+        detail = "" if ok else f"keys {list(doc)}"
+    except Exception as exc:  # noqa: BLE001
+        ok, detail = False, f"{type(exc).__name__}"
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    return {"id": "T16", "contract": "§9.5", "label": "transfer webhook: {event_id, event_type, transfer_id, "
+            "client_transfer_id, account_id, environment, occurred_at}, signed and verified as §6.7 (forces the "
+            "simulator)", "passed": ok, "detail": detail}
+
+
+async def fixture_banks(conn, clock: date) -> dict:
+    """cpsim04 — a domestic and an international simulated bank (slug prefix FIXTURE_PREFIX), each active with a book
+    holding one cash account; returns their slugs, account ids and LAST-FOUR references (never a full number)."""
+    from cpsim import registry as R
+    from cpsim import transfers as ST
+
+    out = {}
+    for kind, typ in (("domestic", "domestic_bank"), ("international", "international_bank")):
+        made = await R.create(conn, name=f"CPSIM CONFORMANCE {kind.upper()} BANK", institution_type=typ,
+                              slug=FIXTURE_PREFIX + kind[:4] + "-" + secrets.token_hex(3), actor=None)
+        await R.set_status(conn, made["id"], "active", None)
+        acct = f"conf-bank-{kind[:4]}"
+        await FX.plant_book(conn, made["id"], {
+            "households": [{"household_id": "conf-bank-hh", "name": "Bank customers"}],
+            "accounts": [{"account_id": acct, "household_id": "conf-bank-hh", "name": f"{kind} customer"}],
+            "positions": [{"position_id": f"{acct}-cash", "account_id": acct, "as_of": clock.isoformat(),
+                           "row_type": "cash", "name": "Cash", "market_value": "0.00", "currency_code": "USD"}]})
+        d = await conn.fetchrow("SELECT aba_wire, aba_ach, bic, iban FROM cpsim.counterparty_bank_details WHERE "
+                                "counterparty_id = $1::uuid AND kind = $2 AND valid_to IS NULL", made["id"], kind)
+        out[kind] = ({"slug": made["slug"], "account_id": acct, "ach4": ST.last4(d["aba_ach"]),
+                      "wire4": ST.last4(d["aba_wire"])} if kind == "domestic" else
+                     {"slug": made["slug"], "account_id": acct, "bic": d["bic"], "iban4": ST.last4(d["iban"])})
+    return out
+
+
 def report(out: dict, path: pathlib.Path) -> None:
     print(f"{'ID':4} {'RESULT':6} {'CONTRACT':28} CHECK")
     for r in out["results"]:
@@ -200,6 +259,7 @@ async def run_in_process(json_out: pathlib.Path, *, transform=None) -> dict:
                                         "$1::uuid AND valid_to IS NULL", cp["id"])
             sec = await _pick_security(conn, clock)
             planted = await FX.plant_book(conn, cp["id"], fixture_book(sec, clock))
+            banks = await fixture_banks(conn, clock)
         rejected = {k: v["counts"]["rejected"] for k, v in planted.items()}
         transport = FX.TimeoutASGITransport(app=FX.mounted_app())
         if transform is not None:
@@ -210,14 +270,17 @@ async def run_in_process(json_out: pathlib.Path, *, transform=None) -> dict:
         with _NoNetwork(allow_hosts=allow) as guard:
             # the DB pool is already open (the fixture used it); every simulator call is in-process
             fx = {"account_id": "conf-acct-1", "cusip": sec["id_value"], "held": "10"} if sec else None
+            tfx = {"from": "conf-acct-1", "to": "conf-acct-2", "cash": "1250.00", "value_date": clock.isoformat(),
+                   **banks}
             out = await AC.run(environment=AO.SIMULATOR, hosts=hosts, credentials=(cp["client_id"], cp["key"]),
-                               transport=transport, orders=fx)
+                               transport=transport, orders=fx, transfers=tfx)
         if not sec:      # cpsim03 — the orders group needs a priced equity / fund: its absence is a failure, not a skip
             out["results"].append({"id": "O00", "contract": "§8 (orders)", "label": "orders group: a priced equity / "
                                    "fund security with a CUSIP exists for the fixture book", "passed": False,
                                    "detail": "none found in the security master"})
         out["results"].append(webhook_signing_check())
         out["results"].append(order_webhook_check())
+        out["results"].append(transfer_webhook_check())
         out["results"].append({"id": "C20", "contract": "(harness)", "label": "no network: the run opened no socket "
                                "outside the database", "passed": not guard.attempts,
                                "detail": f"{guard.attempts[:3]}"})
@@ -262,6 +325,7 @@ def main(argv=None) -> int:
         from services import altruist_conformance as AC
 
         print(f"orders group: skipped — {AC.orders_group_skip('sandbox', None)}")
+        print(f"transfers group: skipped — {AC.transfers_group_skip('sandbox', None)}")
         if not a.i_have_sandbox_access:
             return _refuse("--target sandbox needs --i-have-sandbox-access (it calls Altruist's real sandbox)")
         if not (os.environ.get("ALTRUIST_SANDBOX_CLIENT_ID") and os.environ.get("ALTRUIST_SANDBOX_CLIENT_SECRET")):
