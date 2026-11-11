@@ -387,11 +387,14 @@ def client_credentials(environment: str) -> tuple[str, str]:
 
 
 def build_authorize_url(*, environment: str, state: str, scope: str = "accounts:read",
-                        hosts: dict | None = None) -> str:
+                        hosts: dict | None = None, credentials: tuple[str, str] | None = None,
+                        redirect_uri: str | None = None) -> str:
+    """``hosts`` / ``credentials`` / ``redirect_uri`` are cpsim02 overrides (the simulator's per-org hosts; the
+    conformance suite's pasted key). Omitted, everything is read exactly as before."""
     if environment not in ENVIRONMENTS:
         raise ValueError(f"Unknown environment: {environment!r}")
-    client_id, client_secret = client_credentials(environment)
-    redirect_uri = _redirect_uri()
+    client_id, client_secret = credentials or client_credentials(environment)
+    redirect_uri = redirect_uri or _redirect_uri()
     resolved = _static_hosts(environment, hosts)
     check_destination(environment, resolved, client_secret)
     login_base = resolved["login_base"]
@@ -414,15 +417,17 @@ class TokenResponse:
 
 
 async def exchange_code_for_tokens(*, environment: str, code: str, timeout: float = 15.0,
-                                   hosts: dict | None = None, transport: Any = None) -> TokenResponse:
+                                   hosts: dict | None = None, transport: Any = None,
+                                   credentials: tuple[str, str] | None = None,
+                                   redirect_uri: str | None = None) -> TokenResponse:
     """Exchange an authorization code for tokens. Makes a REAL HTTP call.
 
     Never called by the verify script against the live Altruist sandbox — no
     credentials exist. Exercised in verify with a monkeypatched transport
     instead (see verify script Task 4).
     """
-    client_id, client_secret = client_credentials(environment)
-    redirect_uri = _redirect_uri()
+    client_id, client_secret = credentials or client_credentials(environment)
+    redirect_uri = redirect_uri or _redirect_uri()
     resolved = _static_hosts(environment, hosts)
     check_destination(environment, resolved, client_secret)
     login_base = resolved["login_base"]
@@ -456,7 +461,8 @@ async def exchange_code_for_tokens(*, environment: str, code: str, timeout: floa
 
 
 async def refresh_access_token(*, environment: str, refresh_token: str, timeout: float = 15.0,
-                               hosts: dict | None = None, transport: Any = None) -> TokenResponse:
+                               hosts: dict | None = None, transport: Any = None,
+                               credentials: tuple[str, str] | None = None) -> TokenResponse:
     """Rotate the access token using the stored refresh token.
 
     Altruist's 30-day refresh tokens may or may not rotate on use — [FIND]
@@ -465,7 +471,7 @@ async def refresh_access_token(*, environment: str, refresh_token: str, timeout:
     includes a new refresh_token, the caller stores it; if not, the caller
     keeps the existing one (see persist_refresh below).
     """
-    client_id, client_secret = client_credentials(environment)
+    client_id, client_secret = credentials or client_credentials(environment)
     resolved = _static_hosts(environment, hosts)
     check_destination(environment, resolved, client_secret)
     login_base = resolved["login_base"]

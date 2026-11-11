@@ -4,7 +4,7 @@
 -- cpsim schema (no org_id anywhere — a simulated counterparty is a PLATFORM object):
 --   book_uploads        append-only upload log (who, when, file, sha256, kind, format, mode, counts, rejections).
 --                       cpsim_app holds SELECT + INSERT only; a trigger refuses UPDATE / DELETE except an operator
---                       (superuser) teardown that sets cpsim.allow_teardown = 'on'.
+--                       teardown by the table owner that sets cpsim.allow_teardown = 'on'.
 --   book_households / book_accounts / book_positions / book_transactions
 --                       the counterparty's custodian data. VALID-axis (Rule 3): an upload in REPLACE mode closes the
 --                       live rows it replaces (valid_to = now()) and inserts the new ones; one live row per
@@ -56,10 +56,13 @@ CREATE INDEX IF NOT EXISTS book_uploads_counterparty_idx ON cpsim.book_uploads (
 CREATE OR REPLACE FUNCTION cpsim.book_uploads_append_only() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
+  -- operator teardown of fixture rows only: the TABLE OWNER (the migration role — never cpsim_app, which holds no
+  -- DELETE here anyway) with an explicit switch. (Supabase's postgres is not a superuser, so rolsuper cannot be used.)
   IF TG_OP = 'DELETE'
      AND COALESCE(current_setting('cpsim.allow_teardown', true), '') = 'on'
-     AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user AND rolsuper) THEN
-    RETURN OLD;                -- operator teardown of fixture rows only (superuser + explicit switch)
+     AND current_user = (SELECT r.rolname FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner WHERE c.oid = TG_RELID)
+  THEN
+    RETURN OLD;
   END IF;
   RAISE EXCEPTION 'cpsim02: the book upload log is append-only (% refused)', TG_OP USING ERRCODE = '42501';
 END $$;

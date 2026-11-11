@@ -79,7 +79,7 @@ def crosswalk_source(environment: str) -> str:
 
 
 async def simulator_account_allowed(conn, org_id: str, hollisworks_account_id: str) -> bool:
-    """cpsim02 — may this org feed this account from a SIMULATED custodian? The rule is cpsim.may_connect (cpsim01),
+    """cpsim02 — may this org feed this account from a SIMULATED custodian? The rule is the cpsim01 may-connect function,
     reached through its one public definer wrapper: a test org freely; a real org only for an all-demo household."""
     async with _OrgWrite(conn, org_id) as c:
         household_id = await c.fetchval(
