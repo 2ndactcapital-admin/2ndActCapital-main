@@ -707,3 +707,97 @@ cancelled; delay → working until the clock advances, then filled as accept. No
 type other than equity / fund → rejected `unsupported instrument`; a sell above the position → rejected `insufficient
 position`. Working orders are re-evaluated on every clock advance (delay orders and unmarketable limits; a partial's
 remainder stays working).
+
+## 9. Transfers (ASSUMED — no published Altruist money-movement API seen)
+
+Written 2026-11-11 for cpsim04 (`docs/cpsim/CPSIM04_NOTES.md` D1). **Altruist's real money-movement API has never
+been seen**: no repo doc, no code comment, no sandbox call cites a transfer contract of any kind
+(`custodian_capabilities` `altruist.ach / wire / journal = 'unknown'`, `altruist.payment_status_feed = 'no'`). The real
+Altruist route stays manual (the payment sheet). Every row below is **ASSUMED** — shaped like §3 and §8 (same hosts,
+Bearer access token, JSON, primary list key, explicit ids, ISO dates, decimals as strings) — and is pinned by the
+conformance suite's `transfers` group (T01–T16, `services/altruist_conformance.py`).
+
+Client: `services/altruist_transfers.py` (the §8 client conventions call for call: hosts resolved per call, `Bearer`
+access token through `require_active_connection`, `Accept: application/json`, a JSON body, 15 s, an optional
+`transport` on every call, `AltruistOAuthError` on any HTTP status ≥ 400 or a transport failure; the caller reads its
+session and RELEASES its database connection before the HTTP call). Server: `cpsim/transfers.py` under
+`/cpsim/c/<slug>`. Simulator environment only — asked for sandbox or production the client refuses before any request.
+
+### 9.1 Calls
+
+| # | Call | Status | Notes |
+|---|---|---|---|
+| T-1 | `POST {api_base}/v2/transfers` — body below; `201` a new transfer, `200` the SAME transfer on a repeat `client_transfer_id` | ASSUMED | idempotent on `client_transfer_id` per counterparty; `422` a malformed body `{detail, errors: [{field, message}]}`; `404` a `from_account_id` not in the book |
+| T-2 | `GET {api_base}/v2/transfers/{transfer_id}` → `{"transfer": {…}}` | ASSUMED | `404` a transfer of another counterparty, or unknown |
+| T-3 | `GET {api_base}/v2/transfers?account_id=<id>` → `{"transfers": [{…}]}` | ASSUMED | `account_id` required (`400` without); either leg; newest first; one response, no pagination |
+| T-4 | `DELETE {api_base}/v2/transfers/{transfer_id}` → `{"transfer": {…}}` status `cancelled` | ASSUMED | only while `received` / `pending_consent` (nothing has moved); `409` `{detail}` naming the status otherwise |
+| T-5 | resources need an ACCESS token (`Bearer cpsim_at_…`, §2) — the `cpsim_live_` key itself is refused (`401`) | ASSUMED | as §3 / §8 |
+| T-6 | every response carries `X-Counterparty-Simulated: true` (simulator only) | simulator | as cpsim02 |
+
+**The repeat rule (T-1, pinned by conformance T03):** a repeat `POST /v2/transfers` with the same `client_transfer_id`
+(per counterparty) returns the **original transfer unchanged, `200`, whatever the body** — a different amount, rail,
+account or value date is ignored, not validated against the original, not merged and not refused; exactly one transfer
+exists for that `client_transfer_id` (UNIQUE `(counterparty_id, client_transfer_id) WHERE system_to IS NULL`). The §8.1
+rule, ASSUMED like the rest of §9.
+
+### 9.2 Transfer request (POST body)
+
+| Field | Type | Status | Rule |
+|---|---|---|---|
+| `client_transfer_id` | string ≤ 80 | ASSUMED | the Hollisworks payment instruction id (a uuid); the idempotency key |
+| `from_account_id` | string | ASSUMED | the custodian's account id (the crosswalked external id) |
+| `to_account_id` | string | ASSUMED | a destination account AT THE SAME custodian (a journal); exactly one of `to_account_id` / `to_bank` |
+| `to_bank` | object | ASSUMED | a destination at another institution: `{institution_slug, account_id, routing_last4}` (domestic) or `{institution_slug, account_id, bic, iban_last4}` (international) — REFERENCES only: the last four digits of a routing number / IBAN, never a full number |
+| `to_bank.institution_slug` | string | ASSUMED | the receiving bank (a simulated bank's slug) |
+| `to_bank.account_id` | string | ASSUMED | the account in the receiving bank's book |
+| `to_bank.routing_last4` | 4 digits | ASSUMED | domestic: last four of the bank's ACH ABA (rail `ach`) or wire ABA (rail `wire`) |
+| `to_bank.bic` | string | ASSUMED | international: the receiving bank's BIC |
+| `to_bank.iban_last4` | 4 characters | ASSUMED | international: last four of the beneficiary IBAN |
+| `amount` | decimal string, 2 dp, > 0 | ASSUMED | a JSON number is refused (`422` naming the field) |
+| `currency` | `USD` | ASSUMED | the only currency |
+| `rail` | `ach` \| `wire` \| `journal` | ASSUMED | `journal` needs `to_account_id`; `ach` / `wire` need `to_bank`; an international bank takes `wire` only |
+| `value_date` | ISO date | ASSUMED | a US business day; not before the counterparty's business date |
+
+### 9.3 Transfer response (`transfer`)
+
+| Field | Type | Status |
+|---|---|---|
+| `transfer_id` | string (`sim-t-<16 hex>`) | ASSUMED |
+| `client_transfer_id`, `from_account_id`, `to_account_id`, `amount`, `currency`, `rail`, `value_date` | as sent | ASSUMED |
+| `to_bank` | `{institution_slug, account_id, routing_last4 \| bic + iban_last4}` as sent, or null | ASSUMED |
+| `status` | `received` \| `pending_consent` \| `acknowledged` \| `settled` \| `rejected` \| `returned` \| `cancelled` | ASSUMED |
+| `reject_reason` | string or null (the custodian's or the receiving bank's reason) | ASSUMED |
+| `return_code` | `R\d\d` or null | ASSUMED |
+| `return_reason` | string or null | ASSUMED |
+| `acknowledged_on`, `settle_on`, `settled_on`, `returned_on` | ISO dates or null (business dates) | ASSUMED |
+| `events` | list `{status, on, at}` oldest first — every status the transfer took | ASSUMED |
+| `created_at`, `updated_at` | ISO 8601 UTC | ASSUMED |
+
+### 9.4 Feed transaction types for cash (`GET /v2/transactions`) — ASSUMED
+
+Every cash movement is a transaction on the account's CASH row (row_type cash, no identifier, `name` = the cash
+position's name), with an explicit `id` and ISO dates; amounts in `net_amount` (decimal string):
+
+| type | on | net_amount | maps to (client, D2) |
+|---|---|---|---|
+| `transfer_out` / `ach_out` / `wire_out` | the source account, at acknowledgement | the amount (positive) | `sell` — money leaves the holding |
+| `transfer_in` / `ach_in` / `wire_in` | the destination account (same custodian), at settlement | the amount (positive) | `buy` — money arrives |
+| `ach_return` | BOTH accounts, `ach_return_after_days` business days after settlement | `+amount` on the source, `−amount` on the destination | `adjustment` (the stored sign) |
+
+### 9.5 Webhooks (outbound, simulator → us) — ASSUMED
+
+`transfer.updated` on every status change (webhooks on only): `{event_id, event_type, transfer_id,
+client_transfer_id, account_id (the source), environment: "simulator", occurred_at}`, signed as §4 / §8.4. Delivered
+AFTER the response (cpsim03 fix 1). The receiver treats it as a NOTIFICATION: the account resync runs, plus a to-do for
+the payment's sender ("custodian status changed — refresh"). **A webhook never applies a status.**
+
+### 9.6 Simulator lifecycle (cpsim04 D3 / D6 / D8) — the simulated counterparty's scripted behaviour, not a contract claim
+
+At receipt (the counterparty's clock date C): behaviour `reject` → rejected with its reason; `consent_required` →
+`pending_consent` until the admin records the member's consent; `delay` → stays `received` until the next clock
+advance; otherwise acknowledged at once: the source must hold the amount in cash (else rejected `insufficient funds`),
+a bank destination is validated by the receiving bank (routing / BIC / IBAN reference, account in its book, its
+behaviour) — a mismatch is rejected with the bank's reason — and the source is debited. Settlement when C ≥ `settle_on`
+(journal and wire: the value date; ACH: value date + 1 business day): the destination is credited. An ACH with a return
+code (the sender's behaviour, else the receiving bank's) is returned `ach_return_after_days` business days after
+settlement, both legs reversed. Every step re-runs at each clock advance.
