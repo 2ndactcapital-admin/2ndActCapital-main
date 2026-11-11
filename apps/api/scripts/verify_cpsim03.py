@@ -1251,7 +1251,7 @@ async def y_governance(conn):
           "cannot approve (403, services.sod) — the instruction stays awaiting approval",
           f"{c0} {c1} {c1s} {cm} {st_mk} {dumps(o0)[:120]} {dumps(om)[:120]}")
     sod_refused = int(await platform(conn, "SELECT count(*) FROM sod_decisions WHERE org_id = $1::uuid AND item_id = "
-                                           "$2::uuid AND outcome = 'refused'", ORG_A, iid, fetch="fetchval"))
+                                           "$2::text AND outcome = 'refused'", ORG_A, str(iid), fetch="fetchval"))
     check(sod_refused >= 1, "the maker's refused approval is recorded by services.sod (sod_decisions)",
           f"{sod_refused}")
     ca, _ = await api(U_CK, "POST", f"{_X}/instructions/{iid}/approve", {})
@@ -1317,7 +1317,12 @@ async def _send_ok(conn, label, body, *, outcome_expected="sent"):
 async def y_outcomes(conn):
     section("[Y] Outcomes: accept / limit / reject / partial / delay / no price / unsupported / insufficient; idempotent")
     await behaviour(default_outcome="accept", webhooks_enabled=False)
-    iid = S["ins"].get("routed")
+    # fix 1: the section's OWN approved instruction (route → submit → approve through the routes) — it never depends on
+    # the governance section's leftover (a governance crash once left that one awaiting approval and cascaded here)
+    iid = await approved(conn, trade_list(ACC_SIM), "accept")
+    if not iid:
+        check(False, "outcomes: the section's own approved instruction exists")
+        return
     c, o = await send(U_SD, iid)
     order = o.get("order") or {}
     row = await instruction(conn, iid)
@@ -1636,13 +1641,18 @@ async def y_isolation(conn):
     if iid_b:
         cs, os_ = await api(U_MKB, "POST", f"{_X}/instructions/{iid_b}/send-to-custodian", {})
         ob = (os_.get("order") or {})
-        so_other = await sim(conn, "SELECT count(*) FROM cpsim.orders WHERE counterparty_id = $1::uuid AND "
-                                   "client_order_id = $2", S["cp"]["other"], iid_b, fetch="fetchval")
+        # fix 1: cpsim.orders is SYSTEM-axis — a status change (accepted → filled) archives a copy, so one order is
+        # several rows. Count LIVE rows and DISTINCT order ids over every version (one order, never a second);
+        # org A's counterparty must hold NO row of any version.
+        so_other = await sim(conn, "SELECT count(*) FILTER (WHERE system_to IS NULL) AS live, count(DISTINCT order_id) "
+                                   "AS orders FROM cpsim.orders WHERE counterparty_id = $1::uuid AND client_order_id = $2",
+                             S["cp"]["other"], iid_b, fetch="fetchrow")
         so_main = await sim(conn, "SELECT count(*) FROM cpsim.orders WHERE counterparty_id = $1::uuid AND "
                                   "client_order_id = $2", S["cp"]["main"], iid_b, fetch="fetchval")
-        check(cs == HTTP_OK and ob.get("status") == "filled" and int(so_other) == 1 and int(so_main) == 0,
-              "org B's instruction goes to ITS counterparty only (other), never to org A's", f"{cs} {so_other} "
-                                                                                           f"{so_main}")
+        check(cs == HTTP_OK and ob.get("status") == "filled" and int(so_other["live"]) == 1 and
+              int(so_other["orders"]) == 1 and int(so_main) == 0,
+              "org B's instruction goes to ITS counterparty only (other) — one live order, one order id over every "
+              "version — never to org A's (no row of any version)", f"{cs} {dict(so_other)} {so_main}")
         S["orders"]["b"] = ob
     for (uid, other_iid, lbl) in ((U_MKB, iid_a, "B on A's"), (U_SD, iid_b, "A on B's")):
         if not other_iid:
@@ -1890,11 +1900,11 @@ FIXTURE_SECTIONS = (("routing", y_routing), ("governance", y_governance), ("outc
                     ("cancel", y_cancel), ("clock", y_clock), ("book", y_book), ("fills", y_fills),
                     ("webhooks", y_webhooks), ("isolation", y_isolation), ("unchanged", y_unchanged),
                     ("conformance", y_conformance), ("safety", y_safety))
-ONLY_NEEDS = {"routing": (), "governance": ("routing",), "outcomes": ("routing", "governance"),
-              "cancel": ("routing", "governance", "outcomes"), "clock": ("routing", "governance", "outcomes"),
-              "book": ("routing", "governance", "outcomes", "clock"),
-              "fills": ("routing", "governance", "outcomes", "clock", "book"), "webhooks": (),
-              "isolation": ("routing", "governance", "outcomes"), "unchanged": (), "conformance": (), "safety": ()}
+ONLY_NEEDS = {"routing": (), "governance": ("routing",), "outcomes": (),
+              "cancel": ("outcomes",), "clock": ("outcomes",),
+              "book": ("outcomes", "clock"),
+              "fills": ("outcomes", "clock", "book"), "webhooks": (),
+              "isolation": ("outcomes",), "unchanged": (), "conformance": (), "safety": ()}
 
 
 def only_sections() -> list[str] | None:
