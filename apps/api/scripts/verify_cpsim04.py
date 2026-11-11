@@ -56,6 +56,7 @@ fingerprinted (count + md5) before and after.
 --self-checks-only: git / route / static self-checks only. --cleanup-only: the teardown, per-table counts and the real
 fingerprints only. --only=<routing|governance|journal|banks|returns|consent|idempotency|book|webhooks|isolation|
 unchanged|conformance|safety>: the seed, the named sections (each sets up what it needs itself), the full teardown.
+--only=front_end (alone): the render tests + node --test tests/ only, no seed or fixtures (SKIP_BUILD=1 skips npm build).
 With VERIFY_NESTED=1 the regressions print one '[SKIP] nested run'.
 """
 
@@ -104,7 +105,14 @@ SIM_ROUTES = {("POST", "/cpsim/c/{slug}/v2/transfers"), ("GET", "/cpsim/c/{slug}
               ("GET", "/cpsim/c/{slug}/v2/transfers/{transfer_id}"),
               ("DELETE", "/cpsim/c/{slug}/v2/transfers/{transfer_id}")}
 NODE_TEST = "tests/cpsim04/cpsim04.test.mjs"
-NODE_TEST_COUNT = 8
+#: cpsim04 fix 2: the expected count is derived from the test file's own top-level ``test(`` declarations (a
+#: constant went stale when fix 1 added the manual-route reason test); the file must keep at least this many
+NODE_TEST_MIN = 9
+
+
+def node_tests_declared() -> int:
+    """Top-level ``test(`` declarations in NODE_TEST, counted statically by their file."""
+    return len(re.findall(r"^test\(", _src("apps/web/" + NODE_TEST), re.M))
 BOUNDARY = HERE / "cpsim_boundary_check.py"
 CONFORMANCE = HERE / "cpsim_altruist_conformance.py"
 LOADER = HERE / "cpsim04_capabilities.py"
@@ -2397,10 +2405,14 @@ async def y_front_end(conn):
     c1, o1, e1 = run_cmd(["node", "--test", NODE_TEST], WEB_DIR, timeout=300)
     n = re.search(r"^# tests (\d+)$", o1, re.M)
     p = re.search(r"^# pass (\d+)$", o1, re.M)
-    check(c1 == 0 and n is not None and p is not None and int(n.group(1)) == NODE_TEST_COUNT and
-          n.group(1) == p.group(1) and re.search(r"^# fail 0$", o1, re.M) is not None,
+    declared = node_tests_declared()
+    check(declared >= NODE_TEST_MIN and
+          re.search(r"^test\(\"cpsim04 fix 1: a source ALSO crosswalked", _src("apps/web/" + NODE_TEST), re.M) is not None,
+          f"{NODE_TEST} declares >= {NODE_TEST_MIN} tests, the fix 1 reason-panel test among them ({declared})")
+    check(c1 == 0 and n is not None and p is not None and int(n.group(1)) == declared and
+          int(p.group(1)) == declared and re.search(r"^# fail 0$", o1, re.M) is not None,
           f"the cpsim04 render tests ({NODE_TEST}, counted by their file: payment page panel, Transfers / Received "
-          f"tabs, badges) all pass ({n.group(1) if n else '?'}/{NODE_TEST_COUNT})",
+          f"tabs, badges) all pass ({p.group(1) if p else '?'}/{n.group(1) if n else '?'}; declared {declared})",
           f"{c1} {(o1 + e1)[-300:] if c1 else ''}")
     code, out, err = run_cmd(["node", "--test", "tests/"], WEB_DIR, timeout=1800)
     check(code == 0 and re.search(r"^# fail 0", out, re.M) is not None, "node --test tests/ passes (0 fail)",
@@ -2475,9 +2487,11 @@ def only_sections() -> list[str] | None:
     if arg is None:
         return None
     want = [x.strip() for x in arg.split("=", 1)[1].split(",") if x.strip()]
-    bad = [x for x in want if x not in ONLY_NEEDS and x != "seed"]
+    bad = [x for x in want if x not in ONLY_NEEDS and x not in ("seed", "front_end")]
     if bad:
-        raise SystemExit(f"--only: unknown section(s) {sorted(bad)}; known: seed, {', '.join(ONLY_NEEDS)}")
+        raise SystemExit(f"--only: unknown section(s) {sorted(bad)}; known: seed, front_end, {', '.join(ONLY_NEEDS)}")
+    if "front_end" in want and want != ["front_end"]:
+        raise SystemExit("--only=front_end runs alone (no seed, no DB fixtures)")
     names = {x for x in want if x != "seed"}
     return [n for n, _f in FIXTURE_SECTIONS if n in names]
 
@@ -2495,6 +2509,15 @@ async def main_async() -> int:
     if "--cleanup-only" in sys.argv:
         restore_stubs()
         return await cleanup_only(conn)
+    if any(a == "--only=front_end" for a in sys.argv[1:]):
+        only_sections()   # validates the flag
+        try:   # cpsim04 fix 2: the front-end section one-off — no seed, no fixtures (npm build skipped via SKIP_BUILD=1)
+            await run("front end", y_front_end, conn)
+        finally:
+            restore_stubs()
+            await close_conn(conn)
+        print(total_line())
+        return 0 if _n_fail == 0 else 1
     if "--self-checks-only" in sys.argv:
         try:
             await run("task 1", y_task1, conn)
