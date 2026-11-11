@@ -72,7 +72,13 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from services.altruist_identity import RECORD_TYPE_ACCOUNT, SOURCE_SYSTEM_ALTRUIST
+from services.altruist_identity import (
+    RECORD_TYPE_ACCOUNT,
+    SIMULATOR_ENVIRONMENT,
+    SOURCE_SYSTEM_ALTRUIST,
+    crosswalk_source,
+    simulator_account_allowed,
+)
 from services.altruist_oauth import call_positions, call_transactions
 from services.altruist_oauth import require_active_connection
 from services.portfolio_assets import (
@@ -97,6 +103,13 @@ from services.portfolio_import import _match_asset, _to_decimal
 #: Matches ``positions_source_chk`` and the mirrored Python vocabulary in
 #: ``services.portfolio_assets.SOURCE_SYSTEMS`` exactly.
 SOURCE_SYSTEM = "altruist"
+#: cpsim02 D5 — the ledger tag of a row fed by a SIMULATED Altruist-compatible custodian (positions_source_chk and
+#: SOURCE_SYSTEMS admit it; nothing else changed). Sandbox / production keep SOURCE_SYSTEM.
+SOURCE_SYSTEM_SIMULATOR = "altruist_simulator"
+
+
+def ledger_source(environment: str) -> str:
+    return SOURCE_SYSTEM_SIMULATOR if environment == SIMULATOR_ENVIRONMENT else SOURCE_SYSTEM
 
 #: A live custodian API feed IS custodial data, unlike a reporting tool
 #: (which merely aggregates it) — ``services.portfolio_import`` says as much
@@ -155,6 +168,8 @@ class AccountSyncResult:
 class SyncResult:
     accounts_synced: int = 0
     accounts: list[AccountSyncResult] = field(default_factory=list)
+    #: cpsim02 — simulator only: accounts refused by the demo-household rule (nothing written for them)
+    refused_accounts: list[str] = field(default_factory=list)
 
     @property
     def new_transaction_ids(self) -> list[str]:
@@ -284,7 +299,7 @@ async def _resolve_or_create_asset(conn, org_id: str, row: dict) -> str:
 async def _sync_positions(
     conn, org_id: str, *, altruist_account_id: str, hollisworks_account_id: str,
     owner_entity_id: str, as_of: date, environment: str, transport: Any,
-    result: AccountSyncResult,
+    result: AccountSyncResult, xwalk: str = SOURCE_SYSTEM_ALTRUIST, ledger: str = SOURCE_SYSTEM,
 ) -> dict[str, str]:
     """Returns a map of a stable per-row content key -> asset_id, so
     ``_sync_transactions`` can hang a transaction off the asset its matching
@@ -299,7 +314,7 @@ async def _sync_positions(
         key = _security_key(row)
         try:
             existing = await find_external_reference(
-                conn, org_id=org_id, source_system=SOURCE_SYSTEM_ALTRUIST,
+                conn, org_id=org_id, source_system=xwalk,
                 external_id=ext_id, record_type="position",
             )
             if existing:
@@ -318,13 +333,13 @@ async def _sync_positions(
             position_id = await create_position(
                 conn, org_id=org_id, owner_entity_id=owner_entity_id,
                 asset_id=asset_id, as_of_date=as_of, authority=AUTHORITY,
-                source_system=SOURCE_SYSTEM, ownership_basis=basis,
+                source_system=ledger, ownership_basis=basis,
                 quantity=quantity if basis == UNITS else None,
                 market_value=market_value, cost_basis=cost_basis,
                 account_id=hollisworks_account_id,
             )
             await upsert_external_reference(
-                conn, org_id=org_id, source_system=SOURCE_SYSTEM_ALTRUIST,
+                conn, org_id=org_id, source_system=xwalk,
                 external_id=ext_id, record_type="position", record_id=position_id,
             )
             result.positions_created += 1
@@ -337,7 +352,7 @@ async def _sync_positions(
 async def _sync_transactions(
     conn, org_id: str, *, altruist_account_id: str, hollisworks_account_id: str,
     as_of: date, environment: str, transport: Any, asset_by_key: dict[str, str],
-    result: AccountSyncResult,
+    result: AccountSyncResult, xwalk: str = SOURCE_SYSTEM_ALTRUIST, ledger: str = SOURCE_SYSTEM,
 ) -> None:
     rows = await call_transactions(
         conn, org_id=org_id, environment=environment,
@@ -347,7 +362,7 @@ async def _sync_transactions(
         ext_id = _transaction_external_id(altruist_account_id, row)
         try:
             existing = await find_external_reference(
-                conn, org_id=org_id, source_system=SOURCE_SYSTEM_ALTRUIST,
+                conn, org_id=org_id, source_system=xwalk,
                 external_id=ext_id, record_type="transaction",
             )
             if existing:
@@ -415,7 +430,7 @@ async def _sync_transactions(
                 conn, org_id=org_id, position_id=position_id,
                 transaction_type_code=txn_type_code, trade_date=trade_date,
                 settle_date=settle_date, authority=AUTHORITY,
-                source_system=SOURCE_SYSTEM,
+                source_system=ledger,
                 quantity=_to_decimal(row.get("quantity"), "quantity"),
                 price=_to_decimal(row.get("price"), "price"),
                 gross_amount=_to_decimal(row.get("gross_amount"), "gross_amount"),
@@ -426,7 +441,7 @@ async def _sync_transactions(
                 external_ref=str(row.get("id")) if row.get("id") else None,
             )
             await upsert_external_reference(
-                conn, org_id=org_id, source_system=SOURCE_SYSTEM_ALTRUIST,
+                conn, org_id=org_id, source_system=xwalk,
                 external_id=ext_id, record_type="transaction", record_id=transaction_id,
             )
             result.transactions_created += 1
@@ -435,7 +450,8 @@ async def _sync_transactions(
             result.transactions_errors.append(RowError(external_id=ext_id, reason=str(exc)))
 
 
-async def list_resolved_altruist_accounts(conn, *, org_id: str) -> list[dict]:
+async def list_resolved_altruist_accounts(conn, *, org_id: str,
+                                         source: str = SOURCE_SYSTEM_ALTRUIST) -> list[dict]:
     """Every Altruist account already matched to a Hollisworks account.
 
     Queries ``portfolio.external_references`` directly — the exact crosswalk
@@ -452,7 +468,7 @@ async def list_resolved_altruist_accounts(conn, *, org_id: str) -> list[dict]:
             FROM {TABLE_EXT_REF}
             WHERE org_id = $1::uuid AND source_system = $2 AND record_type = $3
             """,
-            org_id, SOURCE_SYSTEM_ALTRUIST, RECORD_TYPE_ACCOUNT,
+            org_id, source, RECORD_TYPE_ACCOUNT,
         )
     return [dict(r) for r in rows]
 
@@ -480,12 +496,20 @@ async def sync_resolved_accounts(
     await require_active_connection(conn, org_id=org_id, environment=environment)
 
     as_of = as_of_date or date.today()
-    accounts = await list_resolved_altruist_accounts(conn, org_id=org_id)
+    xwalk = crosswalk_source(environment)
+    ledger = ledger_source(environment)
+    accounts = await list_resolved_altruist_accounts(conn, org_id=org_id, source=xwalk)
 
     result = SyncResult()
     for row in accounts:
         altruist_account_id = row["external_id"]
         hollisworks_account_id = row["hollisworks_account_id"]
+        if environment == SIMULATOR_ENVIRONMENT and not await simulator_account_allowed(
+                conn, org_id, hollisworks_account_id):
+            # cpsim02 D5 — never write a simulated feed into a real org's non-demo household (identity resolution
+            # recorded the not_a_demo_household exception; this is the second, independent stop)
+            result.refused_accounts.append(hollisworks_account_id)
+            continue
         owner_entity_id = await _owner_entity_id_for_account(
             conn, org_id, hollisworks_account_id
         )
@@ -497,13 +521,13 @@ async def sync_resolved_accounts(
             conn, org_id, altruist_account_id=altruist_account_id,
             hollisworks_account_id=hollisworks_account_id,
             owner_entity_id=owner_entity_id, as_of=as_of, environment=environment,
-            transport=transport, result=account_result,
+            transport=transport, result=account_result, xwalk=xwalk, ledger=ledger,
         )
         await _sync_transactions(
             conn, org_id, altruist_account_id=altruist_account_id,
             hollisworks_account_id=hollisworks_account_id, as_of=as_of,
             environment=environment, transport=transport,
-            asset_by_key=asset_by_key, result=account_result,
+            asset_by_key=asset_by_key, result=account_result, xwalk=xwalk, ledger=ledger,
         )
         # PORTENTRY1 (GAP-PORT-02) — the feed supersedes this account's one-time provisional import (precedence on
         # every shared holding key, then the provisional rows are closed). A failure here never fails the sync.
@@ -512,7 +536,7 @@ async def sync_resolved_accounts(
                 from services.integrated_import import supersede_for_account
 
                 account_result.provisional = await supersede_for_account(
-                    conn, org_id, hollisworks_account_id, by_source=SOURCE_SYSTEM)
+                    conn, org_id, hollisworks_account_id, by_source=ledger)
             except Exception as exc:  # noqa: BLE001
                 account_result.provisional = {"error": f"{type(exc).__name__}: {exc}"}
         result.accounts.append(account_result)
@@ -540,6 +564,8 @@ __all__ = [
     "CUSTODIAN_CODE",
     "CUSTODIAN_SYSTEM_CODE",
     "SOURCE_SYSTEM",
+    "SOURCE_SYSTEM_SIMULATOR",
+    "ledger_source",
     "TRANSACTION_TYPE_MAP",
     "AccountSyncResult",
     "AltruistSyncError",

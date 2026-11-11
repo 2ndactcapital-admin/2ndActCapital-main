@@ -59,6 +59,7 @@ corrects them once real sandbox docs/access are available.
 from __future__ import annotations
 
 import base64
+import json
 import os
 import secrets
 from dataclasses import dataclass
@@ -97,7 +98,26 @@ ACCESS_TOKEN_LIFETIME = timedelta(hours=1)
 REFRESH_TOKEN_LIFETIME = timedelta(days=30)
 STATE_TTL = timedelta(minutes=10)
 
-ENVIRONMENTS = ("sandbox", "production")
+ENVIRONMENTS = ("sandbox", "production", "simulator")
+
+# ── cpsim02 — the third environment: a SIMULATED Altruist-compatible counterparty ──────────────────────────────
+# D1: every branch below is explicit — sandbox, production and simulator each name their own variables, and any other
+# value raises (never a silent fall-through to production). D2: the simulator's hosts are resolved PER CALL from two
+# Super-Admin-only org settings (the allowed flag and the counterparty slug) and CPSIM_BASE_URL (non-secret, https).
+# D3: its client id is the counterparty credential's public id, its secret the counterparty's cpsim_ key — both from
+# Doppler (ALTRUIST_SIMULATOR_CLIENT_ID / _CLIENT_SECRET). The simulator is reached over HTTP like any counterparty;
+# this module never imports the simulator package.
+SIMULATOR = "simulator"
+REAL_ENVIRONMENTS = ("sandbox", "production")
+SIMULATOR_SECRET_PREFIX = "cpsim_"
+SIMULATOR_PATH_MARK = "/cpsim/c/"
+CPSIM_BASE_URL_ENV = "CPSIM_BASE_URL"
+SETTING_SIM_ALLOWED = "counterparty_sim.allowed"
+SETTING_SIM_COUNTERPARTY = "counterparty_sim.altruist_counterparty"
+_SLUG_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789-")
+#: test injection ONLY for the simulator environment (the verify routes simulator calls in-process through an ASGI
+#: transport). Sandbox and production never read it.
+_simulator_transport: Any = None
 
 
 class AltruistOAuthError(RuntimeError):
@@ -109,6 +129,102 @@ class AltruistConfigError(RuntimeError):
     encryption key) is missing. Distinct from AltruistOAuthError so a caller
     can tell "this deployment is not configured" from "the flow itself failed".
     """
+
+
+class AltruistSimulatorRefused(RuntimeError):
+    """cpsim02 — the simulator environment is not available to this org (the allowed flag is off, or no counterparty
+    is configured). Raised BEFORE any call; the router answers 409 with the reason."""
+
+
+def set_simulator_transport(transport: Any) -> None:
+    """Test injection: route every SIMULATOR-environment call through ``transport`` (e.g. an in-process ASGI
+    transport). Sandbox and production are never affected."""
+    global _simulator_transport
+    _simulator_transport = transport
+
+
+def _transport_for(environment: str, transport: Any) -> Any:
+    if transport is not None:
+        return transport
+    return _simulator_transport if environment == SIMULATOR else None
+
+
+def is_simulator_host(hosts: dict) -> bool:
+    return any(SIMULATOR_PATH_MARK in (hosts.get(k) or "") for k in ("api_base", "login_base"))
+
+
+def simulator_hosts(slug: str) -> dict[str, str]:
+    """D2 — ``CPSIM_BASE_URL`` + ``/cpsim/c/<slug>`` for both the API and the login base. https only."""
+    base = (os.environ.get(CPSIM_BASE_URL_ENV) or "").strip().rstrip("/")
+    if not base:
+        raise AltruistConfigError(f"{CPSIM_BASE_URL_ENV} is not set — the simulator environment has no address.")
+    if not base.startswith("https://"):
+        raise AltruistConfigError(f"{CPSIM_BASE_URL_ENV} must be an https URL.")
+    if not slug or set(slug) - _SLUG_CHARS:
+        raise AltruistSimulatorRefused("the configured simulated counterparty slug is not valid")
+    root = f"{base}{SIMULATOR_PATH_MARK}{slug}"
+    return {"api_base": root, "login_base": root}
+
+
+async def simulator_counterparty(conn, *, org_id: str) -> str:
+    """The slug of the simulated counterparty this org's ``simulator`` environment talks to. Refuses (raises
+    AltruistSimulatorRefused) when ``counterparty_sim.allowed`` is not true or no counterparty is configured."""
+    rows = await conn.fetch(
+        "SELECT setting_key, setting_value FROM org_settings WHERE org_id = $1::uuid AND setting_key = ANY($2::text[])",
+        org_id, [SETTING_SIM_ALLOWED, SETTING_SIM_COUNTERPARTY],
+    )
+    values = {}
+    for r in rows:
+        v = r["setting_value"]
+        values[r["setting_key"]] = json.loads(v) if isinstance(v, str) else v
+    if values.get(SETTING_SIM_ALLOWED) is not True:
+        raise AltruistSimulatorRefused(
+            "the simulator environment is not enabled for this organization (counterparty_sim.allowed is off)")
+    slug = values.get(SETTING_SIM_COUNTERPARTY)
+    if not isinstance(slug, str) or not slug:
+        raise AltruistSimulatorRefused(
+            "no simulated counterparty is configured for this organization (counterparty_sim.altruist_counterparty)")
+    return slug
+
+
+async def resolve_hosts(conn, *, org_id: str, environment: str) -> dict[str, str]:
+    """The hosts for one call. Sandbox / production: the static table, exactly as before (no query). Simulator: the
+    org's configured counterparty, re-checked on every call (turning the flag off stops the next call)."""
+    if environment in REAL_ENVIRONMENTS:
+        return ALTRUIST_HOSTS[environment]
+    if environment == SIMULATOR:
+        return simulator_hosts(await simulator_counterparty(conn, org_id=org_id))
+    raise ValueError(f"Unknown environment: {environment!r}")
+
+
+def _static_hosts(environment: str, hosts: dict | None) -> dict[str, str]:
+    if hosts is not None:
+        return hosts
+    if environment in REAL_ENVIRONMENTS:
+        return ALTRUIST_HOSTS[environment]
+    if environment == SIMULATOR:
+        raise AltruistSimulatorRefused("the simulator environment needs its hosts resolved for the org first")
+    raise ValueError(f"Unknown environment: {environment!r}")
+
+
+def check_destination(environment: str, hosts: dict, client_secret: str | None = None) -> None:
+    """D1 — no cross-environment credentials, in either direction:
+    a simulator environment sends only to a simulator host, and only a ``cpsim_`` secret;
+    sandbox / production never send to a simulator host, and never a ``cpsim_`` secret."""
+    sim_host = is_simulator_host(hosts)
+    if environment == SIMULATOR:
+        if not sim_host:
+            raise AltruistConfigError("refusing to send simulator credentials to a non-simulator host")
+        if client_secret is not None and not client_secret.startswith(SIMULATOR_SECRET_PREFIX):
+            raise AltruistConfigError(
+                "refusing to send a simulator client secret that lacks the cpsim_ prefix")
+        return
+    if environment not in REAL_ENVIRONMENTS:
+        raise ValueError(f"Unknown environment: {environment!r}")
+    if sim_host:
+        raise AltruistConfigError(f"refusing to send {environment} credentials to a simulator host")
+    if client_secret is not None and client_secret.startswith(SIMULATOR_SECRET_PREFIX):
+        raise AltruistConfigError(f"refusing to send a simulator (cpsim_) secret as {environment} credentials")
 
 
 # ── Encryption ──────────────────────────────────────────────────────────────
@@ -243,7 +359,16 @@ def _redirect_uri() -> str:
 
 
 def client_credentials(environment: str) -> tuple[str, str]:
-    prefix = "ALTRUIST_SANDBOX" if environment == "sandbox" else "ALTRUIST_PRODUCTION"
+    # cpsim02 D1 — explicit branches; production is `== "production"` EXACTLY, anything unknown raises.
+    if environment == "sandbox":
+        prefix = "ALTRUIST_SANDBOX"
+    elif environment == "production":
+        prefix = "ALTRUIST_PRODUCTION"
+    elif environment == SIMULATOR:
+        prefix = "ALTRUIST_SIMULATOR"
+    else:
+        raise AltruistConfigError(f"Unknown Altruist environment {environment!r} — no credentials are configured "
+                                  f"for it (never a fallback to production).")
     client_id = os.environ.get(f"{prefix}_CLIENT_ID")
     client_secret = os.environ.get(f"{prefix}_CLIENT_SECRET")
     if not client_id or not client_secret:
@@ -253,15 +378,23 @@ def client_credentials(environment: str) -> tuple[str, str]:
             "project's Doppler config as of Sprint 1 — this is the documented "
             "blocker, not a code defect."
         )
+    if environment == SIMULATOR and not client_secret.startswith(SIMULATOR_SECRET_PREFIX):
+        raise AltruistConfigError(
+            "ALTRUIST_SIMULATOR_CLIENT_SECRET must be a simulator key (cpsim_ prefix) — refusing to send it")
+    if environment != SIMULATOR and client_secret.startswith(SIMULATOR_SECRET_PREFIX):
+        raise AltruistConfigError(f"{prefix}_CLIENT_SECRET is a simulator key (cpsim_) — refusing to send it")
     return client_id, client_secret
 
 
-def build_authorize_url(*, environment: str, state: str, scope: str = "accounts:read") -> str:
+def build_authorize_url(*, environment: str, state: str, scope: str = "accounts:read",
+                        hosts: dict | None = None) -> str:
     if environment not in ENVIRONMENTS:
         raise ValueError(f"Unknown environment: {environment!r}")
-    client_id, _ = client_credentials(environment)
+    client_id, client_secret = client_credentials(environment)
     redirect_uri = _redirect_uri()
-    login_base = ALTRUIST_HOSTS[environment]["login_base"]
+    resolved = _static_hosts(environment, hosts)
+    check_destination(environment, resolved, client_secret)
+    login_base = resolved["login_base"]
     params = {
         "response_type": "code",
         "client_id": client_id,
@@ -280,7 +413,8 @@ class TokenResponse:
     scope: str | None = None
 
 
-async def exchange_code_for_tokens(*, environment: str, code: str, timeout: float = 15.0) -> TokenResponse:
+async def exchange_code_for_tokens(*, environment: str, code: str, timeout: float = 15.0,
+                                   hosts: dict | None = None, transport: Any = None) -> TokenResponse:
     """Exchange an authorization code for tokens. Makes a REAL HTTP call.
 
     Never called by the verify script against the live Altruist sandbox — no
@@ -289,10 +423,12 @@ async def exchange_code_for_tokens(*, environment: str, code: str, timeout: floa
     """
     client_id, client_secret = client_credentials(environment)
     redirect_uri = _redirect_uri()
-    login_base = ALTRUIST_HOSTS[environment]["login_base"]
+    resolved = _static_hosts(environment, hosts)
+    check_destination(environment, resolved, client_secret)
+    login_base = resolved["login_base"]
     url = f"{login_base}{_OAUTH_PATHS['token']}"
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, transport=_transport_for(environment, transport)) as client:
         try:
             response = await client.post(
                 url,
@@ -319,7 +455,8 @@ async def exchange_code_for_tokens(*, environment: str, code: str, timeout: floa
     return _parse_token_response(body)
 
 
-async def refresh_access_token(*, environment: str, refresh_token: str, timeout: float = 15.0) -> TokenResponse:
+async def refresh_access_token(*, environment: str, refresh_token: str, timeout: float = 15.0,
+                               hosts: dict | None = None, transport: Any = None) -> TokenResponse:
     """Rotate the access token using the stored refresh token.
 
     Altruist's 30-day refresh tokens may or may not rotate on use — [FIND]
@@ -329,10 +466,12 @@ async def refresh_access_token(*, environment: str, refresh_token: str, timeout:
     keeps the existing one (see persist_refresh below).
     """
     client_id, client_secret = client_credentials(environment)
-    login_base = ALTRUIST_HOSTS[environment]["login_base"]
+    resolved = _static_hosts(environment, hosts)
+    check_destination(environment, resolved, client_secret)
+    login_base = resolved["login_base"]
     url = f"{login_base}{_OAUTH_PATHS['token']}"
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, transport=_transport_for(environment, transport)) as client:
         try:
             response = await client.post(
                 url,
@@ -583,8 +722,12 @@ async def ensure_fresh_token(
 
     try:
         refresh_token = await get_decrypted_refresh_token(conn, connection_id=connection["id"])
-        tokens = await refresh_access_token(environment=environment, refresh_token=refresh_token)
-    except (AltruistOAuthError, AltruistConfigError):
+        if environment == SIMULATOR:
+            hosts = await resolve_hosts(conn, org_id=org_id, environment=environment)
+            tokens = await refresh_access_token(environment=environment, refresh_token=refresh_token, hosts=hosts)
+        else:
+            tokens = await refresh_access_token(environment=environment, refresh_token=refresh_token)
+    except (AltruistOAuthError, AltruistConfigError, AltruistSimulatorRefused):
         if expires_at <= now:
             raise
         return connection
@@ -738,6 +881,73 @@ def _normalize_transaction(raw: dict) -> dict:
     }
 
 
+#: resource → (path key, query parameter, envelope list key, normalizer) — the four resource calls share ONE request
+#: path (``fetch_resource``), so the conformance suite drives exactly the request-building and parsing the sync uses.
+_RESOURCES = {
+    "households": ("households", None, "households", _normalize_household),
+    "accounts": ("accounts", "household_id", "accounts", _normalize_account),
+    "positions": ("positions", "account_id", "positions", _normalize_position),
+    "transactions": ("transactions", "account_id", "transactions", _normalize_transaction),
+}
+
+
+async def fetch_resource(
+    *,
+    api_base: str,
+    resource: str,
+    access_token: str,
+    param: str | None = None,
+    timeout: float = 15.0,
+    transport: Any = None,
+) -> list[dict]:
+    """GET ``api_base`` + the resource path with Bearer + Accept only; one request (no pagination); ``>= 400`` and
+    transport failures raise ``AltruistOAuthError``; the list is read from the primary key, then ``data`` /
+    ``results`` (or a bare array) and normalized. Used by every ``call_*`` below and by the conformance suite."""
+    path_key, param_name, list_key, normalize = _RESOURCES[resource]
+    url = f"{api_base}{_API_PATHS[path_key]}"
+    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+        try:
+            if param_name is None:
+                response = await client.get(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Accept": "application/json",
+                    },
+                )
+            else:
+                response = await client.get(
+                    url,
+                    params={param_name: param},
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Accept": "application/json",
+                    },
+                )
+        except httpx.HTTPError as exc:
+            raise AltruistOAuthError(
+                f"GET {url} failed at the transport layer: {type(exc).__name__}"
+            ) from exc
+
+    if response.status_code >= 400:
+        raise AltruistOAuthError(
+            f"GET {url} was refused: HTTP {response.status_code}"
+        )
+    body = response.json()
+    return [normalize(item) for item in _extract_list(body, list_key, "data", "results")]
+
+
+async def _call(conn, *, org_id: str, environment: str, resource: str, param: str | None, timeout: float,
+                transport: Any) -> list[dict]:
+    connection = await require_active_connection(conn, org_id=org_id, environment=environment)
+    access_token = await get_decrypted_access_token(conn, connection_id=connection["id"])
+    hosts = await resolve_hosts(conn, org_id=org_id, environment=environment)
+    if environment == SIMULATOR:
+        check_destination(environment, hosts)
+    return await fetch_resource(api_base=hosts["api_base"], resource=resource, access_token=access_token,
+                                param=param, timeout=timeout, transport=_transport_for(environment, transport))
+
+
 async def call_households(
     conn,
     *,
@@ -757,31 +967,8 @@ async def call_households(
     (URL construction, bearer header, JSON parsing) runs against a synthetic,
     documented-shape response instead of a live call.
     """
-    connection = await require_active_connection(conn, org_id=org_id, environment=environment)
-    access_token = await get_decrypted_access_token(conn, connection_id=connection["id"])
-    api_base = ALTRUIST_HOSTS[environment]["api_base"]
-    url = f"{api_base}{_API_PATHS['households']}"
-
-    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
-        try:
-            response = await client.get(
-                url,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                },
-            )
-        except httpx.HTTPError as exc:
-            raise AltruistOAuthError(
-                f"GET {url} failed at the transport layer: {type(exc).__name__}"
-            ) from exc
-
-    if response.status_code >= 400:
-        raise AltruistOAuthError(
-            f"GET {url} was refused: HTTP {response.status_code}"
-        )
-    body = response.json()
-    return [_normalize_household(h) for h in _extract_list(body, "households", "data", "results")]
+    return await _call(conn, org_id=org_id, environment=environment, resource="households", param=None,
+                       timeout=timeout, transport=transport)
 
 
 async def fetch_accounts_for_household(
@@ -798,32 +985,8 @@ async def fetch_accounts_for_household(
     Same guard-first, injectable-transport shape as ``call_households`` — see
     its docstring.
     """
-    connection = await require_active_connection(conn, org_id=org_id, environment=environment)
-    access_token = await get_decrypted_access_token(conn, connection_id=connection["id"])
-    api_base = ALTRUIST_HOSTS[environment]["api_base"]
-    url = f"{api_base}{_API_PATHS['accounts']}"
-
-    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
-        try:
-            response = await client.get(
-                url,
-                params={"household_id": household_id},
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                },
-            )
-        except httpx.HTTPError as exc:
-            raise AltruistOAuthError(
-                f"GET {url} failed at the transport layer: {type(exc).__name__}"
-            ) from exc
-
-    if response.status_code >= 400:
-        raise AltruistOAuthError(
-            f"GET {url} was refused: HTTP {response.status_code}"
-        )
-    body = response.json()
-    return [_normalize_account(a) for a in _extract_list(body, "accounts", "data", "results")]
+    return await _call(conn, org_id=org_id, environment=environment, resource="accounts", param=household_id,
+                       timeout=timeout, transport=transport)
 
 
 async def call_positions(
@@ -841,32 +1004,8 @@ async def call_positions(
     ``fetch_accounts_for_household`` — see its docstring. The path itself is
     an unconfirmed [FIND]; see ``_API_PATHS``.
     """
-    connection = await require_active_connection(conn, org_id=org_id, environment=environment)
-    access_token = await get_decrypted_access_token(conn, connection_id=connection["id"])
-    api_base = ALTRUIST_HOSTS[environment]["api_base"]
-    url = f"{api_base}{_API_PATHS['positions']}"
-
-    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
-        try:
-            response = await client.get(
-                url,
-                params={"account_id": account_id},
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                },
-            )
-        except httpx.HTTPError as exc:
-            raise AltruistOAuthError(
-                f"GET {url} failed at the transport layer: {type(exc).__name__}"
-            ) from exc
-
-    if response.status_code >= 400:
-        raise AltruistOAuthError(
-            f"GET {url} was refused: HTTP {response.status_code}"
-        )
-    body = response.json()
-    return [_normalize_position(p) for p in _extract_list(body, "positions", "data", "results")]
+    return await _call(conn, org_id=org_id, environment=environment, resource="positions", param=account_id,
+                       timeout=timeout, transport=transport)
 
 
 async def call_transactions(
@@ -884,29 +1023,5 @@ async def call_transactions(
     ``fetch_accounts_for_household`` — see its docstring. The path itself is
     an unconfirmed [FIND]; see ``_API_PATHS``.
     """
-    connection = await require_active_connection(conn, org_id=org_id, environment=environment)
-    access_token = await get_decrypted_access_token(conn, connection_id=connection["id"])
-    api_base = ALTRUIST_HOSTS[environment]["api_base"]
-    url = f"{api_base}{_API_PATHS['transactions']}"
-
-    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
-        try:
-            response = await client.get(
-                url,
-                params={"account_id": account_id},
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                },
-            )
-        except httpx.HTTPError as exc:
-            raise AltruistOAuthError(
-                f"GET {url} failed at the transport layer: {type(exc).__name__}"
-            ) from exc
-
-    if response.status_code >= 400:
-        raise AltruistOAuthError(
-            f"GET {url} was refused: HTTP {response.status_code}"
-        )
-    body = response.json()
-    return [_normalize_transaction(t) for t in _extract_list(body, "transactions", "data", "results")]
+    return await _call(conn, org_id=org_id, environment=environment, resource="transactions", param=account_id,
+                       timeout=timeout, transport=transport)
