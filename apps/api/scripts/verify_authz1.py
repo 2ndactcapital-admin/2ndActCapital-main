@@ -676,6 +676,8 @@ async def y_matrix(conn):
         check(exercised[persona] > 0 and not offenders,
               f"route matrix — {persona}: every exercised route matches AUTHZ1_ROUTES.json (zero unexpected 2xx)",
               f"{exercised[persona]} requests; {len(offenders)} mismatches: {offenders[:6]}")
+        for o in sorted(offenders):          # CPSIM01 FIX 1: the full list (the check line shows six)
+            print(f"[INFO]   {persona} mismatch: {o}")
     find("the matrix fires a write only where the persona is expected to be refused",
          "allowed writes are proven by the targeted AFTER / provisioning sections, never with a blind payload")
 
