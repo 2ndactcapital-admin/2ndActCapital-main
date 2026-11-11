@@ -387,9 +387,11 @@ inventory, differences, loader dry-run, diff review, conformance run). Contract:
   CUSIP; reconcile check not vacuous; I / R / X2 were cascades. Fix 2 — DOC/CONFORMANCE: repeat rule in contract
   §8.1 + conformance O15. VERIFY: `--cleanup-only` per-table counts + real-row fingerprints (377 leftovers → 0); G2 a
   real `services.sod` maker-checker refusal (fixture U_MA); verify_rep2 `--only`; per-section one-offs all PASS.
-  Fix 3 — O03 reproduction, remaining one-offs, safety re-check (CPSIM03_NOTES §9). [FIND] conformance O03 failed
-  once in 10 runs (fix 2); the verify now prints every failing conformance detail, assertion unchanged. Final state:
-  verified by the runner's verify.
+  Fix 3 — CODE: the simulator's order lists were N+1 (one executions query per order; latency grew with order count,
+  one 16.6 s list → ReadTimeout), now one batched query. O03 10/10 in-process before and after; one-offs
+  verify_cpsim02 privileges 70/0, verify_rep2 evidence 57/0, cleanup-only 13/0, governance+unchanged safety re-check
+  101/0 (CPSIM03_NOTES §9b). [FIND] conformance O03 failed once in 10 runs (fix 2), original cause not reproduced;
+  the verify prints every failing conformance detail, assertion unchanged. Final state: verified by the runner's verify.
 
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CPSIM02 — the simulated custodian ANSWERS: an Altruist-compatible read API served from an uploaded book; webhooks out; the existing Altruist client pointed at it through a third environment `simulator`; the conformance suite
 

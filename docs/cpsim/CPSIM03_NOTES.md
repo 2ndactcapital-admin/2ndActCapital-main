@@ -287,3 +287,14 @@ maker-checker refusal) 96 PASS / 0 FAIL — 41a4f5e (schema 15, routing 14, gove
 | `verify_cpsim02.py --only=seed` (the schema section always runs — it holds the EXACT cpsim_app privilege check built from `_cpsim_fixtures.CPSIM_APP_WITHHELD`) | **70 PASS, 0 FAIL**; exact grants PASS (book_uploads −D/U, order_executions −D/U, orders −D); no network PASS |
 | `verify_rep2.py --only=capabilities` (the evidence section) | **57 PASS, 0 FAIL**; "every seeded capability carries evidence" PASS (43 recorded); [FIND] `('altruist','payment_sheet')` unrecorded → served unknown; no network PASS |
 | `verify_cpsim03.py --cleanup-only` after this fix's runs | **13 PASS, 0 FAIL**; 0 fixture rows before and after (41 tables); 11 real fingerprints unchanged |
+
+**Fix 3, Task 4 — safety re-check** (after the Task 2 code change). `verify_cpsim03.py --only=governance,unchanged`
+(seed + routing + governance + unchanged + teardown, 5 min 37 s): **101 PASS, 0 FAIL**, no-network PASS.
+
+| item | proof |
+|---|---|
+| nothing unattended can send or import | governance: Send / Import `verb_autonomy` = NEVER (trades), NOT in the action REGISTRY (so no workflow action, S29b step, agent or trigger can name them), `sod.VERB_DUTIES` = write; the code scan (every `services/*.py` incl. the sweeps, `workflow_scheduler_tick.py`, every router) finds no caller but the two person routes in `routers/execution.py`; no registered action key names custodian / execution. Independent grep of all of `apps/api` (cpsim, scripts, services, routers): the same two routes are the only callers; `custodian_send` / `custodian_import` appear only in `services/sod.py`, `services/workflow_autonomy.py` (the declarations) and the verify. |
+| the after-response webhook books nothing, only creates the to-do | `services/altruist_webhook.py` → `custodian_execution.order_event_todo` is the only order-event path: it reads the instruction and calls `_todo` ("nothing is booked until you do") — no `enter_fill`, no `mark_sent`. Proven live in fix 2's webhooks one-off (1eaab39, 7/0: one to-do, nothing booked, send 7.3 s vs the 15 s timeout); fix 3 touched neither file. |
+| the real Altruist route still manual | routing: a real-Altruist-crosswalked account → manual, reason = the real capability ('unknown'), never the simulator; unchanged: real `equity_trading_api` still 'unknown'. |
+| blocks manual only | `trade_blocks_route_chk` = `CHECK ((route = 'manual'::text))`, read at seed and re-read in unchanged. |
+| no `altruist_simulator` capability row outside fixtures | unchanged: 0 rows of that code before and after the loader's default `--dry-run` (22 to set, nothing written). The loader was NOT applied. |
