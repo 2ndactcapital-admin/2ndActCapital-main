@@ -8,7 +8,7 @@
   create_counterparty    a fixture Altruist-compatible counterparty (draft → active), its key returned ONCE in memory.
   plant_book             households / accounts / positions / transactions through the package's own accept().
   teardown(prefix)       every cpsim row of every counterparty whose slug starts with ``prefix`` (operator DSN: the
-                         upload log is append-only and yields only to its owner with cpsim.allow_teardown = 'on').
+                         upload log is append-only and yields only to its owner with cpsim.allow_teardown = 'fixture').
 
 Never prints a key, a token or a signature.
 """
@@ -95,7 +95,7 @@ async def teardown(prefix: str) -> dict:
     counts: dict[str, int] = {}
     try:
         async with conn.transaction():
-            await conn.execute("SELECT set_config('cpsim.allow_teardown', 'on', true)")
+            await conn.execute("SELECT set_config('cpsim.allow_teardown', 'fixture', true)")
             ids = [r["id"] for r in await conn.fetch(
                 "SELECT id FROM cpsim.counterparties WHERE slug LIKE $1 || '%'", prefix)]
             for t in CP_TABLES:

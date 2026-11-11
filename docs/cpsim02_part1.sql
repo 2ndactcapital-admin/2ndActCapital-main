@@ -4,7 +4,8 @@
 -- cpsim schema (no org_id anywhere — a simulated counterparty is a PLATFORM object):
 --   book_uploads        append-only upload log (who, when, file, sha256, kind, format, mode, counts, rejections).
 --                       cpsim_app holds SELECT + INSERT only; a trigger refuses UPDATE / DELETE except an operator
---                       teardown by the table owner that sets cpsim.allow_teardown = 'on'.
+--                       teardown by the table owner that sets cpsim.allow_teardown = 'fixture' (the shared
+--                       _verify_cleanup convention).
 --   book_households / book_accounts / book_positions / book_transactions
 --                       the counterparty's custodian data. VALID-axis (Rule 3): an upload in REPLACE mode closes the
 --                       live rows it replaces (valid_to = now()) and inserts the new ones; one live row per
@@ -59,7 +60,7 @@ BEGIN
   -- operator teardown of fixture rows only: the TABLE OWNER (the migration role — never cpsim_app, which holds no
   -- DELETE here anyway) with an explicit switch. (Supabase's postgres is not a superuser, so rolsuper cannot be used.)
   IF TG_OP = 'DELETE'
-     AND COALESCE(current_setting('cpsim.allow_teardown', true), '') = 'on'
+     AND COALESCE(current_setting('cpsim.allow_teardown', true), '') = 'fixture'
      AND current_user = (SELECT r.rolname FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner WHERE c.oid = TG_RELID)
   THEN
     RETURN OLD;
