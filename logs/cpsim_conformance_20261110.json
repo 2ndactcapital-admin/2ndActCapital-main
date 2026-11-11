@@ -1,0 +1,157 @@
+{
+  "environment": "simulator",
+  "passed": 20,
+  "failed": 0,
+  "results": [
+    {
+      "id": "C01",
+      "contract": "\u00a76.1 / T1",
+      "label": "authorize: 302 to redirect_uri with a code and the state echoed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C02",
+      "contract": "\u00a76.1 / T1 (client_id)",
+      "label": "authorize: an unknown client_id is refused (\u2265 400, no redirect)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C03",
+      "contract": "\u00a76.2 / T2",
+      "label": "token (authorization_code): the client's exchange_code_for_tokens parses the response",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C04",
+      "contract": "\u00a76.2 / T2",
+      "label": "token: a used authorization code is refused",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C05",
+      "contract": "\u00a76.2 / T2",
+      "label": "token response carries access_token, refresh_token, expires_in (int), scope, token_type Bearer",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C06",
+      "contract": "\u00a76.2 / T2 (client_secret)",
+      "label": "token: a wrong client_secret is refused",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C07",
+      "contract": "\u00a76.2 / T3",
+      "label": "refresh: the client's refresh_access_token gets a new access AND refresh token (rotation)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C08",
+      "contract": "\u00a76.2 / T3",
+      "label": "refresh: a spent refresh token is refused",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C09",
+      "contract": "\u00a76.3 / T4",
+      "label": "households: {\"households\": [{id, name}]} (primary key), non-empty, the client reads every one",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C10",
+      "contract": "\u00a76 (one response)",
+      "label": "households: one response \u2014 no pagination keys",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C11",
+      "contract": "\u00a76.4 / T5",
+      "label": "accounts?household_id=: {\"accounts\": [{id, name}]} per household, one response",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C12",
+      "contract": "\u00a76.5 / T6",
+      "label": "positions?account_id=: {\"positions\": [...]} with every T6 primary field (id, cusip, isin, ticker, name, asset_type, quantity, market_value, cost_basis, currency_code); decimals as numbers or decimal strings",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C13",
+      "contract": "\u00a76.6 / T7",
+      "label": "transactions?account_id=: {\"transactions\": [...]} with every T7 primary field; type one of the client's 7",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C14",
+      "contract": "\u00a76.6 / T7 (position rule)",
+      "label": "every transacted security also appears in the account's positions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C15",
+      "contract": "\u00a76 (explicit ids)",
+      "label": "every position and transaction carries an explicit id",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C16",
+      "contract": "\u00a76 (ISO dates)",
+      "label": "every date is ISO YYYY-MM-DD",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C17",
+      "contract": "\u00a76.3 (Bearer check)",
+      "label": "a resource without a valid Bearer token is refused 401",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C18",
+      "contract": "\u00a76 (SIMULATED header)",
+      "label": "every simulator response carries X-Counterparty-Simulated: true",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C19",
+      "contract": "\u00a76.7 / T8",
+      "label": "webhook: lowercase hex HMAC-SHA256 over the raw body, verified by the receiver's own verify_signature_source, body {event_id, event_type, account_id, environment}",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C20",
+      "contract": "(harness)",
+      "label": "no network: the run opened no socket outside the database",
+      "passed": true,
+      "detail": "[]"
+    }
+  ],
+  "target": "simulator (in-process fixture)",
+  "fixture_rejected_rows": {
+    "households": 0,
+    "accounts": 0,
+    "positions": 0,
+    "transactions": 0
+  },
+  "fixture_security": true,
+  "run_at": "2026-11-11T02:38:50.449387+00:00",
+  "db_host_allowed": true
+}
