@@ -159,14 +159,31 @@ The assistant is mounted on member pages today.
   reply, confirm the exchange covers the rest of the Sprint 0 asks: the real
   OAuth redirect URI, webhook signature docs, and the business inputs (entity
   choice, legal address, contact, launch date, AUM projection).
-- ⏳ **Counterparty Simulator (cpsim01 built 2026-11-10; cpsim02–04 queued).** Run
-  `verify_cpsim01.py`. cpsim02 must add a `simulator` environment to the
-  Altruist client WITHOUT the `client_credentials()` fall-through to
-  production credentials, call `cpsim.may_connect` before connecting (and add
-  that call site to `cpsim_boundary_check.py`'s allow-list), and fix the
-  unreachable OAuth callback. Open: D1 (move the Olivo demo to its own tenant?),
-  D3 (counsel: Altruist developer terms vs an unbranded compatible simulator).
-  `counterparty_sim.allowed` stays false everywhere until then.
+- ⏳ **Counterparty Simulator (cpsim01 merged; cpsim02 built 2026-11-10; cpsim03–04 queued).** Run
+  `verify_cpsim02.py` (written, not run). Operator steps in `docs/cpsim/CPSIM_ADMIN.md` §11: generate the simulated
+  Altruist key; set `ALTRUIST_SIMULATOR_CLIENT_ID` / `_CLIENT_SECRET`, `ALTRUIST_SIMULATOR_WEBHOOK_SECRET`
+  (`cpsim_whsec_…`) and `CPSIM_BASE_URL` in Doppler; redeploy; allow an org; upload a book; connect; run conformance.
+  Open: D1 (move the Olivo demo to its own tenant?), D3 (counsel: Altruist developer terms vs an unbranded compatible
+  simulator). Follow-ups found by cpsim02:
+  - **The real OAuth browser redirect leg still does not work** (ALTRUIST_CONTRACT §7.12): `/altruist/callback` is an
+    authenticated API route and nothing in `apps/web` calls `/altruist/*`. cpsim02 routed around it for the simulator
+    only (server-to-server authorize, D4). Needs a web page + a callback that survives the redirect, before real
+    Altruist access.
+  - `verify_altruist_sprint4_connection_api.py` opens a socket to the real Altruist stage host from the callback's
+    background auto-sync (`call_households` unpatched); patch it so the script runs offline and can join the
+    regression set (sprint1 does it on purpose).
+  - `menuvisibility_harness.mjs` runs again (cpsim02 Task 9), and that unmasked a stale navregroup persona snapshot:
+    `staff_member`, `org_admin_manage_org_settings`, `super_admin` fail removals_exact / additions_ok / new_refusals
+    (persona permissions predate later sprints; the traced-gate model lacks the Super Admin bypass for internal_perm /
+    scoped routes). Re-derive the personas / traced gates; no menu gate changed.
+  - Fee narratives have no label row for source `altruist_simulator` (a narrative over a simulator-fed position fails
+    loudly) — seed the config label if simulated data should appear in narratives.
+  - The webhook's account lookup is `LIMIT 1` across orgs: two orgs crosswalking the same custodian account id resync
+    only one. Same for real Altruist.
+  - `docs/VERIFYFIX1_TEARDOWN_GUARDS.json` does not list `cpsim.book_uploads` → `cpsim.allow_teardown` (verify_cpsim02
+    passes it explicitly); regenerate the map with its tool.
+  - Sandbox vs production webhooks still trust the payload's environment (§7.9 for real traffic) and the crosswalk is
+    shared between them (§7.11).
 - ⏸️ All Altruist product claims (cash rate, brokered CDs, cash spread for ADV
   Item 5) are unverified.
 - ⏸️ AWS SES: grant `ses:SendEmail` + `ses:SendRawEmail`, check sandbox status,

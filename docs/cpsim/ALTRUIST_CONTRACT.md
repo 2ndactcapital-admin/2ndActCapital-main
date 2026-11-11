@@ -501,6 +501,23 @@ The minimal surface that lets every existing code path run **unchanged** once
 | 6 | `GET {api_base}/v2/transactions?account_id=` | `{"transactions":[…T7 fields…]}`. `type` must be one of the 7 mapped values. Each security must also appear in positions |
 | 7 | outbound webhook (simulator → `POST /api/v1/altruist/webhook`) | Body JSON with `event_id`, `event_type`, `account_id` (an id the org has already resolved) and `environment`. Header `X-Altruist-Signature` = lowercase hex `HMAC-SHA256(ALTRUIST_WEBHOOK_SECRET, body)` |
 
+**cpsim02 status (2026-11-10): items 1–7 SERVED** by the simulator (`apps/api/cpsim/app.py`, `oauth.py`, `book.py`,
+`webhooks.py`) at the client's exact paths under `/cpsim/c/<slug>`, from the uploaded book, and proven agreeing with
+the EXISTING client by the conformance suite (`services/altruist_conformance.py`, checks C01–C20, each citing its row
+here). Item 2's token endpoint additionally rotates refresh tokens; items 3–6 require an ACCESS token (the `cpsim_` key
+authenticates only the token endpoint). Still ASSUMED on Altruist's side — the suite is what will prove or disprove
+each row against the real sandbox.
+
+| # | status (cpsim02) | conformance checks |
+|---|---|---|
+| 1 | served | C01, C02 |
+| 2 | served (+ refresh rotation, single-use codes) | C03–C08 |
+| 3 | served | C09, C10, C17 |
+| 4 | served | C11 |
+| 5 | served | C12, C15 |
+| 6 | served (position rule enforced at upload) | C13, C14, C16 |
+| 7 | served (second secret `ALTRUIST_SIMULATOR_WEBHOOK_SECRET`) | C19 |
+
 Further obligations:
 - Return all items in **one response**. The client never paginates, so a
   simulator page limit would silently truncate.
@@ -517,7 +534,7 @@ Further obligations:
   simulated for parity: 401→refresh retry, 429/`Retry-After`, pagination
   cursors, `token_type`, and refresh-token expiry.
 
-### What the client would need, to add a `simulator` environment (NOT done here)
+### What the client would need, to add a `simulator` environment (DONE in cpsim02 — see CPSIM02_NOTES D1–D6)
 
 1. Add `ALTRUIST_HOSTS["simulator"] = {"api_base": "<api base>/cpsim/c/<slug>", "login_base": "<api base>/cpsim/c/<slug>"}`
    (`services/altruist_oauth.py:78-87`). The current dict is static and global,
@@ -561,7 +578,8 @@ Further obligations:
 3. **Path prefix inconsistency:** `/api/v2/households` versus `/v2/accounts`,
    self-flagged in `services/altruist_oauth.py:632-634`. Positions and
    transactions copied the `/v2` form as a guess.
-4. **Production credentials on unknown environments** (§6 item 3).
+4. **Production credentials on unknown environments** (§6 item 3). **CLOSED (cpsim02):** explicit branches; any other
+   environment raises; `check_destination` refuses cross-environment credentials both ways.
 5. **`REFRESH_TOKEN_LIFETIME` is unused.** Nothing records or checks refresh
    expiry, so a 30-day-stale connection shows `connected` until a refresh is
    refused.
@@ -574,13 +592,19 @@ Further obligations:
    lookup is account-only (`services/altruist_webhook.py:171`).
 9. **The webhook trusts the payload's `environment`** to choose which
    connection to sync, and defaults to `sandbox` even for production traffic
-   (`services/altruist_webhook.py:126-128`, `:226`).
+   (`services/altruist_webhook.py:126-128`, `:226`). **CLOSED for the simulator (cpsim02):** the simulator secret
+   FORCES `simulator`, and a real-secret payload claiming `simulator` is refused. **Still open for real traffic:**
+   sandbox vs production is still read from the payload (one real secret for both).
 10. **The webhook response leaks the internal `org_id`** to the caller
-    (`services/altruist_webhook.py:237`).
+    (`services/altruist_webhook.py:237`). **CLOSED (cpsim02):** the router pops it before answering
+    (`routers/altruist_webhook.py`); it is still used internally for the credit events.
 11. **`external_references` is not environment-scoped**
     (`docs/PROJECT_STATUS.md:7332-7337`). A sync in one environment re-syncs
-    every resolved account.
-12. **No web caller exists.** Nothing in `apps/web` references
+    every resolved account. **CLOSED for the simulator (cpsim02):** the simulator crosswalks under
+    `ALTRUIST_SIMULATOR`, the real environments under `ALTRUIST`, so neither touches the other's accounts. **Still open
+    between sandbox and production** (both `ALTRUIST`).
+12. **No web caller exists.** **Still OPEN (cpsim02 routed around it, D4):** the simulator connects server-to-server;
+    the real browser leg is logged in OUTSTANDING_TODO_LIST. Nothing in `apps/web` references
     `/altruist/connect|callback|status|sync`. The callback is an authenticated
     API route, while a browser redirect from an OAuth server carries no bearer
     token, so the real redirect leg has never been wired end to end. cpsim02

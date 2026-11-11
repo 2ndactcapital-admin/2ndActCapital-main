@@ -84,9 +84,10 @@ ROUTER (which then hands plain rows to the package):
   its own constant (2 MB — a book, not a custodian export); the shape of the check is the same.
 - The CSV decoding approach of `csv_adapter._load` (utf-8-sig, `csv.DictReader`). The sniffer is NOT reused: the
   template is comma-separated by definition, and a sniffed `;` would silently re-shape a book.
-- Numbers: `services.portfolio_import._to_decimal` — the client's own parser (contract §3.3), so the simulator accepts
-  exactly what the client will read back. `custody.base.parse_decimal` is NOT used: it quantizes to cents, which would
-  round share quantities.
+- Numbers: NOT `services.portfolio_import._to_decimal` (the client's lenient parser — `$`, commas, `%`) and NOT
+  `custody.base.parse_decimal` (quantizes to cents, which would round share quantities). D8 says "decimal strings or
+  numbers", so the package has its own strict parser (`cpsim/book.py` `_num`: a JSON number or `^-?\d+(\.\d+)?$`); it
+  could not import either anyway (boundary B3). Whatever the simulator accepts, `_to_decimal` reads back.
 - Dates: ISO only (D8). `custody.base.parse_date` is NOT used: it accepts eight formats including `%d/%m/%Y`.
 - Not reusable: `build_plan` / `commit_plan` (they write `public.accounts` / balances for a real custodian file).
 
@@ -105,7 +106,29 @@ scripts/menuvisibility_harness.mjs` → `TypeError … reading 'join'` at `:172`
 
 ## 2. Decisions as built (D1–D11)
 
-Filled in per task below; each says where it lives.
+| D | As built | Where |
+|---|---|---|
+| D1 | `ENVIRONMENTS = ("sandbox", "production", "simulator")`. `client_credentials` has three explicit branches (`ALTRUIST_SANDBOX_*`, `ALTRUIST_PRODUCTION_*` only for `== "production"`, `ALTRUIST_SIMULATOR_*`); any other value raises `AltruistConfigError` (never a fallback). Refusals both ways: a simulator secret without `cpsim_` is never sent; `check_destination` refuses sandbox / production credentials to a host carrying `/cpsim/c/`, simulator credentials to a real host, and a `cpsim_` secret as real credentials. | `services/altruist_oauth.py` `client_credentials`, `check_destination` |
+| D2 | `counterparty_sim.altruist_counterparty` (a slug string, or null) — in `ADMIN_ROUTER_ONLY_SETTING_KEYS` and in the same DB trigger (`cpsim_org_setting_guard`, now also refusing a non-slug value). Hosts resolved PER CALL (`resolve_hosts`): sandbox / production read the static table exactly as before (no query); simulator = `CPSIM_BASE_URL` + `/cpsim/c/<slug>` for both bases, https required, re-checking the allowed flag on every call (turning it off stops the next call). No flag / no counterparty → `AltruistSimulatorRefused` → 409 with the reason, before any call. | `altruist_oauth.simulator_counterparty`, `simulator_hosts`; `routers/altruist_connection._require_simulator` |
+| D3 | client_id = the live api_key credential's id (`cpsim.counterparty_credentials.id`, shown on the admin page); client_secret = the `cpsim_live_` key. Nothing stored in Doppler by the sprint. | `cpsim/oauth.py` `_client` |
+| D4 | `POST /altruist/connect {environment: simulator}`: state row → `build_authorize_url` → GET (no redirect following) → `code` + echoed `state` from the Location → `complete_callback` (the SAME function the browser callback now calls: state check, exchange, persist, auto-sync). Same gate (`manage_custody_connections`) + the D2 refusal. The browser leg is untouched (§7.12, logged). | `routers/altruist_connection.py` `_connect_simulator`, `complete_callback` |
+| D5 | Crosswalk source per environment: `ALTRUIST` (sandbox / production, unchanged) vs `ALTRUIST_SIMULATOR`, in identity, positions + transactions sync, and the webhook lookup. Ledger tag `altruist_simulator` (positions CHECK + `SOURCE_SYSTEMS`). Unmatched simulator accounts use their own reason code `altruist_simulator_account_unmatched` (so the two environments' exceptions can never satisfy each other's idempotency probe). A simulator account crosswalked to a household that fails the may-connect rule → one `not_a_demo_household` exception (identity) AND a skip in sync (`SyncResult.refused_accounts`) — two independent stops. | `services/altruist_identity.py`, `services/altruist_positions_sync.py`, `services/altruist_webhook.py` |
+| D6 | `verify_signature_source`: the real secret first (identical to `verify_signature`), then `ALTRUIST_SIMULATOR_WEBHOOK_SECRET` only if it is configured with `cpsim_whsec_`; a simulator match FORCES environment simulator; a real-secret payload claiming simulator is logged (`altruist_webhook_events`) and answered `refused_environment` (never dispatched). The simulator signs with the same Doppler secret, read by `cpsim/webhooks.py` from its own environment; missing → `not_sent`, request_log `unsigned`. | `services/altruist_webhook.py`, `routers/altruist_webhook.py`, `cpsim/webhooks.py` |
+| D7 | `cpsim.book_households / _accounts / _positions / _transactions` (valid axis, one live row per counterparty + id) + `cpsim.book_uploads` (append-only: cpsim_app holds SELECT + INSERT only, and a trigger refuses UPDATE / DELETE except the owner with `cpsim.allow_teardown = 'fixture'`). Replace mode = close the live rows of every owner with at least one ACCEPTED row (a fully rejected file never empties the book — a refinement of "the accounts the file names"). Ids: given (validated) or `sim-` + 16 hex of the content (stable). | `docs/cpsim02_part1.sql`, `cpsim/book.py` |
+| D8 | One security per row via identifiers (CUSIP, ISIN, ticker): any unmatched identifier → `unknown_identifier`, several live securities → `ambiguous_identifier`, two identifiers naming different securities → `identifiers_disagree`; cash rows (`row_type = cash`) are the documented exception; blank market value → quantity × the last platform close on or before the as-of date, else `no_price`; the client's 7 types; the position rule; ISO dates; 3-letter currency. 21 reason keys, each with a label (the admin page's rejection table). | `cpsim/book.py` `REASONS`, `validate` |
+| D9 | Positions: the latest snapshot on or before the clock date; transactions: trade_date ≤ the clock date; primary keys, explicit ids, ISO dates, one response, SIMULATED header. Behaviour on the four RESOURCE routes only (not the token endpoint): reject → 503 `{detail: reason}`; delay → `sleep(min(delay_seconds, 20))` after the database work (no connection held); partial / ACH ignored. Resources need an ACCESS token — the `cpsim_` key itself is refused there. | `cpsim/app.py` `_resource` |
+| D10 | `account.positions_updated` / `account.transactions_updated`, compact-JSON body `{event_id, event_type, account_id, environment: "simulator", occurred_at}`, target `CPSIM_BASE_URL` + `/api/v1/altruist/webhook` or the https override (`counterparty_behaviour.webhook_url`), 1 attempt + 2 retries (5xx / transport error) with backoff, every attempt in request_log (direction out, status, latency). Sent after an accepted positions / transactions upload and by "Send test event" — BOTH only when webhooks are on (the test event refuses 409 when off). | `cpsim/webhooks.py` |
+| D11 | `services/altruist_conformance.py` (the suite core, no DB, no simulator import: it drives `build_authorize_url`, `exchange_code_for_tokens`, `refresh_access_token` and `fetch_resource` — the one request path every `call_*` now uses — and pins the raw primary keys) + `scripts/cpsim_altruist_conformance.py` (in-process fixture run / `--base-url` / `--target sandbox --i-have-sandbox-access`, refusing with exit 2 otherwise; table + `logs/cpsim_conformance_<date>.json`; exit 1 on a failure). The admin page runs the same core in-process and keeps the last 50 runs in `cpsim.conformance_runs`. | as named |
+
+## 2a. The in-process conformance run (Task 7)
+
+`python3 apps/api/scripts/cpsim_altruist_conformance.py --target simulator` (2026-11-10, fixture counterparty
+`cpsimconf-…`, created and torn down by the run; fixture book included one live security): **20 PASS, 0 FAIL** —
+C01 authorize 302 + state · C02 unknown client_id refused · C03 the client's exchange · C04 used code refused · C05 raw
+token fields + Bearer · C06 wrong secret refused · C07 refresh rotates both · C08 spent refresh refused · C09
+households primary shape · C10 one response · C11 accounts per household · C12 positions T6 fields · C13 transactions
+T7 fields + types · C14 position rule · C15 explicit ids · C16 ISO dates · C17 Bearer check · C18 SIMULATED header ·
+C19 webhook signature verified by the receiver's own code (§6.7) · C20 no network. Leftover fixture rows: 0.
 
 ## 3. Reuse inventory
 
@@ -118,16 +141,52 @@ Filled in per task below; each says where it lives.
 | Parsing | `custody.base.parse_text`, `portfolio_import._to_decimal` | the book upload, in the admin router |
 | Audit | `public.audit_log` | `counterparty.book_*`, `counterparty.connection_*`, `counterparty.webhook_*`, `counterparty.conformance_run` |
 | Super Admin gate, cpsim role | `services.authz.require_super_admin`, `cpsim.db.as_simulator` | every new admin route |
-| Demo rule | `cpsim.may_connect` (cpsim01) | reached from services through ONE thin public definer wrapper (no second copy of the rule) |
+| Demo rule | `cpsim.may_connect` (cpsim01) | reached from services through ONE thin public definer wrapper `public.counterparty_sim_may_connect` (no second copy of the rule) |
+| Callback handling | `routers/altruist_connection.altruist_callback` | factored into `complete_callback`, called by both the browser route and the D4 server-to-server connect |
+| Resource requests | the four `call_*` bodies | one shared `fetch_resource` (byte-identical requests, proven against the pre-sprint module) — the conformance suite drives it too |
+| In-process timeouts | — (httpx's ASGITransport ignores them) | NEW `scripts/_cpsim_fixtures.TimeoutASGITransport` turns the client's read timeout into `httpx.ReadTimeout` |
+| Teardown | `_verify_cleanup.cleanup` | the upload-log trigger honours its `'fixture'` GUC convention (`gucs=("cpsim.allow_teardown",)`) |
 
 ## 4. Differences from the prompt (summary)
 
-1. Token calls had no `transport` — added (default `None`).
+1. Token calls had no `transport` — added (default `None`), plus optional `hosts` / `credentials` / `redirect_uri`
+   overrides (the simulator's per-org hosts; the conformance suite's pasted key). Omitted, every value is read exactly
+   as before.
 2. Environment CHECKs on `altruist_connections` / `altruist_oauth_states` had to be extended (not named by the prompt).
 3. Only `positions` carries a source CHECK; external_references and transactions have none.
 4. The settings key list is `ADMIN_ROUTER_ONLY_SETTING_KEYS`.
 5. The services cannot call `cpsim.may_connect` (no USAGE on schema cpsim, by design) — a public SECURITY DEFINER
-   wrapper `public.counterparty_sim_may_connect(org, household)` calls it, so the rule exists once.
+   wrapper `public.counterparty_sim_may_connect(org, household)` calls it, so the rule exists once. The boundary list
+   was extended for NEW boundary files only: `scripts/_apply_cpsim02.py`, `scripts/_cpsim_fixtures.py`,
+   `scripts/cpsim_altruist_conformance.py` (B1 regex). No service imports the package.
+6. **Supabase's `postgres` is not a superuser** — the first draft of the append-only trigger let "a superuser" tear
+   down fixture rows and so matched no one (the Task 7 run left its fixture behind until fixed). The exception is now
+   the table OWNER with the shared cleanup's `'fixture'` switch.
+7. `CPSIM_BASE_URL` must be https always — the verify uses `https://cpsim.verify.invalid` with an in-process transport
+   (never resolved), so no http exception exists in the code.
+8. The admin Connections panel cannot call the /altruist ROUTES for another org (their org comes from the caller's
+   session), so it calls the SAME functions (`_connect_simulator`, `complete_callback`, `_run_sync`) inside the target
+   org's RLS context (`set_rls_context(target, super_admin=True)`), with the post-connect sync run inline. Nothing in
+   the admin router writes a portfolio table.
+9. `verify_cpsim01.py` froze cpsim's table set and cpsim_app's privilege set to exactly its own nine tables, and the
+   `ADMIN_ROUTER_ONLY_SETTING_KEYS` literal; cpsim02 legitimately grows all three. verify_cpsim01 now requires its own
+   nine (exact privileges) and accepts any other cpsim table only if a later `docs/cpsim*_part*.sql` declares it; the
+   settings key is matched by name. Verify-only.
+10. `verify_altruist_sprint6` asserted the webhook RESPONSE carries `org_id` (6-2b, 6-5b) — removed on purpose (§7.10);
+    both checks now assert its absence and the org on the persisted row (6-2c / 6-5c, unchanged). S2 / S3 / S5 / S6
+    gained a final `TOTAL:` line (counts unchanged).
+11. **menuvisibility_harness** (Task 9): the crash is fixed (`describeGate` covers every shape) and the legacy-rule
+    hand floor is limited to items the legacy rule still governs. The harness now RUNS, which unmasks pre-existing
+    staleness it had been hiding: the navregroup persona snapshot fails for `staff_member`, `org_admin_manage_org_settings`
+    and `super_admin` (persona permission fixtures predate later sprints; the traced-gate model has no Super Admin
+    bypass for `internal_perm` / scoped routes; `/admin/workflows` moved behind a strict gate). Fixing those means
+    re-deriving persona data other verifies own — out of a "harness only, no gate change" task. Recorded [FIND],
+    logged in OUTSTANDING_TODO_LIST. Standalone: exit 0, every gate described, none unknown.
+12. Fee narratives label every `source_system` from config rows (`services/fee_narratives.LABELLED_DOMAINS`); no label
+    row exists for `altruist_simulator` (seeding one would write real config). A narrative over a simulator-fed
+    position would fail loudly rather than print the raw token — test / demo orgs only. Logged.
+13. The webhook account lookup is `LIMIT 1` across orgs (unchanged): two orgs crosswalking the SAME simulator account id
+    would resync only one. The verify keeps their ids apart; logged.
 
 ## 6. Altruist verifies — offline status (1e)
 

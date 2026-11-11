@@ -344,6 +344,45 @@ This file starts with the email item below.
 ---
 
 
+## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CPSIM02 — the simulated custodian ANSWERS: an Altruist-compatible read API served from an uploaded book; webhooks out; the existing Altruist client pointed at it through a third environment `simulator`; the conformance suite
+
+Branch cpsim02-work (2026-11-10). Notes: `docs/cpsim/CPSIM02_NOTES.md` (Task 1 findings, D1–D11 as built, reuse
+inventory, 13 differences from the prompt). Admin / operator guide: `docs/cpsim/CPSIM_ADMIN.md` §7–§11.
+
+- **Schema.** `docs/cpsim02_part1.sql` APPLIED (operator connection; re-read from the catalog by
+  `scripts/_apply_cpsim02.py --verify`, 31/31); snapshot refreshed as postgres (+8 cpsim tables, additions only).
+  cpsim: `book_households / _accounts / _positions / _transactions` (valid axis), `book_uploads` (append-only —
+  cpsim_app SELECT + INSERT only, trigger), `oauth_codes`, `oauth_tokens` (sha256 + last four), `conformance_runs`;
+  `counterparty_behaviour.webhook_url`, `request_log.direction / latency_ms`. Public, the enablers only:
+  `positions_source_chk` + `altruist_simulator`; the two Altruist environment CHECKs + `simulator`; the org-setting
+  guard also covers `counterparty_sim.altruist_counterparty`; `public.counterparty_sim_may_connect` (a definer
+  wrapper over `cpsim.may_connect` — the rule once). App role still has no USAGE on schema cpsim.
+- **Simulator.** OAuth authorize / token (authorization_code, refresh_token — rotating) and households / accounts /
+  positions / transactions at the client's exact paths; served on the counterparty's clock; behaviour reject → 503,
+  delay → sleep (≤ 20 s); webhooks out (`cpsim/webhooks.py`, second secret). Admin: 12 new Super Admin routes (book
+  templates / preview / accept / export, connections point / connect / sync, webhooks test, conformance run / list),
+  audited `counterparty.*`.
+- **Client.** `services/altruist_oauth.py`: `simulator` environment, explicit credential branches (production is
+  exact; anything else raises — §7.4 closed), cross-environment credentials refused both ways, per-call host
+  resolution, one shared `fetch_resource`; sandbox / production byte-identical (diff-proven against `122ac75`).
+  `routers/altruist_connection.py`: D4 server-to-server connect sharing `complete_callback`. Identity / sync /
+  webhook: per-environment crosswalk (`ALTRUIST_SIMULATOR`), ledger tag `altruist_simulator`, the
+  `not_a_demo_household` refusal; the webhook forces the simulator for its secret, refuses a real-secret payload
+  claiming it, and no longer returns `org_id` (§7.10 closed).
+- **Conformance.** `services/altruist_conformance.py` + `scripts/cpsim_altruist_conformance.py`: in-process run
+  against a fixture counterparty **20 PASS / 0 FAIL** (C01–C20, each citing its contract row); `--target sandbox`
+  refuses without `--i-have-sandbox-access` and `ALTRUIST_SANDBOX_*`.
+- **Web.** Import / Export, Connections, Webhooks, Conformance tabs; the account page's SIMULATED CUSTODIAN badge;
+  proxy forwards multipart and files; `tests/cpsim02` 8/8 (with cpsim01: 19/19).
+- **Harness.** `menuvisibility_harness.mjs` no longer crashes (every gate shape); standalone exit 0. It unmasked a
+  stale navregroup persona snapshot (FIND, logged — no gate changed).
+- **Verify.** `apps/api/scripts/verify_cpsim02.py` WRITTEN, NOT RUN (pyflakes clean). Regressions: verify_cpsim01,
+  verify_authz1, verify_altruist_sprint2 / 3 / 5 / 6 (sprint1 / 4 open a real socket — not run). verify_cpsim01 and
+  verify_altruist_sprint6 updated for the deliberate changes (CPSIM02_NOTES §4.9–4.10). In `scripts/regression_set.txt`.
+- **Operator.** CPSIM_ADMIN.md §11: key → Doppler (`ALTRUIST_SIMULATOR_CLIENT_ID` / `_CLIENT_SECRET`,
+  `ALTRUIST_SIMULATOR_WEBHOOK_SECRET`, `CPSIM_BASE_URL`) → redeploy → allow an org → upload a book → connect →
+  conformance. The real OAuth browser leg (§7.12) is still open.
+
 ## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CPSIM01 — the COUNTERPARTY SIMULATOR begins: a semi-independent module playing custodians and banks; the Altruist contract written down; schema `cpsim` + NOLOGIN role `cpsim_app`; the sub-app MOUNTED at /cpsim with its own key auth; the COUNTERPARTY REGISTRY + Admin → Counterparties (Super Admin); fake credentials and FAKE bank / FIX values the database refuses to make real; behaviour + clock stored; the SAFETY RULES (counterparty_sim.allowed default off, cpsim.may_connect, the boundary scan); one working mirror endpoint; schema APPLIED; verify WRITTEN, not yet run (2026-11-10)
 
 Branch cpsim01-work. Docs: `docs/cpsim/` — `COUNTERPARTY_SIMULATOR_DESIGN_v1.md` (the design, decided 2026-11-10), `ALTRUIST_CONTRACT.md` (every request / response / webhook field the existing client uses, 89 rows: 86 ASSUMED, 3 DOCUMENTED — cpsim02's spec and the future conformance suite), `CPSIM01_NOTES.md` (Task 1 discovery, decisions, reuse inventory), `CPSIM_ADMIN.md` (how to create a counterparty, each field, the fake ranges, the safety rules, operator notes).
