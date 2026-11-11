@@ -623,6 +623,11 @@ async def teardown() -> list[str]:
             # the security master has no org_id: the fixture securities by id (the closure reaches identifiers and
             # platform prices; every org-scoped row that points at them lives in a fixture org)
             "portfolio.securities_global": ("id = ANY($1::uuid[])", [list(SECURITIES)]),
+            # cpsim02 fix 1 (C): the platform identifiers and prices (org_id NULL) of the fixture securities are
+            # seeded explicitly by fixture id (verify_marketdata1's pattern) — the closure refuses rows outside the
+            # fixture orgs, and that refusal stays as strict as it is
+            "portfolio.securities_global_identifiers": ("global_security_id = ANY($1::uuid[])", [list(SECURITIES)]),
+            "portfolio.securities_global_prices": ("global_security_id = ANY($1::uuid[])", [list(SECURITIES)]),
             # the simulator's book has no org_id: by the reserved fixture slug prefix (asserted to match no real row);
             # the FK closure reaches credentials, behaviour, clock, request log, the book, the upload log, OAuth
             # codes / tokens and conformance runs
