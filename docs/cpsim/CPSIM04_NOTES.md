@@ -275,3 +275,62 @@ to start — unchanged). In the suite core: `transfers_group_skip(environment, t
    (and cpsim03's loader for trading).
 2. Add `altruist_simulator` to `cash.payment_adapters` for the DEMO org only (never `altruist`).
 3. Run `apps/api/scripts/verify_cpsim04.py` (written, not run by the sprint).
+
+## Fix 1 findings (CPSIM04 FIX 1, 2026-11-11)
+
+Run 1 (`sprint_prompts/logs/cpsim04_run.out`): **TOTAL 257 PASS, 9 FAIL** — six in the main sections and three
+nested-regression FAILs (verify_cpsim03 195 / 2, verify_authz1 127 / 3; verify_cash07 and verify_cash08 PASSED).
+Leftover fixture rows after run 1: **0** (`--cleanup-only`: 0 before, 0 after, 43 tables; every real fingerprint unchanged).
+
+| FAIL | Verdict | Evidence | Fix |
+|---|---|---|---|
+| D1 — "CPSIM04_NOTES names '51 PASS, 0 FAIL'" | VERIFY | §7 states it, hard-wrapped: `**51 PASS, 0⏎FAIL**` | doc checks match whitespace-normalised text (`_flat`); the words still exact |
+| D2 — "CASH_PAYMENTS.md: the simulator adapter beside manual" | VERIFY | Adapters section says "**A person⏎approves, sends and refreshes**" (capitalised, wrapped) | same normalisation, case-insensitive for the phrase; the check now ALSO requires "**Manual** is the default route", `altruist_simulator` and "stay available beside it" (stricter) |
+| R ×3 — routing real_crosswalk (twice) / crosswalk "→ MANUAL with the reason" | **CODE** (in part) + VERIFY | No consumer read the adapter's `route_reason`. The page reads `payment.custodian.send_refused` from `payment_custodian.panel()`. But `adapter_of` only evaluated D4 for a source already resolved to the simulator, and `panel()` returned None for a source crosswalked to the simulator AND real Altruist, so that person was **never shown why** the payment is manual (D4: "with the reason shown") | `payments.adapter_of` evaluates D4 for every source (two crosswalk reads first); `adapter_for` puts the reason on the manual adapter; `panel()` is shown for any simulator-crosswalked source (Send never available; real-Altruist accounts still never take the simulator). The verify now proves the reason reaches the panel for every condition, and that a source with no simulator crosswalk shows today's page exactly (no panel); render test in `tests/cpsim04` |
+| G — "governance raised — TypeError: 'ActionRegistry' object is not iterable" | VERIFY | `services.action_registry.ActionRegistry` exposes `all()` / `get()`, not iteration; the scan also read `scripts/workflow_scheduler_tick.py` (it is `apps/api/workflow_scheduler_tick.py`), so `.exists()` had **silently skipped** the scheduler tick | enumerates `REGISTRY.all()` (after `register_all()`, as the lifespan does): all 28 actions' handlers and draft handlers, all 9 sweeps, each with the same-module functions they call; the scheduler tick (asserted to exist); a positive control (the scan detects payment_custodian's own Send / Refresh); every `send_to_custodian(` / `refresh_from_custodian(` classified by MODULE (money = only the two `@router.post` person routes in routers/payments.py; nothing unclassified). Runs to its end |
+| C — isolation "org B's payment goes to org B's own simulated custodian — 403 value date 2026-11-16 in the past (today 2026-12-01)" | VERIFY | The payments side has ONE injected `today` (`S["today"]`). The section drafted B's payment on B's custodian clock (11-16), then reset `today` to A's clock (advanced to 12-01 by earlier sections) **before** B's Send | the section sets its own clock: it forces the two custodian clocks apart (one advance of A's when a one-off run leaves them equal — the run-order condition, asserted as a precondition), does B's draft and Send on B's clock and restores A's in `finally`. Both-directions isolation PASSES on its real content — **no isolation defect** |
+| N1a — cpsim03 "ALTRUIST_CONTRACT §8 … every row marked ASSUMED" | VERIFY | §9 is already its own top-level section; cpsim03's `_section8` sliced from "## 8." to END OF FILE, so §9.4's cash-type rows (under the ASSUMED §9.4 heading) were counted as §8 rows | `_section8` stops at the next `## ` heading; no row was marked ASSUMED |
+| N1b — cpsim03 "no unattended path can send … callers=['services/payment_custodian.py']" | VERIFY | the match was the DEFINITION line of payment_custodian's own `async def send_to_custodian` (the money send); cpsim04's governance scan proves it is called only by the two person routes and it is declared NEVER (money) | cpsim03's scan skips definitions and payment_custodian-qualified (`PC.`) calls only; every other reference, bare or qualified, still counts as a trade caller; positive control added |
+| N2 ×3 — authz1 route matrix member / staff / other_org "gate refused an allowed route GET …/custodian-transfer → 403" | VERIFY (generator) | the route's gate `require_any_permission(initiate_payment, approve_payment)` is the design (staff money detail; PROJECT_STATUS "initiate OR approve"; the member UI never shows the panel). `authz1_routes.py` took the UNION of that and `_open`'s `any(view_portfolio, …)`, so it expected view_portfolio holders to be admitted | several `require_any_permission` gates are ANDed (a subset implies its superset); regenerated: exactly 2 routes changed (custodian-transfer GET, refresh-from-custodian POST → any(initiate, approve)); `--check` CURRENT. cpsim04 governance: a reader gets 403 naming initiate_payment, the approver passes the gate (409, never sent), another org gets 404 |
+
+### Task 0 — regression mode
+
+`VT.run_nested` (`apps/api/scripts/_verify_total.py`) honours `VERIFY_REGRESSIONS`: unset / `fast` (the default) →
+`--self-checks-only`, 600 s, one `[INFO] full regression deferred …` line, a script with no such mode is a FAIL;
+`full` → unchanged. `scripts/run_regressions.sh` exports `full`. Rule: docs/VERIFY_RULES.md. Stub proof (temp files,
+both modes, plus an unknown value refused) in `verify_cpsim04 --self-checks-only`. cpsim04's regression section in fast
+mode: verify_cpsim03 37/0, verify_cash07 39/0, verify_cash08 43/0, verify_authz1 1/0 (self-check TOTALs).
+**[FIND]** verify_authz1's `--self-checks-only` is a single check, so in fast mode its route matrix (where N2
+appeared) is only proven by the cycle-end `run_regressions.sh`. cpsim04's own governance section proves the
+custodian-transfer gate directly in the meantime.
+
+### Task 3 — proof (one-offs, `timeout 600` each; full verifies NOT run)
+
+| run | result |
+|---|---|
+| `verify_cpsim04 --cleanup-only` | 17 / 0 — 0 fixture rows before and after (43 tables); 15 real fingerprints unchanged |
+| `verify_cpsim04 --self-checks-only` | 55 / 0 (docs D1 / D2, contract §9, regression-mode stubs) |
+| `verify_cpsim04 --only=routing` | 106 / 0 (incl. the reason on the page's panel; no network) |
+| `verify_cpsim04 --only=governance` | 108 / 0 (full unattended scan; custodian-transfer gate both ways; no network) |
+| `verify_cpsim04 --only=isolation` | 89 / 0 (both directions; precondition clocks differ; no network) |
+| `verify_cpsim04 --only=unchanged,safety` | 100 / 0 (no network) |
+| `verify_cpsim03 --self-checks-only` | 37 / 0 (§8) |
+| `verify_cpsim03 --only=governance` | 97 / 0 (trade send scan + positive control; no network) |
+| `authz1_routes.py --check` / `visibility1_routes.py --check` | CURRENT / CURRENT |
+| node `tests/cpsim04 cpsim03 cash07 cpsim01 cpsim02` | 46 / 46 |
+
+### Task 4 — safety re-check
+
+- **Nothing unattended sends, refreshes or settles money.** All 28 registered actions (13 workflow-invocable), all 9
+  sweeps (the payment sweep only expires / flags, and is switched off by default) and the scheduler tick were scanned
+  with a positive control, and none reaches the money path. The money Send / Refresh are called only by the two
+  `@router.post` person routes, and `cash.payment_send` / `cash.payment_refresh` are declared NEVER (money) and not
+  registered.
+- **Third-party payments switch OFF** (fixture org; every real org's switch unchanged by count + checksum).
+- **Manual adapter and payment sheet** are still offered and are the default. Confirm sent offers the manual channels
+  only; the manual route works exactly as before.
+- **A real-Altruist-crosswalked account never uses the simulator.** The routing condition `real_crosswalk` is checked
+  first, and `payment_custodian_keys` excludes these accounts. Fix 1's panel change only *explains* the manual route
+  for them (Send never available). `'altruist'` enabled still resolves to NotConnected.
+- **Loaders not applied** (no `altruist_simulator` capability row; `cpsim04_capabilities.py` defaults to dry run).
+  No real or demo row written.
