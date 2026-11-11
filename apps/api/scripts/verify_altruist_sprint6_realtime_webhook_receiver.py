@@ -180,6 +180,8 @@ class Results:
         print(f"altruist_sprint6_realtime_webhook_receiver: {counts.get('PASS', 0)}/{total} PASS"
               + "".join(f"  {k}={v}" for k, v in sorted(counts.items()) if k != "PASS"))
         print("=" * 78)
+        # cpsim02 — the shared nested-run parser (scripts/_verify_total.py) reads a final TOTAL line
+        print(f"TOTAL: {counts.get('PASS', 0)} PASS, {counts.get('FAIL', 0)} FAIL")
 
 
 R = Results()
@@ -456,9 +458,11 @@ async def run_known_account_and_dedup(client, admin_url: str) -> None:
         R.expect("6-2a", r1.status_code == 200, "a correctly-signed KNOWN-account payload returns 200",
                  detail=f"{r1.status_code} {r1.text}")
         body1 = r1.json() if r1.status_code == 200 else {}
-        R.expect("6-2b", body1.get("status") == "resolved" and body1.get("org_id") == ORG,
-                 "the response reports status=resolved with the CORRECT org_id, derived "
-                 "from the external_references lookup, not the (absent) payload claim",
+        # cpsim02 (ALTRUIST_CONTRACT §7.10): the response no longer returns the internal org_id to the caller;
+        # the org the lookup resolved is proven on the persisted row (6-2c)
+        R.expect("6-2b", body1.get("status") == "resolved" and "org_id" not in body1,
+                 "the response reports status=resolved and does NOT leak the internal org_id "
+                 "(the resolved org is re-read from the row in 6-2c)",
                  detail=str(body1))
 
         row = await conn.fetchrow(
@@ -587,9 +591,10 @@ async def run_org_forgery_is_ignored(client, admin_url: str) -> None:
         R.expect("6-5a", r.status_code == 200, "the forged-org payload is still accepted (valid signature)",
                  detail=f"{r.status_code} {r.text}")
         resp = r.json() if r.status_code == 200 else {}
-        R.expect("6-5b", resp.get("org_id") == OTHER_ORG,
-                 "org_id resolves to OTHER_ORG (the REAL crosswalk owner of the account), "
-                 "never the forged ORG claim embedded in the payload body",
+        # cpsim02 (§7.10): the org is no longer in the response; 6-5c proves it on the persisted row
+        R.expect("6-5b", resp.get("status") == "resolved" and "org_id" not in resp,
+                 "the forged-org payload resolves and the response carries no org_id at all "
+                 "(the real crosswalk owner, OTHER_ORG, is proven on the row in 6-5c)",
                  detail=str(resp))
 
         row = await conn.fetchrow(

@@ -220,6 +220,8 @@ class Results:
         print(f"altruist_sprint5_sync_orchestration: {counts.get('PASS', 0)}/{total} PASS"
               + "".join(f"  {k}={v}" for k, v in sorted(counts.items()) if k != "PASS"))
         print("=" * 78)
+        # cpsim02 — the shared nested-run parser (scripts/_verify_total.py) reads a final TOTAL line
+        print(f"TOTAL: {counts.get('PASS', 0)} PASS, {counts.get('FAIL', 0)} FAIL")
 
 
 R = Results()
