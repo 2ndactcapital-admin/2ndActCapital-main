@@ -380,6 +380,16 @@ inventory, differences, loader dry-run, diff review, conformance run). Contract:
 - **Findings logged** (CPSIM03_NOTES §4): the send-time webhook arrives before the order id is recorded (no to-do;
   later events do raise one); the sync creates unlinked tenant assets, so reconcile needs the asset linked to the
   security; expiry does not cancel a custodian order; a refused order is final for its client_order_id.
+- **UPDATE (fix 1–3, 2026-11-11).** Fix 1 — CODE: simulator order webhooks delivered after the response (detached
+  task, `drain()`), `send_to_custodian` releases its connection before the HTTP call. VERIFY: G `sod_decisions.item_id`
+  as text; outcomes owns its instruction; X1 live rows + distinct order ids; webhooks section self-contained; P one
+  shared withheld-grants list (`CPSIM_APP_WITHHELD`); Q rep2 evidence scoped to recorded rows; linked asset carries
+  CUSIP; reconcile check not vacuous; I / R / X2 were cascades. Fix 2 — DOC/CONFORMANCE: repeat rule in contract
+  §8.1 + conformance O15. VERIFY: `--cleanup-only` per-table counts + real-row fingerprints (377 leftovers → 0); G2 a
+  real `services.sod` maker-checker refusal (fixture U_MA); verify_rep2 `--only`; per-section one-offs all PASS.
+  Fix 3 — O03 reproduction, remaining one-offs, safety re-check (CPSIM03_NOTES §9). [FIND] conformance O03 failed
+  once in 10 runs (fix 2); the verify now prints every failing conformance detail, assertion unchanged. Final state:
+  verified by the runner's verify.
 
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CPSIM02 — the simulated custodian ANSWERS: an Altruist-compatible read API served from an uploaded book; webhooks out; the existing Altruist client pointed at it through a third environment `simulator`; the conformance suite
 
