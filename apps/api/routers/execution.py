@@ -19,6 +19,12 @@ Every route names its gate (docs/AUTHZ1_ROUTES.json; authz1_routes.py reads it):
                      POST  /execution/instructions/{id}/reconcile-held-away   rep7b: reconcile to a held-away record
                      POST  /execution/instructions/{id}/close       close
                      POST  /execution/instructions/{id}/cancel      cancel (reason)
+                     POST  /execution/instructions/{id}/send-to-custodian   cpsim03: a person sends an APPROVED,
+                                                                  custodian-API-routed instruction (simulated custodian)
+                     POST  /execution/instructions/{id}/import-fills        cpsim03: a person books the custodian's new
+                                                                  executions through enter_fill
+  view_execution     GET   /execution/instructions/{id}/custodian-order     cpsim03: the live custodian order + the
+                                                                  synced transactions the reconcile picker preselects
   approve_execution  POST  /execution/instructions/{id}/approve     (never for a maker — services.execution)
                      POST  /execution/instructions/{id}/reject
 
@@ -118,6 +124,10 @@ class Close(_Body):
 
 class Cancel(_Body):
     reason: str = Field(min_length=1, max_length=2000)
+
+
+class CustodianAction(_Body):
+    """cpsim03 — Send to custodian / Import fills take no input: what is sent is the APPROVED instruction itself."""
 
 
 class Letter(_Body):
@@ -346,6 +356,60 @@ async def cancel(request: Request, instruction_id: str, body: Cancel):
     pool = await get_pool()
     return await _act(X.cancel(pool, org_id=org_id, instruction_id=instruction_id, actor_id=principal.user_id,
                                reason=body.reason))
+
+
+def _custodian_out(res: dict) -> dict:
+    out = {k: v for k, v in res.items() if k != "instruction"}
+    out["instruction"] = X.instruction_out(res["instruction"])
+    out["simulated"] = True
+    return out
+
+
+@router.post("/execution/instructions/{instruction_id}/send-to-custodian")
+async def send_to_custodian(request: Request, instruction_id: str, body: CustodianAction):
+    """cpsim03 D5 — a PERSON's action (the gate "Mark sent" has). Never automatic: no trigger, workflow step or
+    unattended verb reaches it."""
+    from services import custodian_execution as CX
+
+    principal = require_permission(request, MANAGE)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    try:
+        res = await CX.send_to_custodian(pool, org_id=org_id, instruction_id=instruction_id,
+                                         actor_id=principal.user_id)
+    except Exception as exc:  # noqa: BLE001
+        _raise(exc)
+    return _custodian_out(res)
+
+
+@router.post("/execution/instructions/{instruction_id}/import-fills")
+async def import_fills(request: Request, instruction_id: str, body: CustodianAction):
+    """cpsim03 D8 — a PERSON books the custodian's NEW executions through enter_fill (idempotent by exec id)."""
+    from services import custodian_execution as CX
+
+    principal = require_permission(request, MANAGE)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    try:
+        res = await CX.import_fills(pool, org_id=org_id, instruction_id=instruction_id, actor_id=principal.user_id)
+    except Exception as exc:  # noqa: BLE001
+        _raise(exc)
+    return _custodian_out(res)
+
+
+@router.get("/execution/instructions/{instruction_id}/custodian-order")
+async def custodian_order(request: Request, instruction_id: str):
+    """cpsim03 — the instruction's custodian order read live, each execution marked booked or not, and the synced
+    transactions (this account, source ref sim-x-<exec id>) the reconcile picker preselects."""
+    from services import custodian_execution as CX
+
+    require_permission(request, VIEW)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    try:
+        return await CX.order_view(pool, org_id=org_id, instruction_id=instruction_id)
+    except Exception as exc:  # noqa: BLE001
+        _raise(exc)
 
 
 @router.post("/execution/instructions/{instruction_id}/letter")

@@ -279,7 +279,18 @@ async def process_event(conn, *, payload: dict, collect: list | None = None,
     except Exception as exc:  # noqa: BLE001 - a sync failure must not fail webhook receipt
         sync_summary = {"triggered": False, "error": str(exc)}
 
-    return {"status": "resolved", "event_id": event_id, "org_id": org_id, "sync": sync_summary}
+    out = {"status": "resolved", "event_id": event_id, "org_id": org_id, "sync": sync_summary}
+    if signed_by == SIGNED_SIMULATOR and str(extract_event_type(payload) or "").startswith("order."):
+        # cpsim03 D9 — an order event from the SIMULATED custodian is a notification: a to-do for the instruction's
+        # sender ("fills available — import them"). Nothing is booked here; the resync above ran as for any event.
+        try:
+            from services.custodian_execution import order_event_todo
+
+            async with conn.transaction():
+                out["order"] = await order_event_todo(conn, org_id=org_id, payload=payload)
+        except Exception as exc:  # noqa: BLE001 - a to-do failure must not fail webhook receipt
+            out["order"] = {"todo": None, "error": type(exc).__name__}
+    return out
 
 
 __all__ = [

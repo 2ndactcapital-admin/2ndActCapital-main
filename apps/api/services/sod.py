@@ -695,6 +695,9 @@ VERB_DUTIES: dict[str, str] = {
     # CASH06 — a cash rule's firing DRAFTS + SUBMITS payment instructions for a person's approval (nothing executes
     # until a different person approves; the custody cliff is unchanged): 'propose'. Engine-only (workflow_only).
     "cash.rule_fire": "propose",
+    # CPSIM03 — Send to custodian / Import fills: a person's writes (declared, NOT registered — workflow_autonomy NEVER)
+    "execution.custodian_send": "write",
+    "execution.custodian_import": "write",
 }
 
 

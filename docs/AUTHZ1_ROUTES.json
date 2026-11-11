@@ -1,5 +1,5 @@
 {
- "app_route_count": 1060,
+ "app_route_count": 1064,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -12929,6 +12929,72 @@
    "write": true
   },
   {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "send_to_custodian",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/send-to-custodian",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "import_fills",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/import-fills",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.execution",
+   "name": "custodian_order",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/custodian-order",
+   "public": false,
+   "write": false
+  },
+  {
    "after": "authz view_execution",
    "before": "\u2014",
    "before_effect": "new route",
@@ -20751,6 +20817,24 @@
     "GET"
    ],
    "module": "routers.admin_counterparties",
+   "name": "orders",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/orders",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
    "name": "request_log",
    "note": "",
    "path": "/api/v1/admin/counterparties/{counterparty_id}/requests",
@@ -21707,6 +21791,42 @@
    "module": "cpsim.app",
    "name": "accounts",
    "path": "/cpsim/c/{slug}/v2/accounts"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "order_list",
+   "path": "/cpsim/c/{slug}/v2/orders"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "POST"
+   ],
+   "module": "cpsim.app",
+   "name": "order_create",
+   "path": "/cpsim/c/{slug}/v2/orders"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "cpsim.app",
+   "name": "order_cancel",
+   "path": "/cpsim/c/{slug}/v2/orders/{order_id}"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "order_get",
+   "path": "/cpsim/c/{slug}/v2/orders/{order_id}"
   },
   {
    "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
