@@ -134,13 +134,48 @@ def _flat(routes, prefix=""):
             yield prefix, r
 
 
+#: CPSIM01 — a sub-app MOUNTED on the API (app.mount) answers with its OWN auth, never a Hollisworks session: its
+#: routes are not Hollisworks routes (main.py's auth middlewares pass the prefix through) and are listed separately.
+SIMULATOR_AUTH = ("own auth — simulator key (Authorization: Bearer cpsim_…, cpsim/auth.py); a Hollisworks session / "
+                  "JWT never authenticates; X-Counterparty-Simulated on every response")
+
+
+def _mount_inner(m):
+    inner = m.app
+    while not hasattr(inner, "routes") and hasattr(inner, "app"):
+        inner = inner.app
+    return inner
+
+
+def simulator_routes():
+    """Routes of every sub-app mounted on main.app (CPSIM01): path, methods, module, name, auth."""
+    import main
+    from fastapi.routing import APIRoute
+    from starlette.routing import Mount
+
+    out = []
+    for m in main.app.routes:
+        if not isinstance(m, Mount):
+            continue
+        for r in getattr(_mount_inner(m), "routes", []):
+            if isinstance(r, APIRoute):
+                public = r.path == "/health"
+                out.append({"path": m.path + r.path, "methods": sorted(set(r.methods) - {"HEAD"}),
+                            "module": r.endpoint.__module__, "name": r.endpoint.__name__,
+                            "auth": "none (liveness only)" if public else SIMULATOR_AUTH})
+    return sorted(out, key=lambda x: (x["path"], x["methods"]))
+
+
 def app_routes():
     import main
     from fastapi.routing import APIRoute
+    from starlette.routing import Mount
 
     out = []
     for prefix, r in _flat(main.app.routes):
         path = prefix + getattr(r, "path", "")
+        if isinstance(r, Mount):
+            continue            # CPSIM01: a mounted sub-app's routes are listed by simulator_routes()
         if not isinstance(r, APIRoute):
             out.append({"path": path, "kind": "docs" if path in DOCS_ROUTES else type(r).__name__})
             continue
@@ -260,6 +295,18 @@ def gates(module, src: str) -> dict:
         g["document"] = True
     if re.search(r"_require_workflow_permission|_require_review_permission|_require_trigger_read", src):
         g["workflow"] = True
+        # CPSIM01 FIX 1 — the workflow helpers' own Super Admin BYPASS (`if not is_super_admin(principal):` inside
+        # _require_workflow_permission, before the Principal's permission check) is not a super-only gate. It had
+        # turned GET /admin/workflow-runs (gate: view_workflow_runs, PERMS1) into rule "super", so the staff persona
+        # — which holds view_workflow_runs by its documented seeding — read as an "unexpected 2xx".
+        if not re.search(r"_require_super_admin|require_super_admin\(", src):
+            g["super_bypass_only"] = True     # described as before ("super_admin; …"); expect() skips the super rule
+        # …and the permission it checks, so the matrix asserts the EXACT gate (perm X), never the loose "workflow".
+        g["workflow_perms"] = sorted({m.group(2) or _const(module, m.group(3)) or m.group(3) for m in re.finditer(
+            r"(?<![\w.])_require_workflow_permission\(\s*request\s*,\s*(\"(\w+)\"|(\w+))", src)})
+        if "_require_review_permission(" in src:     # Super Admin first, then agent_proposals.REVIEW_PERMISSION
+            from services.agent_proposals import REVIEW_PERMISSION
+            g["workflow_perms"] = sorted(set(g["workflow_perms"]) | {REVIEW_PERMISSION})
     if "_require_read_access(" in src:
         g["self_read_org"] = True
     # DEALROOM1 — routers.deal_room's scope gates (services.deal_room.deal_rights).
@@ -331,9 +378,15 @@ def expect(route, g, pending_allowed: bool = False) -> dict:
     if pending_allowed:
         return {"rule": "self", "pending_allowed": True}
     distinct = len(g["perms"])
-    if g["super"]:
+    if g["super"] and not g.get("super_bypass_only"):
         return {"rule": "super"}
     if g["workflow"]:
+        wp = g.get("workflow_perms") or []
+        if (len(wp) == 1 and not g["perms"] and not g["any_of"] and not g["org_settings"] and not g["staff"]
+                and "_require_trigger_read(" not in (route.get("_src") or "")):
+            # CPSIM01 FIX 1 — the sole gate is _require_workflow_permission(request, X) (or _require_review_permission):
+            # Super Admin first, then X (PERMS1 Principal / review_agent_proposals). The exact rule, so a holder's 2xx and a non-holder's named 403 are both asserted.
+            return {"rule": "perm", "any_of": wp, "scoped": False}
         return {"rule": "workflow"}
     _iperms = {p for t in g["internal_perm"] for p in t}
     if (g["internal"] or g["internal_perm"]) and not (g["any_of"] or g["org_settings"] or g["staff"]
@@ -344,6 +397,16 @@ def expect(route, g, pending_allowed: bool = False) -> dict:
         if g["internal_perm"]:
             return {"rule": "internal_perm", "any_of": sorted({p for t in g["internal_perm"] for p in t})}
         return {"rule": "internal"}
+    if (g["internal"] and not g["internal_perm"] and g["perms"]
+            and not (g["any_of"] or g["org_settings"] or g["staff"] or g["staff_or"])):
+        # CPSIM01 FIX 1 — require_internal(request) beside a plain require_permission(X) (BUGFIX3's staff-only
+        # portfolio reads, PERMS1's fee-chat / fee-schedules / profitability routes, the UDF reads, POST /deals): an
+        # internal role AND every named permission; NO staff bypass (require_permission has none). It used to fall
+        # through to rule "perm", so the member persona (view_portfolio) was expected to be ADMITTED to routes the
+        # gate deliberately refuses it. Kept on the internal_perm kind (every consumer reads it as member-refused)
+        # with staff_bypass false and all_of = the permissions require_permission demands.
+        return {"rule": "internal_perm", "any_of": sorted(g["perms"]), "all_of": sorted(g["perms"]),
+                "staff_bypass": False}
     if g["deal_room"]:
         # Several branches (publisher / delegate / staff / org admin / viewer):
         # the matrix asserts only the global rules; each branch is proven by
@@ -412,7 +475,7 @@ def build():
             **r, "write": write, "public": public,
             "before": "public" if public else ("—" if before_src is None else describe(gb)),
             "before_effect": eff, "after": "public" if public else describe(ga, after=True),
-            "find": find, "note": note, "expect": expect(r, ga, pending_allowed),
+            "find": find, "note": note, "expect": expect({**r, "_src": after_src}, ga, pending_allowed),
         })
     return routes, rows
 
@@ -460,6 +523,16 @@ def render(routes, rows) -> str:
             "- `resolve_tab_visibility` (UDF tabs) defaults a tab with no grant row to visible — a "
             "display default, not a capability grant; recorded, not changed.",
             ""]
+    sims = simulator_routes()
+    if sims:
+        out += ["## Simulator routes — own auth (CPSIM01)", "",
+                "Mounted sub-app(s) (`app.mount`), NOT Hollisworks routes: `main.py`'s auth middlewares pass the "
+                "prefix through untouched and the sub-app authenticates with its own simulator keys. Not counted in "
+                "the route total above.", "",
+                "| Path | Method | Module | Auth |", "|---|---|---|---|"]
+        for r in sims:
+            out.append(f"| `{r['path']}` | {','.join(r['methods'])} | {r['module']} | {r['auth']} |")
+        out.append("")
     return "\n".join(out)
 
 
@@ -468,7 +541,8 @@ def main_cli() -> int:
     md = render(routes, rows)
     js = json.dumps({"before_ref": BEFORE_REF, "app_route_count": len(routes),
                      "docs_route_count": sum(1 for r in routes if r.get("kind") == "docs"),
-                     "routes": rows}, indent=1, sort_keys=True, default=sorted) + "\n"
+                     "routes": rows, "simulator_routes": simulator_routes()}, indent=1, sort_keys=True,
+                    default=sorted) + "\n"
     if "--check" in sys.argv:
         stale = (not DOC_MD.exists() or DOC_MD.read_text(encoding="utf-8") != md
                  or not DOC_JSON.exists() or DOC_JSON.read_text(encoding="utf-8") != js)

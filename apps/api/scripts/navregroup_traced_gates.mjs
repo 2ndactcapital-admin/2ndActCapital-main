@@ -102,6 +102,8 @@ export function routeAdmits(me, rec) {
     case "internal":
       return isInternal(me);
     case "internal_perm":
+      // require_internal + require_permission (staff_bypass false): an internal role holding EVERY all_of
+      if (e.staff_bypass === false) return isSuper(me) || (isInternal(me) && (e.all_of || []).every((p) => perms(me).includes(p)));
       // staff bypass as before; any other internal role needs one of any_of; a client role never
       return isStaff(me) || (isInternal(me) && (e.any_of || []).some((p) => perms(me).includes(p)));
     case "mixed": {

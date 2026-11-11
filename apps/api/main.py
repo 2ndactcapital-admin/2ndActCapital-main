@@ -76,6 +76,7 @@ from routers.authority import router as authority_router
 from routers.approvals import router as approvals_router  # BULKAPPROVE1
 from routers.lot_method import router as lot_method_router
 from routers.custodians import router as custodians_router
+from routers.admin_counterparties import router as admin_counterparties_router  # CPSIM01
 from routers.human_tasks import router as human_tasks_router
 from routers.models import router as models_router
 from routers.marketplace import router as marketplace_router
@@ -396,8 +397,19 @@ PENDING_ALLOWED_PATHS = {"/api/v1/users/me", "/api/v1/users/me/contact-email"}
 PROVISIONING_EXEMPT_PATHS = {"/api/v1/enroll/accept"}
 
 
+# CPSIM01 — the Counterparty Simulator is MOUNTED at /cpsim (app.mount below) with its OWN auth (its fake cpsim_
+# keys, cpsim/auth.py). Middleware wraps mounted sub-apps too, so both middlewares below pass a simulator path through
+# untouched: no Hollisworks token is read, no principal is resolved, no org context is set. A Hollisworks JWT sent to
+# /cpsim/... is refused by the simulator itself (not a cpsim_ key → 401).
+SIMULATOR_PREFIX = "/cpsim"
+
+
+def _is_simulator(path: str) -> bool:
+    return path == SIMULATOR_PREFIX or path.startswith(SIMULATOR_PREFIX + "/")
+
+
 def _is_public(path: str) -> bool:
-    return path in PUBLIC_PATHS or path.startswith("/debug/")
+    return path in PUBLIC_PATHS or path.startswith("/debug/") or _is_simulator(path)
 
 
 async def _resolve_account_state(request: Request) -> tuple[bool, bool]:
@@ -551,6 +563,7 @@ async def auth0_jwt_middleware(request: Request, call_next):
         request.method == "OPTIONS"
         or path in PUBLIC_PATHS
         or path.startswith("/debug/")
+        or _is_simulator(path)
     ):
         return await call_next(request)
 
@@ -618,6 +631,9 @@ async def _startup() -> None:
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     await close_pool()
+    from cpsim import db as cpsim_db
+
+    await cpsim_db.close_pool()
 
 
 # Feature routers
@@ -712,7 +728,13 @@ app.include_router(authority_router, prefix="/api/v1")
 app.include_router(approvals_router, prefix="/api/v1")  # BULKAPPROVE1
 app.include_router(lot_method_router, prefix="/api/v1")
 app.include_router(custodians_router, prefix="/api/v1")
+app.include_router(admin_counterparties_router, prefix="/api/v1")  # CPSIM01 — Admin → Counterparties (Super Admin)
 app.include_router(human_tasks_router, prefix="/api/v1")
 app.include_router(models_router, prefix="/api/v1")
 # Debug router mounted at root so the path is exactly /debug/user-info.
 app.include_router(debug_router)
+
+# CPSIM01 — the Counterparty Simulator (SIMULATED counterparties only): its own sub-app, own auth, own database role.
+from cpsim.app import app as cpsim_app  # noqa: E402
+
+app.mount(SIMULATOR_PREFIX, cpsim_app)

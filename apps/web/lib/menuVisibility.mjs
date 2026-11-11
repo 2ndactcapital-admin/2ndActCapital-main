@@ -383,6 +383,8 @@ export const MENU_ITEMS = [
   tab("platform", "controls", 6, "/admin/model-provider", "Published models", GATE_SUPER_ADMIN, true),
   // WFTEMPLATES1 — platform workflow templates: draft, publish by a second Super Admin, retire, usage counts
   tab("platform", "controls", 7, "/admin/platform/workflow-templates", "Workflow templates", GATE_SUPER_ADMIN, true),
+  // CPSIM01 — the Counterparty Simulator's registry: simulated custodians and banks (Super Admin only)
+  tab("platform", "controls", 8, "/admin/counterparties", "Counterparties", GATE_SUPER_ADMIN, true),
   tab("platform", "ai_models", 1, "/admin/model-catalog", "Model Catalog", GATE_SUPER_ADMIN, true),
   // modelresearch.structural — STRICT: fails closed on a lost envelope. Its
   // gate is manage_org_settings, so an org admin sees the AI Models group too.

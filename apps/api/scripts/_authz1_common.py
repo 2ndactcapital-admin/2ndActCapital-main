@@ -82,7 +82,34 @@ async def granted(conn, user_id, org_id) -> tuple[list[str], set[str]]:
     return roles, perms
 
 
-async def effective_report(conn, *, legacy: bool) -> dict[str, dict]:
+# Role names copied from services.authz (STAFF_ROLE_NAMES | INTERNAL_ROLE_NAMES) so the recompute stays a SECOND
+# reader of the rule, not a call into the code under test. verify_authz1 asserts the copy still equals the code's.
+NON_CLIENT_ROLE_NAMES = frozenset({
+    "investment_staff", "admin", "super_admin", "owner",
+    "org_admin", "support_staff", "advisor", "compliance", "fund_finance",
+    "investment_committee", "ir_member_relations", "member_manager",
+})
+
+
+async def profile_granted(conn, user_id, org_id, roles, role_perms) -> set[str]:
+    """PERMS1's profile + permission-set keys for one user (catalog keys, own org), member-safe cut if client-like."""
+    keys = {r["k"] for r in await conn.fetch(
+        "SELECT pp.permission_key AS k FROM users u JOIN profiles pr ON pr.id = u.profile_id AND pr.org_id = u.org_id "
+        "JOIN profile_permissions pp ON pp.profile_id = pr.id WHERE u.id = $1 "
+        "UNION SELECT psp.permission_key FROM user_permission_sets ups "
+        "JOIN permission_sets ps ON ps.id = ups.permission_set_id AND ps.org_id = $2 "
+        "JOIN permission_set_permissions psp ON psp.permission_set_id = ps.id WHERE ups.user_id = $1",
+        user_id, org_id)}
+    client_like = not (NON_CLIENT_ROLE_NAMES.intersection(roles)
+                       or "manage_org_settings" in role_perms or "manage_members" in role_perms)
+    if client_like:
+        keys &= {r["name"] for r in await conn.fetch(
+            "SELECT p.name FROM roles r JOIN role_permissions rp ON rp.role_id = r.id "
+            "JOIN permissions p ON p.id = rp.permission_id WHERE r.org_id = $1 AND r.name = 'member'", org_id)}
+    return keys
+
+
+async def effective_report(conn, *, legacy: bool, profiles: bool = False) -> dict[str, dict]:
     """Per real user: effective DB-gate permissions.
 
     ``legacy=True`` reproduces the pre-AUTHZ1 rbac rule (super admin → all;
@@ -90,19 +117,29 @@ async def effective_report(conn, *, legacy: bool) -> dict[str, dict]:
     services.authz (super admin → all; not admitted → none; else exact).
     Token-claim gates are reported separately: before AUTHZ1 they admitted
     every real caller unconditionally.
+
+    ``profiles=True`` (CPSIM01 FIX 1) adds PERMS1's second grant source, which
+    services.authz has unioned since PERMS1 and this recompute never read: the
+    user's profile keys + permission-set keys (own org, catalog keys only),
+    cut to the org's ``member`` role keys when the user is client-like BY ROLE
+    STANDING (BUGFIX2). Each key's source is recorded under ``sources``.
     """
     catalog = {r["name"] for r in await conn.fetch("SELECT name FROM permissions")}
     out = {}
     for u in await real_users(conn):
         roles, perms = await granted(conn, u["id"], u["org_id"])
         admitted = (u["status"] == "active") and bool(u["is_active"])
+        extra: set[str] = set()
+        if profiles and not legacy:
+            extra = await profile_granted(conn, u["id"], u["org_id"], roles, perms) & catalog
         if legacy:
             eff = catalog if (u["role"] == "super_admin" or not roles) else perms
         else:
-            eff = set() if not admitted else (catalog if u["role"] == "super_admin" else perms)
+            eff = set() if not admitted else (catalog if u["role"] == "super_admin" else perms | extra)
         out[u["email"]] = {
             "user_id": str(u["id"]), "org_id": str(u["org_id"]), "account_role": u["role"],
             "status": u["status"], "roles": roles, "effective": sorted(eff),
+            "sources": {"roles": sorted(perms), "profile_or_sets_only": sorted(extra - perms)},
             "is_super_admin": admitted and u["role"] == "super_admin" if not legacy else u["role"] == "super_admin",
         }
     return out
