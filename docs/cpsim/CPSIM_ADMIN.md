@@ -292,3 +292,28 @@ or a linked bank account (ACH / wire; international: wire). Checks stay manual.
    payment is Returned (R01), both legs reversed in the book.
 7. **Reconcile** — sync (Connections → Sync); on the payment, Reconcile → the matched feed rows are preselected →
    Reconcile → Close.
+
+## 14. The documented Altruist shapes and the lots template (ALTREAD1)
+
+Since ALTREAD1 the simulator answers in **Altruist's published Open API shapes** (developer.altruist.com, read
+2026-11-11; `docs/cpsim/ALTRUIST_CONTRACT.md` §2–§3, §6): OAuth at `…/api/oauth2/authorize` (scope `openid`) and
+`…/oauth2/token` (`token_type=id`, refresh tokens 28 days); reads at `…/api/v2/households`, `…/v2/accounts?household_id=`,
+`…/v2/accounts/{id}/positions/`, `…/v2/accounts/{id}/cost-basis/`, `…/v2/accounts/{id}/transactions?date_from=&date_to=`;
+every list paged (`page` / `page_size`, max 1000, transactions 500) inside `{"paging": …, "data": {…}}`; dates
+`YYYY/MM/DD`. Accounts carry a DERIVED `account_balance` (the latest positions' market value on or before the clock),
+`status` ACTIVE and a synthetic account number (the client keeps only its last four).
+
+**Tax lots — a fifth upload kind, `lots`** (Import / Export tab; template from the same Template link). Columns:
+`lot_id` (blank → a stable generated id), `account_id`, `as_of` (ISO), `cusip` / `isin` / `ticker` (one security, as
+for positions), `name`, `quantity` (> 0), `market_value` (blank → quantity × the platform close, else left blank),
+`cost_basis_unadjusted` (blank → the adjusted value), `cost_basis_adjusted` (required), `open_date` (ISO, not after
+`as_of`), `currency_code`. Required: account_id, as_of, quantity, cost_basis_adjusted, open_date. A lot must name a
+security the account holds a position in (any as-of). Replace mode per account, as every kind.
+
+**Which lots are served.** `cost-basis/` serves the account's UPLOADED lots (the latest lot snapshot on or before the
+clock) when it has any; otherwise ONE lot per security position that carries a cost basis, derived from it (both
+bases = the position's cost basis, opened on the account's earliest buy of that security in the book, else the
+position's as-of). A position without a cost basis yields no lot — the simulator never invents one.
+
+Upload dates stay ISO (the template); only RESPONSES use `YYYY/MM/DD`.
+

@@ -212,8 +212,43 @@ removal (OUTSTANDING_TODO_LIST).
 
 ## 4. Diff review — sandbox / production
 
-Filled in at Task 9 from `git diff main -- apps/api/services/altruist_oauth.py apps/api/services/altruist_positions_sync.py apps/api/services/altruist_identity.py`.
+`git diff 9866144 -- services/altruist_oauth.py altruist_positions_sync.py altruist_identity.py
+routers/altruist_connection.py` (portfolio_altruist.py: no diff). Every change that reaches the `sandbox` /
+`production` environments is one of the §3 corrections:
+
+| Area | Change | Correction # |
+|---|---|---|
+| `ALTRUIST_HOSTS`, `ENVIRONMENTS`, `client_credentials`, `check_destination` | unchanged | — |
+| `build_authorize_url` | path `/api/oauth2/authorize`, default scope `openid` | 1, 2 |
+| `exchange_code_for_tokens` / `refresh_access_token` | URL = `api_base + /oauth2/token`; `token_type=id`; refresh also sends `redirect_uri` when `ALTRUIST_REDIRECT_URI` is set | 3, 4, 5 |
+| `REFRESH_TOKEN_LIFETIME` + `refresh_token_issued_at` | 28 days; `require_active_connection` refuses an expired one (`AltruistRefreshExpiredError`, a 409 in every router); status shows it | 6 |
+| `_API_PATHS`, `fetch_pages` / `fetch_resource`, `call_*` | documented paths, `X-API-Request-ID`, paging, envelope, cost basis, transactions window | 7–14 |
+| normalizers + `altruist_positions_sync` | transaction_date / type / amount / three fees / reversal; account number reduced to last four | 15–21 |
+| `altruist_identity.resolve_identity` | stores the custodian balance for resolved accounts (new table; nothing else written) | 18 |
+| `routers/altruist_connection` status payload | `refresh_token_expires_at` / `_expired` / `reconnect_required`; `connected` false when expired | 6 |
+
+Behaviour that did NOT change: crosswalking by account id, the position rule, `TRANSACTION_TYPE_MAP` (still lower-cased
+lookup), idempotency by external id, the PORTENTRY1 supersede + rollup, the simulator-only demo-household rule.
 
 ## 5. Findings as built
 
-Filled in as tasks complete.
+- **[FIND] `portfolio.transactions` has no column for `interest` / `transaction_description` /
+  `transaction_subtype`.** Carried on `AccountSyncResult.transaction_details`, not persisted (follow-up).
+- **[FIND] `account_balances_daily` is the treasury's cash source** (three readers take its latest row) — writing the
+  custodian balance there would have changed treasury; hence the new table.
+- **[FIND] `portfolio.tax_lots` has eight unfiltered readers and three FKs** — a custodian lot there would be read by
+  all of them at once; hence `portfolio.custodian_tax_lots` beside it. In custodian mode the engine sees custodian lots
+  with no lot id, so gifts exclude them (`custodian_lot` — an in-kind gift names a Hollisworks lot) and no execution
+  instruction can name one; the specific-lot picker keeps showing Hollisworks lots.
+- **[FIND] the four offline Altruist verifies (sprint 2 / 3 / 5 / 6) had no `--self-checks-only`**, so fast regression
+  mode could only FAIL them; a static self-check mode was added (`_altruist_offline_selfcheck.py`). Their fakes now
+  accept the date window and patch `call_cost_basis` (never the network); sprint 3's mock reads the account id from the
+  path.
+- **[FIND] verify_cpsim02 / 03 / 04 full-mode sections still use the cpsim02-era raw simulator paths** — their
+  fast-mode self-checks were re-pinned (verify_cpsim02 `SIM_ROUTES`); the full sections are a follow-up before the next
+  `scripts/run_regressions.sh`.
+- Conformance, in-process against the simulator (Task 6): **55 PASS, 0 FAIL** (C00–C17 DOCUMENTED rows incl. C05b /
+  C10b / C14b; O01–O15 and T01–T16 ASSUMED; C18–C20 harness).
+- UI: `tests/altread1` 5/5; `node --test tests/` 762 pass, 0 fail.
+- Decisions the docs leave open are recorded in the contract §7 (households path, page base, refresh rotation, the
+  Bearer prefix, reversal-flag values, the transaction-type vocabulary beyond BUY).
