@@ -2,13 +2,22 @@
 
     GET  /cpsim/health                 no auth; {"status": "ok", "simulated": true}
 
-cpsim02 — the Altruist-compatible read API at the client's EXACT paths (contract §6), under /cpsim/c/{slug}:
-    GET  …/oauth/authorize             302 → redirect_uri?code=…&state=… (cpsim/oauth.py)
-    POST …/oauth/token                 form body; authorization_code / refresh_token; the cpsim_ key in the BODY
-    GET  …/api/v2/households           {"households": [{id, name}]}
-    GET  …/v2/accounts?household_id=   {"accounts": [{id, name, …}]}
-    GET  …/v2/positions?account_id=    {"positions": [T6 primary fields]} — the latest snapshot on or before the clock
-    GET  …/v2/transactions?account_id= {"transactions": [T7 primary fields]} — trade_date ≤ the clock
+cpsim02 → ALTREAD1 — the Altruist-compatible read API at Altruist's PUBLISHED paths and shapes (developer.altruist.com,
+read 2026-11-11; contract §2–§3, §6), under /cpsim/c/{slug} (which is both the login and the API base):
+    GET  …/api/oauth2/authorize        302 → redirect_uri?code=…&state=… (cpsim/oauth.py); scope openid
+    POST …/oauth2/token                form body; authorization_code / refresh_token; token_type=id; the cpsim_ key in
+                                       the BODY
+    GET  …/api/v2/households?name_pattern=                          data.households  [{id, name}]
+    GET  …/v2/accounts?household_id=                                data.accounts    (+ data.household_id)
+    GET  …/v2/accounts/{account_id}/positions/                      data.positions   (+ data.account_id) — the latest
+                                                                    snapshot on or before the clock
+    GET  …/v2/accounts/{account_id}/cost-basis/                     data.cost_basis  — one row per tax lot
+    GET  …/v2/accounts/{account_id}/transactions?date_from=&date_to= data.transactions — default the past month, never
+                                                                    after the clock
+  Every list is PAGED: ``page`` (default 0) + ``page_size`` (default 100; max 1000, transactions 500 — over the max →
+  400) → ``{"paging": {page, page_size, total_pages}, "data": {...}}``. Page base 0 by default; ``set_page_base(1)`` is a
+  test injection (a page-0 request is then served as page 1 and echoed as 1 — the docs' own example). Dates
+  YYYY/MM/DD. Prior-business-day data is the book on the counterparty's clock date.
 
 cpsim03 — the orders API (contract §8, every field ASSUMED), same access-token auth:
     POST   …/v2/orders                201 a new order / 200 the SAME order on a repeat client_order_id; 422 malformed
@@ -24,8 +33,8 @@ cpsim04 — the transfers API (contract §9, every field ASSUMED), same access-t
     DELETE …/v2/transfers/{transfer_id}   cancel while received / pending_consent; 409 otherwise
   The lifecycle (cpsim/transfers.py): behaviour reject / consent / delay at receipt, the receiving bank's check, the
   cash ledger (cpsim/ledger.py), settlement and ACH returns on the clock; ``transfer.updated`` webhooks after commit.
-  Resources take an ACCESS token (``Bearer cpsim_at_…``); the cpsim_ key authenticates only the token endpoint. One
-  response per resource (no pagination), explicit ids, ISO dates. Behaviour (D9): reject → 503 with the reason;
+  Resources take an ACCESS token (``Bearer cpsim_at_…``); the cpsim_ key authenticates only the token endpoint.
+  Orders / transfers (ASSUMED — not part of Altruist's published API) keep their cpsim03 / cpsim04 shapes. Behaviour (D9): reject → 503 with the reason;
   delay → sleep min(delay_seconds, MAX_DELAY_S) before answering; partial / ACH do not apply to reads.
 
     POST /cpsim/c/{slug}/mirror        Authorization: Bearer cpsim_live_…  — a properly formatted envelope in, the
@@ -43,6 +52,7 @@ from __future__ import annotations
 import asyncio
 import json
 import traceback
+from datetime import date
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
@@ -59,6 +69,24 @@ from cpsim import transfers as ST
 
 LOG_KEY = "cpsim.log"
 MAX_DELAY_S = 20            # D9: a delay over the client's 15 s timeout exercises it; never longer than this
+#: ALTREAD1 — the documented page_size maxima per resource kind; the documented default page size
+PAGE_SIZE_MAX = {"households": 1000, "accounts": 1000, "positions": 1000, "cost_basis": 1000, "transactions": 500}
+PAGE_SIZE_DEFAULT = 100
+_page_base = 0
+
+
+def set_page_base(base: int) -> None:
+    """Test injection: serve pages 0-based (default) or 1-based (the docs' example echoes page 1)."""
+    global _page_base
+    if base not in (0, 1):
+        raise ValueError("page base is 0 or 1")
+    _page_base = base
+
+
+def page_base() -> int:
+    return _page_base
+
+
 REFUSALS = {**A.REFUSALS,
             "token_unknown": "unknown access token", "token_expired": "the access token has expired",
             "token_revoked": "the access token has been revoked"}
@@ -159,9 +187,9 @@ def create_app() -> FastAPI:
         log.update({"slug": slug[:64], "path": f"/cpsim/c/{slug[:64]}{tail}", "message_type": message_type})
         return log
 
-    @sub.get("/c/{slug}/oauth/authorize")
+    @sub.get("/c/{slug}/api/oauth2/authorize")
     async def oauth_authorize(slug: str, request: Request):
-        log = _log(request, slug, "/oauth/authorize", "altruist.oauth.authorize")
+        log = _log(request, slug, "/api/oauth2/authorize", "altruist.oauth.authorize")
         try:
             async with DB.tx() as conn:
                 cp = await R.live_by_slug(conn, slug)
@@ -180,9 +208,9 @@ def create_app() -> FastAPI:
             return _out(500, {"detail": "simulator error"})
         return Response(status_code=302, headers={"Location": location, "Cache-Control": "no-store"})
 
-    @sub.post("/c/{slug}/oauth/token")
+    @sub.post("/c/{slug}/oauth2/token")
     async def oauth_token(slug: str, request: Request):
-        log = _log(request, slug, "/oauth/token", "altruist.oauth.token")
+        log = _log(request, slug, "/oauth2/token", "altruist.oauth.token")
         form = O.parse_form(await request.body())
         log["message_type"] = f"altruist.oauth.token.{form.get('grant_type')}" if form.get("grant_type") in O.GRANTS \
             else "altruist.oauth.token"
@@ -207,9 +235,37 @@ def create_app() -> FastAPI:
             return _out(500, {"detail": "simulator error"})
         return _out(200, body, {"Cache-Control": "no-store", "Pragma": "no-cache"})
 
-    async def _resource(slug: str, request: Request, tail: str, kind: str, fetch):
+    def _paging(request: Request, kind: str):
+        """(page, page_size) from the query, or a 400 JSONResponse. Documented: page default 0, page_size default
+        100, max per kind."""
+        q = request.query_params
+        try:
+            page = int(q.get("page", "0"))
+            size = int(q.get("page_size", str(PAGE_SIZE_DEFAULT)))
+        except ValueError:
+            return _out(400, {"detail": "page and page_size must be integers"})
+        if page < 0:
+            return _out(400, {"detail": "page must be 0 or more"})
+        if size < 1 or size > PAGE_SIZE_MAX[kind]:
+            return _out(400, {"detail": f"page_size must be between 1 and {PAGE_SIZE_MAX[kind]} for {kind}"})
+        return page, size
+
+    def _iso_param(request: Request, name: str):
+        v = request.query_params.get(name)
+        if v is None or v == "":
+            return None
+        try:
+            return date.fromisoformat(v) if len(v) == 10 else None
+        except ValueError:
+            return None
+
+    async def _resource(slug: str, request: Request, tail: str, kind: str, fetch, echo: dict | None = None):
         log = _log(request, slug, tail, f"altruist.{kind}")
         delay = 0
+        paged = _paging(request, kind)
+        if isinstance(paged, JSONResponse):
+            return paged
+        page, size = paged
         try:
             async with DB.tx() as conn:
                 cp = await R.live_by_slug(conn, slug)
@@ -240,12 +296,18 @@ def create_app() -> FastAPI:
             return result
         if delay:
             await asyncio.sleep(delay)
-        return _out(200, {kind: result, "as_of": clock.isoformat()})
+        base = _page_base
+        index = max(page - base, 0)           # base 1: a page-0 request is page 1 (the docs' example)
+        echoed = index + base
+        total = -(-len(result) // size)
+        chunk = result[index * size:(index + 1) * size]
+        return _out(200, {"paging": {"page": echoed, "page_size": size, "total_pages": total},
+                          "data": {**(echo or {}), kind: chunk}})
 
     @sub.get("/c/{slug}/api/v2/households")
-    async def households(slug: str, request: Request):
+    async def households(slug: str, request: Request, name_pattern: str | None = None):
         async def fetch(conn, cp, clock):
-            return await B.households(conn, cp["id"])
+            return await B.households(conn, cp["id"], name_pattern)
         return await _resource(slug, request, "/api/v2/households", "households", fetch)
 
     @sub.get("/c/{slug}/v2/accounts")
@@ -253,23 +315,32 @@ def create_app() -> FastAPI:
         async def fetch(conn, cp, clock):
             if not household_id:
                 return _out(400, {"detail": "household_id is required"})
-            return await B.accounts(conn, cp["id"], household_id)
-        return await _resource(slug, request, "/v2/accounts", "accounts", fetch)
+            return await B.accounts(conn, cp["id"], household_id, clock)
+        return await _resource(slug, request, "/v2/accounts", "accounts", fetch, echo={"household_id": household_id})
 
-    def _account_route(kind: str, serve):
-        async def handler(slug: str, request: Request, account_id: str | None = None):
+    def _account_route(kind: str, tail: str, serve, windowed: bool = False):
+        async def handler(slug: str, account_id: str, request: Request):
             async def fetch(conn, cp, clock):
-                if not account_id:
-                    return _out(400, {"detail": "account_id is required"})
                 if not await B.account_exists(conn, cp["id"], account_id):
                     return _out(404, {"detail": "no such account in this simulated custodian's book"})
+                if windowed:
+                    lo, hi = _iso_param(request, "date_from"), _iso_param(request, "date_to")
+                    for name, val in (("date_from", lo), ("date_to", hi)):
+                        if request.query_params.get(name) and val is None:
+                            return _out(400, {"detail": f"{name} must be YYYY-MM-DD"})
+                    return await serve(conn, cp["id"], account_id, clock, lo, hi)
                 return await serve(conn, cp["id"], account_id, clock)
-            return await _resource(slug, request, f"/v2/{kind}", kind, fetch)
+            return await _resource(slug, request, f"/v2/accounts/{{account_id}}{tail}", kind, fetch,
+                                   echo={"account_id": account_id})
         handler.__name__ = f"{kind}_endpoint"
         return handler
 
-    sub.add_api_route("/c/{slug}/v2/positions", _account_route("positions", B.positions), methods=["GET"])
-    sub.add_api_route("/c/{slug}/v2/transactions", _account_route("transactions", B.transactions), methods=["GET"])
+    sub.add_api_route("/c/{slug}/v2/accounts/{account_id}/positions/",
+                      _account_route("positions", "/positions/", B.positions), methods=["GET"])
+    sub.add_api_route("/c/{slug}/v2/accounts/{account_id}/cost-basis/",
+                      _account_route("cost_basis", "/cost-basis/", B.lots), methods=["GET"])
+    sub.add_api_route("/c/{slug}/v2/accounts/{account_id}/transactions",
+                      _account_route("transactions", "/transactions", B.transactions, windowed=True), methods=["GET"])
 
     # ── cpsim03: the orders API (contract §8 — every field ASSUMED) ─────────────────────────────────────────────
     async def _orders(slug: str, request: Request, tail: str, message_type: str, work, *, transfers: bool = False):

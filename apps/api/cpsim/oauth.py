@@ -1,12 +1,14 @@
-"""cpsim02 — the simulated Altruist-compatible AUTHORIZATION SERVER (contract §2, §6 items 1–2).
+"""cpsim02 — the simulated Altruist-compatible AUTHORIZATION SERVER (contract §2, §6 items 1–2). ALTREAD1: on Altruist's
+PUBLISHED paths and parameters (docs/open-api-authentication, read 2026-11-11).
 
-  authorize   GET  …/oauth/authorize?response_type=code&client_id&redirect_uri&state&scope
+  authorize   GET  …/api/oauth2/authorize?client_id&scope=openid&redirect_uri&state  (response_type optional; when sent
+              it must be ``code``)
               → 302 to ``redirect_uri?code=<code>&state=<echoed>``. ``client_id`` is the PUBLIC id of the counterparty's
               live api_key credential (shown on the admin page, D3); an unknown client or a redirect that is not an
               absolute https URL → 400 and nothing is stored.
-  token       POST …/oauth/token (form body; client_secret_post — never HTTP Basic)
+  token       POST …/oauth2/token (form body; client_secret_post — never HTTP Basic); ``token_type=id`` required
               grant_type=authorization_code: code + redirect_uri + client_id + client_secret
-              grant_type=refresh_token:      refresh_token + client_id + client_secret
+              grant_type=refresh_token:      refresh_token + client_id + client_secret (redirect_uri accepted)
               → ``{access_token, refresh_token, expires_in, scope, token_type: "Bearer"}``; ≥ 400 on any bad input and
               nothing is persisted. Codes are single-use and live CODE_TTL; refresh tokens ROTATE (the old one and the
               grant's earlier access tokens are closed).
@@ -32,9 +34,10 @@ ACCESS_PREFIX = "cpsim_at_"
 REFRESH_PREFIX = "cpsim_rt_"
 CODE_TTL = timedelta(minutes=5)
 ACCESS_TTL = timedelta(hours=1)
-REFRESH_TTL = timedelta(days=30)
+REFRESH_TTL = timedelta(days=28)          # ALTREAD1: the documented refresh-token lifetime
 GRANTS = ("authorization_code", "refresh_token")
-AUTHORIZE_PARAMS = ("response_type", "client_id", "redirect_uri", "state", "scope")
+AUTHORIZE_PARAMS = ("client_id", "redirect_uri", "state", "scope")      # documented; response_type optional
+TOKEN_TYPE = "id"
 SCOPE_RX = re.compile(r"^[a-z:_ ]{1,200}$")
 UUID_RX = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -95,7 +98,7 @@ async def authorize(conn, cp: dict, params: dict) -> str:
     missing = [p for p in AUTHORIZE_PARAMS if not (params.get(p) or "").strip()]
     if missing:
         raise OAuthRefused(400, "invalid_request", "bad_request", f"missing parameter(s): {', '.join(missing)}")
-    if params["response_type"] != "code":
+    if (params.get("response_type") or "code") != "code":
         raise OAuthRefused(400, "unsupported_response_type", "bad_request", "response_type must be code")
     cred = await _client(conn, cp, params["client_id"].strip())
     if cred is None:
@@ -173,6 +176,8 @@ async def token(conn, cp: dict, form: dict) -> dict:
     if grant not in GRANTS:
         raise OAuthRefused(400, "unsupported_grant_type", "bad_grant", "grant_type must be authorization_code or "
                                                                        "refresh_token")
+    if form.get("token_type") != TOKEN_TYPE:
+        raise OAuthRefused(400, "invalid_request", "bad_request", "token_type must be id")
     cred = await _authenticate_client(conn, cp, form)
     t = now()
     if grant == "authorization_code":

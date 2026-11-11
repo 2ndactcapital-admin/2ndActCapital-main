@@ -105,7 +105,7 @@ EDITABLE = ["name", "notes", "status", "key", "bank_details", "fix_session", "be
 #: a BOOK file, not a custodian export: refused before decoding (routers/custody_import.py's _read_upload shape)
 MAX_BOOK_BYTES = 2 * 1024 * 1024
 BOOK_KIND_LABELS = {"households": "Households", "accounts": "Accounts", "positions": "Positions (holdings and values)",
-                    "transactions": "Transactions"}
+                    "transactions": "Transactions", "lots": "Tax lots (cost basis)"}
 
 
 class _Body(BaseModel):
