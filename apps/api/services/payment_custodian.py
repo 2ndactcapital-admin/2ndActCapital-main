@@ -401,7 +401,11 @@ async def panel(conn, org_id, row: dict) -> dict | None:
 
     src = await P.load_account(conn, org_id, row["source_account_id"])
     sent_api = row.get("adapter") == SIMULATOR_KEY and row.get("sent_channel") == CHANNEL
-    if PA.custodian_key(src) != SIMULATOR_KEY and not sent_api:
+    # CPSIM04 FIX 1: a source crosswalked to a simulated custodian AND to real Altruist is not the simulator's
+    # (payment_custodian_keys), but the person must still see WHY it is manual (D4 "with the reason shown") — the
+    # panel is shown with Send never available. A source with no simulator crosswalk: today's page exactly (None).
+    if (PA.custodian_key(src) != SIMULATOR_KEY and not sent_api
+            and not await _xwalk(conn, org_id, src["id"], XWALK_SIMULATOR)):
         return None
     out = {"simulated": True, "adapter": row.get("adapter"), "transfer_id": row.get("external_ref") if sent_api else None,
            "send_available": False, "send_refused": None, "refresh_available": False, "counterparty": None,

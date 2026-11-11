@@ -96,6 +96,9 @@ class ManualPaymentAdapter(PaymentAdapter):
     label = "Manual — print the payment sheet and send it to the custodian"
     connected = True
     capabilities = ("payment_sheet",)
+    #: CPSIM04 FIX 1 — why the simulated custodian's route was NOT taken (D4's first missing condition), when D4 was
+    #: evaluated; None for a payment D4 never applied to. The page shows the same reason (payment_custodian.panel).
+    route_reason: str | None = None
 
     async def send(self, instruction: dict, *, org_name: str = "", prepared_by: str = "",
                    disclosure: str | None = None, **kw) -> SendResult:
@@ -220,7 +223,10 @@ def adapter_for(account: dict, enabled: set[str] | None, route: dict | None = No
     if key and key != MANUAL and key in (enabled or set()):
         impl = _CONNECTED.get(key)
         return impl() if impl is not None else NotConnectedPaymentAdapter(key)
-    return manual()
+    m = manual()
+    if route is not None and not route.get("ok"):
+        m.route_reason = route.get("reason")    # CPSIM04 FIX 1: manual, with the D4 reason (e.g. real_crosswalk)
+    return m
 
 
 async def enabled_for_org(conn, org_id) -> set[str]:

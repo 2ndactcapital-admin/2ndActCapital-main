@@ -68,6 +68,16 @@ test("a payment that stays manual says why; no Send; no panel for a non-simulate
   assert.equal(badges(none), 0);
 });
 
+test("cpsim04 fix 1: a source ALSO crosswalked to real Altruist — the panel the server sends says why (real_crosswalk); never Send", () => {
+  // the exact panel services.payment_custodian.panel returns for the real_crosswalk condition (verify_cpsim04 routing)
+  const why = "manual: the source account is crosswalked to real Altruist — the real Altruist payment route stays "
+    + "manual (no published money-movement contract)";
+  const s = html(h(P.PaymentDetail, { data: DETAIL(STAFF, PAY({ actions: [MANUAL, SHEET, "send_to_custodian"] },
+    { ...PANEL, send_available: false, send_refused: why })) }));
+  assert.match(text(s), /Manual: the source account is crosswalked to real Altruist — the real Altruist payment route stays manual/);
+  assert.ok(!buttons(s).includes("Send to custodian (simulated)"), "send_available false → no Send, even if listed");
+});
+
 test("Refresh status from custodian: initiate OR approve, the server's action, refresh_available; the custodian events", () => {
   const sent = { ...PANEL, transfer_id: "sim-t-0123456789abcdef", send_available: false, refresh_available: true };
   const view = { transfer: { transfer_id: "sim-t-0123456789abcdef", status: "settled",

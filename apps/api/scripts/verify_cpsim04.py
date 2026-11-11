@@ -1363,8 +1363,10 @@ async def y_routing(conn):
         src_acct = await PS.load_account(c_, ORG_A, src, d)
         route = await PC.simulator_route(c_, ORG_A, src_acct, {**row, "source_account_id": src})
         adapter = await PS.adapter_of(c_, ORG_A, {**row, "source_account_id": src})
+        panel = await PC.panel(c_, ORG_A, {**row, "source_account_id": src})   # what the payment page shows
         return {"route": route, "key": adapter.key, "connected": adapter.connected,
-                "route_reason": getattr(adapter, "route_reason", None), "cls": type(adapter).__name__}
+                "route_reason": getattr(adapter, "route_reason", None), "cls": type(adapter).__name__,
+                "panel": panel, "sim_xwalk": bool(await PC._xwalk(c_, ORG_A, src, PC.XWALK_SIMULATOR))}
 
     out_all, err = await rolled_back(conn, decide, org=ORG_A)
     check(err is None and out_all["route"]["ok"] is True and out_all["cls"] == "AltruistSimulatorPaymentAdapter"
@@ -1380,6 +1382,19 @@ async def y_routing(conn):
               and res["cls"] == "ManualPaymentAdapter" and res["route_reason"] == res["route"]["reason"])
         check(bool(ok), f"condition {condition} removed ({label}) → MANUAL with the reason "
               f"({((res or {}).get('route') or {}).get('reason', '')[:70]}…)", f"{res} {e!r}")
+        # CPSIM04 FIX 1: the reason reaches the payment page (payment.custodian, the panel) — whenever the source is
+        # crosswalked to a simulated custodian (incl. one ALSO crosswalked to real Altruist) the panel shows it with
+        # Send never available; a source with no simulator crosswalk shows today's page exactly (no panel).
+        if res is not None and e is None:
+            p_ = res.get("panel")
+            if res.get("sim_xwalk"):
+                check(isinstance(p_, dict) and p_.get("send_available") is False
+                      and p_.get("send_refused") == f"manual: {res['route']['reason']}" and p_.get("manual_offered"),
+                      f"condition {condition} removed ({label}) → the payment page's custodian panel says why it is "
+                      "manual (send_refused = the reason; Send not available; the manual route offered)", f"{p_}")
+            else:
+                check(p_ is None, f"condition {condition} removed ({label}) → no simulator crosswalk: the payment page "
+                      "is today's exactly (no custodian panel)", f"{p_}")
         return res
 
     async def nothing(c_):

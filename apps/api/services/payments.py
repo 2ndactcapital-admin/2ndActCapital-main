@@ -855,7 +855,10 @@ SHEET_STATUSES = ("approved", "sent", "awaiting_client_consent", "acknowledged",
 
 async def adapter_of(conn, org_id, row: dict) -> PA.PaymentAdapter:
     src = await load_account(conn, org_id, row["source_account_id"])
-    route = await PC.simulator_route(conn, org_id, src, row) if PA.custodian_key(src) == PA.SIMULATOR_KEY else None
+    # CPSIM04 FIX 1: D4 is evaluated for every source (its first two conditions are two crosswalk reads), so a
+    # manual decision always carries its reason — a real-Altruist-crosswalked source included. The route is only
+    # ever TAKEN by adapter_for for a source resolved to the simulated custodian with every condition holding.
+    route = await PC.simulator_route(conn, org_id, src, row)
     return PA.adapter_for(src, await PA.enabled_for_org(conn, org_id), route)
 
 
