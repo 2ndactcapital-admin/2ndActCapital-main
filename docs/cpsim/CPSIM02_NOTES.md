@@ -221,3 +221,69 @@ All five causes are in the verify scripts or a generated doc.
 | C — rows left now (read-only count before any fix) | — | cpsim: counterparties 6, credentials 3, behaviour 6, clock 3, request_log 112, book_uploads 15, book_households 7, book_accounts 10, book_positions 14, book_transactions 6, oauth_codes 9, oauth_tokens 24, conformance_runs 1. public: organizations 2, users 4, user_roles 4, entities 2, households 2, household_memberships 2, accounts 3, audit_log 37. portfolio: external_references 3, securities_global 4, securities_global_identifiers 7, securities_global_prices 2. Counted total 288; with the FK closure (`VC.leftover_count`) 347. Zero positions / transactions / connections / webhook events / org_settings (e2e never ran). | `--cleanup-only` after the fix. |
 | **D** nested verify_cpsim01: `visibility1_routes.py --check` STALE | **DOCS** | Regenerating adds exactly 12 rows — cpsim02's 12 `/api/v1/admin/counterparties/{counterparty_id}/…` routes (book, book/accept, book/export, book/preview, book/template, conformance ×2, connections, connections/{target_org_id} ×3, webhooks/test), each `scrub`, the same class as cpsim01's 17 existing admin-counterparties rows (Super Admin-gated in AUTHZ1; no family path param). Only other change: the header count 1041 → 1053. No `/altruist` row changed. | Regenerate `docs/VISIBILITY1_ROUTES.md`; `--check` CURRENT. |
 | **E** nested altruist sprint2 / 3 / 5 / 6: "driver the run aborted" | **VERIFY** (pre-existing, not cpsim02) | Run one-off, each aborts in fixture setup on its "admin" connection: S2 `build_fixtures:201` / S3 `:244` / S6 — `InsufficientPrivilegeError: new row violates row-level security policy for table "altruist_connections"`; S5 — same for table `users`. The scripts take the fixture connection from `_db_connect.admin_dsn()` = `DATABASE_URL`, which since the RLS cutover is `app_service` (`rolbypassrls = false`); the scripts' own text says "cannot reach the database as postgres". The postgres DSN is `DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP` (the operator DSN cpsim01 / cpsim02 already use). cpsim02 changed these four scripts by ONE line each (the final `TOTAL` print) and changed no RLS policy on `altruist_connections` / `users` (`docs/cpsim02_part1.sql` touches only the environment CHECK). Their 19/20, 21/22, 32/34, 30/33 were recorded before the cutover; they had not been run since. | Fixture connection = the operator DSN, asserted to bypass RLS (fail loud otherwise). No assertion changed; the BLOCKED (T3, no ALTRUIST_* secrets) items stay BLOCKED. |
+
+### 7a. Found while proving (Task 3) — all VERIFY, none changes a product path
+
+| Where | Verdict | Evidence | Fix |
+|---|---|---|---|
+| behaviour / clock one-off | VERIFY | `--only=behaviour` raised `AltruistConfigError: ALTRUIST_SIMULATOR_CLIENT_ID … not configured` — the simulator credentials were set only by `y_read_api` (`set_sim_creds("main")`); the full run always ran read_api first. | Both sections call `set_sim_creds("main")` themselves. |
+| isolation: "a SANDBOX sync never touches an ALTRUIST_SIMULATOR account" | VERIFY (not a leak) | Positions, exception, ledger tag all as claimed; only `sim last_seen unchanged=False`. The baseline was read at section start, BEFORE the SIMULATOR sync (`POST /altruist/sync environment=simulator`), which legitimately re-confirms A1's simulator crosswalk. `_touch_last_seen` filters on `source_system` (`altruist_identity.py:127`), so a sandbox sync cannot touch it. | Baseline re-read immediately before the sandbox sync (the claim's exact window); the detail now prints every condition. |
+| webhooks one-off | VERIFY | Positions `(2, 2)→(2, 2)`: the upload's MONDAY rows are served only after the clock section advances to Monday (the full run's order); `ONLY_NEEDS["webhooks"]` omitted `clock`. | `ONLY_NEEDS["webhooks"] = (read_api, clock, e2e)`. |
+| S3 / S5 / S6 teardown (once the DSN fix let them run) | VERIFY (pre-existing, PORTENTRY1) | `ForeignKeyViolationError … entity_holdings_entity_id_fkey`: since PORTENTRY1 (2026-11-04) `sync_resolved_accounts` runs a family rollup (`request_rollup` + `run_request`) that writes `public.entity_holdings` + `portfolio.rollup_requests` for the fixture owner; the teardowns predate it. | Delete both by fixture entity id (rollup_requests also `reason = 'altruist sync'` and `entity_ids <@` the fixture ids); both now in COUNTED. |
+| S5 / S6 abort on leftovers of an aborted S5 run | VERIFY | (1) `account_import_exceptions_batch_id_fkey` — an exception for fixture account `altr5verify-acct-rt` was not in S5's exception delete list (only `-acct-a-unmatched`); (2) `altruist_connections_active_unique` / 5-1a 200 instead of 409 — S5's round-trip connection + OAuth state are known only in memory (`RUNTIME_*`), so a run whose teardown aborted left two `production` connections (`client_id altr5verify-production-client-id`) and two states (initiated_by the fixture admin user). Not a product regression: 5-1a passes once they are gone. | Exceptions also deleted by `raw_row->>'external_id' LIKE TAG-%` (S5, S6); S5 also deletes connections by `client_id LIKE TAG-%` in its fixture orgs and states by `initiated_by = ANY(fixture users)`. |
+| S5 / S6 batch delete | **FIND (logged, not changed)** | Both teardowns `DELETE FROM account_import_batches WHERE org_id IN (2nd Act, Hollisworks) AND custodian_code = 'ALTRUIST'` — not fixture-keyed; these scripts write fixtures INTO the real default and platform orgs. Checked live: the only such batch was this run's fixture (created 03:28 UTC, its one exception a fixture account). Today harmless; a real Altruist import batch in either org would be deleted. | OUTSTANDING_TODO_LIST: move S2–S6 onto is_test fixture orgs + VC.cleanup. |
+
+Altruist verifies, one-off, after the fix (VERIFY_NESTED=1, `timeout 600`): **S2 19/20**, **S3 21/22**, **S5 28/30**
+(+ 4 nested-skipped `5-REGR-*` = the recorded 32/34), **S6 27/28** (+ 5 nested-skipped `6-REGR-*` = 33, as `09b0340`) —
+each 0 FAIL, the only non-PASS is BLOCKED T3 (no ALTRUIST_* secrets; no live call) plus S3's and S5's existing FINDs.
+6-2b and 6-5b are the §7.10 rewrites (the response no longer carries `org_id`; the resolved org is proven on the
+persisted row) — present and PASS. No leftover rows after any of them (connections, entities, holdings, rollup
+requests, batches, states re-counted 0).
+
+## 8. Sandbox / production unchanged — diff review against main (Task 4)
+
+Fix 1 changed **no** product file (`git diff 8a53608 HEAD -- services routers cpsim main.py` is empty). The review below is
+of cpsim02's own changes to the five files (main → HEAD), line group by line group.
+
+**services/altruist_oauth.py**
+- `ENVIRONMENTS` + `"simulator"`; new constants, `AltruistSimulatorRefused`, `set_simulator_transport`, `is_simulator_host`,
+  `simulator_hosts`, `simulator_counterparty` — new names only; nothing on a sandbox / production path calls them except below.
+- `_transport_for(env, t)`: returns `t` when given, else the injected transport ONLY for `simulator`, else `None` — for
+  sandbox / production exactly the old `transport=transport` / no transport.
+- `resolve_hosts` / `_static_hosts`: sandbox / production return `ALTRUIST_HOSTS[env]` (no query) — the old lookup.
+- `check_destination`: for sandbox / production refuses only a simulator host (`/cpsim/c/` in the URL — the static hosts
+  carry none) or a `cpsim_` secret (no real Altruist secret has that prefix) — a real request passes unchanged.
+- `client_credentials`: sandbox / production read the same variables; **deliberate**: production is `== "production"`
+  exactly and an unknown environment raises instead of silently taking production credentials (contract §7.4; the
+  verify reproduces the old bug against 122ac75).
+- `build_authorize_url` / `exchange_code_for_tokens` / `refresh_access_token`: new keyword args default `None` → the old
+  `client_credentials`, `_redirect_uri`, `ALTRUIST_HOSTS[env]`; token calls gain the optional `transport` (default `None`).
+- `ensure_fresh_token`: sandbox / production call `refresh_access_token` with the old arguments; the except gains
+  `AltruistSimulatorRefused` (never raised for a real environment).
+- `fetch_resource` + `_call`: the four `call_*` bodies were one copy-pasted request each; now one shared function with
+  the identical URL, params, headers (Bearer + Accept), timeout, error text and normalizer. The client section's
+  byte-identity check (method, URL, headers, body, parse — every resource call, authorize, exchange, refresh) PASSES
+  against 122ac75.
+
+**services/altruist_identity.py** — `crosswalk_source(env)` is `'ALTRUIST'` for every non-simulator environment; every
+query's `source` parameter defaults to `SOURCE_SYSTEM_ALTRUIST` (byte-identical SQL + args); `simulated` is False for
+sandbox / production, so the demo-household branch and the `refused` key never apply; reason code and text unchanged.
+
+**services/altruist_positions_sync.py** — `ledger_source(env)` is `'altruist'` (the old `SOURCE_SYSTEM`) and `xwalk`
+`'ALTRUIST'` for every non-simulator environment; the `simulator_account_allowed` stop is inside `environment ==
+'simulator'`; `supersede_for_account(by_source=ledger)` = the old `SOURCE_SYSTEM`.
+
+**services/altruist_webhook.py** — `verify_signature_source` tries the real secret FIRST with the same HMAC-SHA256
+compare as `verify_signature`; the simulator secret is tried only after it fails. `process_event(signed_by=REAL)`:
+`extract_environment` (a pure read) now runs before the lookup instead of after; the lookup source is
+`crosswalk_source(env)` = `'ALTRUIST'` for any real environment. **Deliberate**: a real-secret payload claiming
+`"simulator"` is refused (`refused_environment`) — before cpsim02 that value was not a valid environment at all.
+
+**routers/altruist_connection.py** — `environment == "simulator"` branches only (`_connect_simulator`,
+`_require_simulator`, hosts for the exchange); `complete_callback` is the old callback body extracted unchanged
+(sandbox / production call `exchange_code_for_tokens(environment, code)` exactly as before); the sync response gains
+`accounts_refused_not_demo` only when identity returned `refused` (simulator only); `AltruistSimulatorRefused` added to
+an except (simulator only).
+
+**routers/altruist_webhook.py** (named for the org_id change) — **deliberate** (contract §7.10): `org_id` is popped from
+the result before it is returned and still used internally for `publish_incoming_credits`.

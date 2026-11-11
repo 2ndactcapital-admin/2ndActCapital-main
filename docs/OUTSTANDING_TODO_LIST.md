@@ -160,7 +160,7 @@ The assistant is mounted on member pages today.
   OAuth redirect URI, webhook signature docs, and the business inputs (entity
   choice, legal address, contact, launch date, AUM projection).
 - ⏳ **Counterparty Simulator (cpsim01 merged; cpsim02 built 2026-11-10; cpsim03–04 queued).** Run
-  `verify_cpsim02.py` (written, not run). Operator steps in `docs/cpsim/CPSIM_ADMIN.md` §11: generate the simulated
+  `verify_cpsim02.py` in full (fix 1: every section passed one-off, 0 FAIL — the full run + regressions are the operator's). Operator steps in `docs/cpsim/CPSIM_ADMIN.md` §11: generate the simulated
   Altruist key; set `ALTRUIST_SIMULATOR_CLIENT_ID` / `_CLIENT_SECRET`, `ALTRUIST_SIMULATOR_WEBHOOK_SECRET`
   (`cpsim_whsec_…`) and `CPSIM_BASE_URL` in Doppler; redeploy; allow an org; upload a book; connect; run conformance.
   Open: D1 (move the Olivo demo to its own tenant?), D3 (counsel: Altruist developer terms vs an unbranded compatible
@@ -184,6 +184,13 @@ The assistant is mounted on member pages today.
     passes it explicitly); regenerate the map with its tool.
   - Sandbox vs production webhooks still trust the payload's environment (§7.9 for real traffic) and the crosswalk is
     shared between them (§7.11).
+  - (cpsim02 fix 1) `verify_altruist_sprint2/3/5/6` write their fixtures INTO the real 2nd Act and Hollisworks orgs,
+    and S5 / S6 teardowns `DELETE FROM account_import_batches WHERE org_id IN (those) AND custodian_code = 'ALTRUIST'`
+    — not fixture-keyed (harmless today: checked live, the only such batch was a fixture). Move them onto is_test
+    fixture orgs + `_verify_cleanup.cleanup` keyed by fixture ids before any real Altruist import lands.
+  - (cpsim02 fix 1) `_db_connect.admin_dsn()` still reads `DATABASE_URL` (app_service since the RLS cutover) while its
+    docstring says "the postgres DSN"; every verify that seeds fixtures through it hits RLS. The four Altruist verifies
+    now use `operator_dsn()`; audit the other `admin_dsn()` callers.
 - ⏸️ All Altruist product claims (cash rate, brokered CDs, cash spread for ADV
   Item 5) are unverified.
 - ⏸️ AWS SES: grant `ses:SendEmail` + `ses:SendRawEmail`, check sandbox status,
