@@ -193,7 +193,7 @@ registers neither Send nor Refresh anywhere; the verify scans every one of these
 
 All ten tasks committed on `cpsim04-work`. The verify (`apps/api/scripts/verify_cpsim04.py`) is WRITTEN, NOT RUN.
 Proven during the sprint without the verify: the schema read back 22/22 (`_apply_cpsim04.py --verify`); the in-process
-conformance run 51 PASS / 0 FAIL with 0 leftovers; node tests 45/45 (cpsim04 8 + cash07 + cpsim01–03); the boundary
+conformance run 51 PASS / 0 FAIL with 0 leftovers; node tests 45/45 (cpsim04 8 + cash07 + cpsim01–03) and the whole `node --test tests/` suite 756 pass, 0 fail (757 tests, 1 not run by its own skip); the boundary
 check OK; `authz1_routes.py --check` and `visibility1_routes.py --check` CURRENT; both loaders' dry runs (cpsim03 still
 22 to set; cpsim04 6 to set). Not run: `npm run build`, the regressions, the verify.
 
