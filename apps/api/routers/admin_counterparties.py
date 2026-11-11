@@ -69,6 +69,7 @@ from cpsim import orders as SO
 from cpsim import ledger as LG
 from cpsim import registry as R
 from cpsim import transfers as ST
+from services import altruist_oauth as AO
 from services.authz import require_super_admin
 from services.custody.base import parse_text
 from services.database import get_pool
@@ -800,13 +801,20 @@ async def connections(request: Request, counterparty_id: UUID):
     async with pool.acquire() as conn:
         rows = [dict(r) for r in await conn.fetch(
             "SELECT o.id, o.name, o.is_test, (c.setting_value #>> '{}') AS counterparty_slug, "
-            "ac.status AS connection_status, ac.last_refreshed_at, ac.token_expires_at, ac.created_at AS connected_at "
+            "ac.status AS connection_status, ac.last_refreshed_at, ac.token_expires_at, ac.created_at AS connected_at, "
+            "ac.refresh_token_issued_at, ac.created_at "
             "FROM organizations o JOIN org_settings a ON a.org_id = o.id AND a.setting_key = $1 "
             "AND a.setting_value = 'true'::jsonb LEFT JOIN org_settings c ON c.org_id = o.id AND c.setting_key = $2 "
             "LEFT JOIN altruist_connections ac ON ac.org_id = o.id AND ac.environment = 'simulator' "
             "AND ac.system_to IS NULL ORDER BY o.is_test DESC, o.name", SETTING, SETTING_COUNTERPARTY)]
         for r in rows:
             r["points_here"] = r["counterparty_slug"] == cp["slug"]
+            # ALTREAD1 D1 — the refresh token's documented 28-day expiry (the connection status shows it)
+            has_conn = r["connection_status"] is not None
+            r["refresh_token_expires_at"] = AO.refresh_token_expires_at(r) if has_conn else None
+            r["refresh_token_expired"] = bool(has_conn and AO.refresh_token_expired(r))
+            r.pop("refresh_token_issued_at", None)
+            r.pop("created_at", None)
             last = await conn.fetchrow(
                 "SELECT payload, created_at FROM audit_log WHERE action = 'counterparty.connection_synced' AND "
                 "resource_type = 'counterparty' AND resource_id = $1::uuid AND payload->>'target_org_id' = $2 "

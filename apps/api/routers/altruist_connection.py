@@ -120,9 +120,15 @@ def _status_payload(connection: dict | None, *, environment: str) -> dict:
             "token_expires_at": None,
             "last_refreshed_at": None,
             "scope": None,
+            "refresh_token_expires_at": None,
+            "refresh_token_expired": False,
+            "reconnect_required": False,
         }
+    # ALTREAD1 D1 — the refresh token's documented 28-day lifetime: an expired one means every sync refuses (with this
+    # reason) until someone reconnects.
+    expired = altruist_oauth.refresh_token_expired(connection)
     return {
-        "connected": connection["status"] == "connected",
+        "connected": connection["status"] == "connected" and not expired,
         "environment": connection["environment"],
         "status": connection["status"],
         "token_expires_at": connection["token_expires_at"],
@@ -131,6 +137,11 @@ def _status_payload(connection: dict | None, *, environment: str) -> dict:
         "client_id": connection["client_id"],
         "access_token_last4": connection["access_token_last4"],
         "refresh_token_last4": connection["refresh_token_last4"],
+        "refresh_token_expires_at": altruist_oauth.refresh_token_expires_at(connection),
+        "refresh_token_expired": expired,
+        "reconnect_required": expired,
+        "reconnect_reason": ("the refresh token is past its 28-day lifetime — reconnect to authorize again"
+                             if expired else None),
     }
 
 
@@ -349,7 +360,8 @@ async def altruist_status(request: Request, environment: str = Query("sandbox"))
     pool = await get_pool()
     async with pool.acquire() as conn:
         connection = await altruist_oauth.get_active_connection(conn, org_id=org_id, environment=environment)
-        if connection is not None and connection["status"] == "connected":
+        if connection is not None and connection["status"] == "connected" \
+                and not altruist_oauth.refresh_token_expired(connection):
             try:
                 connection = await altruist_oauth.ensure_fresh_token(
                     conn, org_id=org_id, environment=environment, connection=connection
