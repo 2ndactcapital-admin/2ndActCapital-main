@@ -1906,14 +1906,25 @@ async def run(name, fn, *args):
 
 
 async def cleanup_only(conn) -> int:
+    # fix 2: per-table fixture counts before / after, and the real-row fingerprints (count + checksum) before / after
+    before = await counts(conn)
+    print(f"[INFO] fixture rows before cleanup: {sum(before.values())} "
+          f"{ {t: n for t, n in sorted(before.items()) if n} }")
+    real = await real_fingerprints(conn)
     try:
         log = await teardown_retrying()
         print(f"[INFO] teardown removed: {log}")
     except Exception as exc:  # noqa: BLE001
         check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
         traceback.print_exc()
+    after = await counts(conn)
+    nonzero = {t: n for t, n in sorted(after.items()) if n}
+    check(not nonzero, f"every counted table at zero fixture rows after cleanup ({len(after)} tables)", f"{nonzero}")
     left = await leftovers(conn)
     check(left == 0, "zero fixture rows remain (public + cpsim)", f"{left}")
+    now = await real_fingerprints(conn)
+    for k in real:
+        check(now.get(k) == real[k], f"real {k} unchanged by cleanup (count + checksum)", f"{real[k]} → {now.get(k)}")
     await close_conn(conn)
     print(total_line())
     return 0 if _n_fail == 0 else 1
