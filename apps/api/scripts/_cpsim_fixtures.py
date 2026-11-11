@@ -31,8 +31,9 @@ for _site in sorted(API_DIR.glob("venv/lib/python3*/site-packages")):
 import httpx  # noqa: E402
 
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
-#: every cpsim table that carries counterparty_id, children first (FK order for the teardown); cpsim03 + orders
-CP_TABLES = ("cpsim.order_executions", "cpsim.orders", "cpsim.oauth_tokens", "cpsim.oauth_codes", "cpsim.book_transactions", "cpsim.book_positions",
+#: every cpsim table that carries counterparty_id, children first (FK order for the teardown); cpsim03 + orders;
+#: cpsim04 + transfers, transfer events, the cash ledger
+CP_TABLES = ("cpsim.cash_movements", "cpsim.transfer_events", "cpsim.transfers", "cpsim.order_executions", "cpsim.orders", "cpsim.oauth_tokens", "cpsim.oauth_codes", "cpsim.book_transactions", "cpsim.book_positions",
              "cpsim.book_accounts", "cpsim.book_households", "cpsim.book_uploads", "cpsim.conformance_runs",
              "cpsim.request_log", "cpsim.counterparty_fix_sessions", "cpsim.counterparty_bank_details",
              "cpsim.counterparty_behaviour", "cpsim.counterparty_clock", "cpsim.counterparty_credentials")
@@ -45,6 +46,9 @@ CPSIM_APP_WITHHELD = {
     "book_uploads": frozenset({"UPDATE", "DELETE"}),       # cpsim02: the upload log is append-only (SELECT + INSERT)
     "order_executions": frozenset({"UPDATE", "DELETE"}),   # docs/cpsim03_part1.sql: executions append-only
     "orders": frozenset({"DELETE"}),                       # docs/cpsim03_part1.sql: system-axis, never deleted
+    "transfers": frozenset({"DELETE"}),                    # docs/cpsim04_part1.sql: system-axis, never deleted
+    "transfer_events": frozenset({"UPDATE", "DELETE"}),    # docs/cpsim04_part1.sql: append-only
+    "cash_movements": frozenset({"UPDATE", "DELETE"}),     # docs/cpsim04_part1.sql: the cash ledger, append-only
 }
 
 

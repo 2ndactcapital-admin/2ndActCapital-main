@@ -5104,6 +5104,19 @@
 --   accounts_named                           ARRAY NOT NULL DEFAULT '{}'::text[]
 --   PRIMARY KEY book_uploads_pkey: (id)
 
+-- ===== cpsim.cash_movements =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   account_external_id                      text NOT NULL
+--   movement_kind                            text NOT NULL
+--   source_ref                               text NOT NULL
+--   amount                                   numeric NOT NULL
+--   balance_after                            numeric NOT NULL
+--   effective_date                           date NOT NULL
+--   book_transaction_id                      text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY cash_movements_pkey: (id)
+
 -- ===== cpsim.conformance_runs =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   counterparty_id                          uuid
@@ -5167,6 +5180,7 @@
 --   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
 --   valid_to                                 timestamp with time zone
 --   webhook_url                              text
+--   consent_required                         boolean NOT NULL DEFAULT false
 --   PRIMARY KEY counterparty_behaviour_pkey: (id)
 
 -- ===== cpsim.counterparty_clock =====
@@ -5313,6 +5327,53 @@
 --   direction                                text NOT NULL DEFAULT 'in'::text
 --   latency_ms                               integer
 --   PRIMARY KEY request_log_pkey: (id)
+
+-- ===== cpsim.transfer_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   transfer_row_id                          uuid NOT NULL
+--   seq                                      integer NOT NULL
+--   status                                   text NOT NULL
+--   business_date                            date NOT NULL
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   at                                       timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY transfer_events_pkey: (id)
+
+-- ===== cpsim.transfers =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   transfer_id                              text NOT NULL
+--   client_transfer_id                       text NOT NULL
+--   from_account_external_id                 text NOT NULL
+--   to_account_external_id                   text
+--   to_bank_slug                             text
+--   to_bank_account_id                       text
+--   to_bank_routing_last4                    text
+--   to_bank_bic                              text
+--   to_bank_iban_last4                       text
+--   amount                                   numeric NOT NULL
+--   currency_code                            text NOT NULL DEFAULT 'USD'::text
+--   rail                                     text NOT NULL
+--   value_date                               date NOT NULL
+--   status                                   text NOT NULL
+--   reject_reason                            text
+--   return_code                              text
+--   return_reason                            text
+--   return_source                            text
+--   return_after_days                        integer
+--   received_on                              date NOT NULL
+--   acknowledged_on                          date
+--   settle_on                                date
+--   settled_on                               date
+--   return_due_on                            date
+--   returned_on                              date
+--   consent_recorded_at                      timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   archived_from_id                         uuid
+--   PRIMARY KEY transfers_pkey: (id)
 
 -- ===== litellm.LiteLLM_AccessGroupTable =====
 --   access_group_id                          text NOT NULL
