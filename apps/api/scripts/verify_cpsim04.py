@@ -1590,6 +1590,25 @@ async def y_governance(conn):
           "no refused Send reached the custodian (no transfer for the payment; still approved)", f"{n2}")
     cR, oR = await refresh(U_RD, pid)
     check(cR == HTTP_FORBIDDEN, "Refresh by a reader (neither initiate nor approve) → 403", f"{cR} {dumps(oR)[:200]}")
+    # CPSIM04 FIX 1 (N2): the custodian-transfer read is STAFF money detail — any(initiate_payment | approve_payment),
+    # never a bare view_portfolio holder — and docs/AUTHZ1_ROUTES.json now states exactly that gate (the generator had
+    # taken the union with _open's looser any(view_portfolio | …) and expected member / staff / other_org admitted).
+    cT, oT = await api(U_RD, "GET", pp(H_A, f"/{pid}/custodian-transfer"))
+    cT2, _oT2 = await api(U_AP, "GET", pp(H_A, f"/{pid}/custodian-transfer"))
+    cT3, _oT3 = await api(U_INB, "GET", pp(H_A, f"/{pid}/custodian-transfer"))
+    check(cT == HTTP_FORBIDDEN and "initiate_payment" in dumps(oT) and cT2 == HTTP_CONFLICT and cT3 == HTTP_NOT_FOUND,
+          "GET …/custodian-transfer: a view_portfolio-only reader → 403 naming initiate_payment; the approver passes "
+          "the gate (409 — this payment was never sent; the state refuses, as Refresh); "
+          "ANOTHER org's initiator → 404", f"{cT} {dumps(oT)[:160]} {cT2} {cT3}")
+    _rj = json.loads(_src("docs/AUTHZ1_ROUTES.json") or "{}")
+    _ex = {(r.get("path"), m): r.get("expect") for r in _rj.get("routes", []) for m in (r.get("methods") or [])}
+    _want = {"rule": "perm", "any_of": ["approve_payment", "initiate_payment"]}
+    _base = "/api/v1/cash/households/{household_id}/payments/{payment_id}"
+    check(_ex.get((_base + "/custodian-transfer", "GET")) == _want
+          and _ex.get((_base + "/refresh-from-custodian", "POST")) == _want,
+          "docs/AUTHZ1_ROUTES.json expects exactly any(initiate_payment | approve_payment) for the custodian-transfer "
+          "read and Refresh (view_portfolio alone is refused — the matrix's member / staff / other_org rows)",
+          f"{_ex.get((_base + '/custodian-transfer', 'GET'))} {_ex.get((_base + '/refresh-from-custodian', 'POST'))}")
     cR2, oR2 = await refresh(U_AP, pid)
     check(cR2 == HTTP_CONFLICT, "Refresh of a payment that was never sent → 409 (the gate passes, the state refuses)",
           f"{cR2} {dumps(oR2)[:200]}")

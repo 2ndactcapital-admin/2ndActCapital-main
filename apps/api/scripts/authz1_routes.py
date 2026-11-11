@@ -413,7 +413,16 @@ def expect(route, g, pending_allowed: bool = False) -> dict:
         # verify_dealroom1's rights matrix.
         return {"rule": "mixed"}
     if g["any_of"] and not g["perms"]:
-        return {"rule": "perm", "any_of": sorted({p for a in g["any_of"] for p in a})}
+        # CPSIM04 FIX 1 — several require_any_permission gates on one handler ALL apply (an AND of ORs), never their
+        # union: GET …/payments/{id}/custodian-transfer gates any(initiate|approve) on top of _open's
+        # any(view_portfolio|initiate|approve), and the union had expected member / staff / other_org to be ADMITTED
+        # (view_portfolio) by a gate that refuses them. A tuple that is a superset of another is implied by it; one
+        # remaining tuple is the exact rule, more than one is "mixed" (only the global rules asserted).
+        sets = {frozenset(a) for a in g["any_of"]}
+        tight = [a for a in sets if not any(b < a for b in sets)]
+        if len(tight) == 1:
+            return {"rule": "perm", "any_of": sorted(tight[0])}
+        return {"rule": "mixed"}
     if g["org_settings"] and not g["perms"]:
         return {"rule": "org_admin"}
     if g["staff"] and g["perms"] and not g["any_of"] and not g["org_settings"]:

@@ -18439,8 +18439,7 @@
    "expect": {
     "any_of": [
      "approve_payment",
-     "initiate_payment",
-     "view_portfolio"
+     "initiate_payment"
     ],
     "rule": "perm"
    },
@@ -18462,8 +18461,7 @@
    "expect": {
     "any_of": [
      "approve_payment",
-     "initiate_payment",
-     "view_portfolio"
+     "initiate_payment"
     ],
     "rule": "perm"
    },
