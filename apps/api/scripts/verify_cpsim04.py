@@ -2127,15 +2127,32 @@ async def y_webhooks(conn):
 async def y_isolation(conn):
     section("[Y] Isolation: org A's payments never visible / sendable / refreshable by org B (both directions); the "
             "demo-household rule; bank crosswalks isolated from every real source")
-    await clock(conn)
-    await clock(conn, "other")
-    pa = await approved(conn, ACC_SRC, ACC_DST, "1900.00", "journal", "isolation A")
+    try:
+        await _isolation(conn)
+    finally:
+        await clock(conn)   # CPSIM04 FIX 1 (C): the section restores the payments clock to org A's custodian's date
+
+
+async def _isolation(conn):
+    # CPSIM04 FIX 1 (C): the section sets its OWN clock. The payments side has ONE injected "today" (S["today"],
+    # services.payments.set_clock) while org A and org B each have their own simulated custodian's clock; in the full
+    # run earlier sections had advanced A's to 2026-12-01 and this section sent B's payment on A's date ("the value
+    # date 2026-11-16 is in the past"). The precondition is now made true HERE (the two clocks differ — one advance of
+    # A's if a one-off run left them equal) and every org-B action runs on org B's own clock.
+    d_main, d_other = await clock(conn), await clock(conn, "other")
+    if d_main == d_other:
+        await advance(conn)
+        d_main = await clock(conn)
+    check(d_main != d_other, f"precondition (the run-order state that hid this check): org A's custodian clock "
+          f"({d_main}) and org B's ({d_other}) differ", f"{d_main} {d_other}")
+    pa = await approved(conn, ACC_SRC, ACC_DST, "1900.00", "journal", "isolation A", vd=d_main)
+    d_b = await clock(conn, "other")             # from here: org B acts, the payments side on org B's own clock
     pb = await approved(conn, ACC_B1, ACC_B2, "1950.00", "journal", "isolation B", maker=U_INB, checker=U_APB, hh=H_B,
-                        vd=await clock(conn, "other"))
-    await clock(conn)
+                        vd=d_b)
     if not (pa and pb):
         return
     cb, ob = await api(U_INB, "POST", pp(H_B, f"/{pb}/send-to-custodian"))
+    await clock(conn)                            # back to org A's clock for the cross-org checks below
     tb = await transfer_of(conn, pb)
     in_main = int(await sim(conn, "SELECT count(*) FROM cpsim.transfers WHERE counterparty_id = $1::uuid AND "
                                   "client_transfer_id = $2", S["cp"]["main"], str(pb), fetch="fetchval"))
