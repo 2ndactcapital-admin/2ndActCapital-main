@@ -255,6 +255,7 @@ def _id(n: int) -> UUID:
 
 
 ORG_T, ORG_T2 = _id(1), _id(2)
+N_GENERATED = 1000    # generator sample size per kind (a property of the test, not live state)
 # ORG_R: non-test, ROLLED BACK only. fix 1: it must sit OUTSIDE the reserved '99000000-' prefix — REP6FIX2's
 # organizations_mark_test_fixture trigger forces is_test = true for every id there, so _id(3) silently became a TEST
 # org and the "non-test org" proof read a test org (may_connect correctly said true for plain/mixed/empty). A fixed id
@@ -1013,10 +1014,10 @@ async def y_credentials(conn):
     if new:
         S["issued"].append(new)
         note_audit("counterparty.key_rotated", cid)
-    st_old, bo, _h = await mirror_call(SLUG_PREFIX + "altruist", key, envelope("cred-2"))
-    st_new, bn, _h = await mirror_call(SLUG_PREFIX + "altruist", new, envelope("cred-3"))
-    check(code == 200 and new.startswith("cpsim_live_") and new != key and st_old == 401 and st_new == 200,
-          "rotate: a new key shown once; the OLD key → 401, the new one → 200", f"{code} {st_old} {st_new} {dumps(bo)}")
+    code_old, bo, _h = await mirror_call(SLUG_PREFIX + "altruist", key, envelope("cred-2"))
+    code_new, bn, _h = await mirror_call(SLUG_PREFIX + "altruist", new, envelope("cred-3"))
+    check(code == 200 and new.startswith("cpsim_live_") and new != key and code_old == 401 and code_new == 200,
+          "rotate: a new key shown once; the OLD key → 401, the new one → 200", f"{code} {code_old} {code_new} {dumps(bo)}")
     code, b = await api(U_SA, "POST", cpu("altruist", "/key/revoke"))
     note_audit("counterparty.key_revoked", cid) if code == 200 else None
     st_rev, br, _h = await mirror_call(SLUG_PREFIX + "altruist", new, envelope("cred-4"))
@@ -1048,10 +1049,10 @@ def _checksum_valid_99() -> str:
 async def y_generators(conn):
     section("[Y] Fake bank / FIX values provably not real; the database refuses real-looking ones")
     rng = random.Random(20261110)
-    abas = [G.fake_aba(rng) for _ in range(1000)]
+    abas = [G.fake_aba(rng) for _ in range(N_GENERATED)]
     db_any = await sim(conn, "SELECT bool_or(cpsim.aba_checksum_ok(x)) FROM unnest($1::text[]) x", abas,
                        fetch="fetchval")
-    check(len(abas) == 1000 and not any(G.aba_checksum_ok(a) for a in abas) and db_any is False and
+    check(len(abas) == N_GENERATED and not any(G.aba_checksum_ok(a) for a in abas) and db_any is False and
           all(a.startswith("99") for a in abas) and len(set(abas)) > 900,
           "1,000 generated ABAs: every one 99-prefixed and failing the real check digit (Python AND the database "
           "function agree)", f"{db_any} {len(set(abas))}")
@@ -1059,7 +1060,7 @@ async def y_generators(conn):
                         fetch="fetchval")
     check(real_ok is True and G.aba_checksum_ok(REAL_ABA) and G.iban_ok(REAL_IBAN),
           "the check functions are not vacuous: a published real ABA and a real IBAN pass them", f"{real_ok}")
-    ibans = [G.fake_iban(rng) for _ in range(1000)]
+    ibans = [G.fake_iban(rng) for _ in range(N_GENERATED)]
     db_iban = await sim(conn, "SELECT bool_or(cpsim.iban_ok(x)) FROM unnest($1::text[]) x", ibans, fetch="fetchval")
     check(all(i[2:4] in ("00", "01", "99") for i in ibans) and not any(G.iban_ok(i) for i in ibans) and
           db_iban is False, "1,000 generated IBANs: check digits 00/01/99 (outside the 02–98 ISO produces) and mod-97 "
