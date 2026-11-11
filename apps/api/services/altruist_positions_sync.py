@@ -79,8 +79,15 @@ from services.altruist_identity import (
     crosswalk_source,
     simulator_account_allowed,
 )
-from services.altruist_oauth import call_positions, call_transactions
-from services.altruist_oauth import require_active_connection
+from services.altruist_oauth import call_cost_basis, call_positions, call_transactions
+from services.altruist_oauth import (
+    AltruistOAuthError,
+    AltruistPagingCeiling,
+    parse_altruist_date,
+    require_active_connection,
+    transaction_windows,
+    transactions_start,
+)
 from services.portfolio_assets import (
     TABLE_EXT_REF,
     TABLE_POSITIONS,
@@ -123,10 +130,11 @@ CUSTODIAN_CODE = "ALT"
 CUSTODIAN_SYSTEM_CODE = "ALT-DEF"
 
 #: Altruist's own transaction ``type`` string → this codebase's
-#: ``transaction_type_code``. [FIND] unconfirmed against a live spec, same as
-#: the endpoint paths — a best-guess mapping over the public-market vocabulary
-#: a retail/RIA custodian's activity feed would plausibly use. An unmapped
-#: type is recorded as an error, never guessed into the closest-sounding code.
+#: ``transaction_type_code``. ALTREAD1: the documented field is
+#: ``transaction_type`` (e.g. ``BUY``; lower-cased here, so BUY → buy). The
+#: documented page gives only BUY as an example — the rest of this vocabulary is
+#: still the cpsim01-era best guess. An unmapped type is recorded as an error,
+#: never guessed into the closest-sounding code.
 TRANSACTION_TYPE_MAP: dict[str, str] = {
     "buy": "buy",
     "sell": "sell",
@@ -160,6 +168,26 @@ class RowError:
     reason: str
 
 
+#: ALTREAD1 D2 — ``cancellation_reversal_flag`` values, parsed strictly (anything else is a per-row error, never a guess)
+REVERSAL_TRUE = ("true", "y", "yes", "1")
+REVERSAL_FALSE = ("false", "n", "no", "0", "")
+
+
+def reversal_flag(value: Any) -> bool:
+    if value is None or value is False:
+        return False
+    if value is True:
+        return True
+    if isinstance(value, (int,)) and value in (0, 1):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in REVERSAL_TRUE:
+        return True
+    if s in REVERSAL_FALSE:
+        return False
+    raise ValueError(f"cancellation_reversal_flag {value!r} is not a recognised yes / no value")
+
+
 @dataclass
 class AccountSyncResult:
     altruist_account_id: str
@@ -174,6 +202,18 @@ class AccountSyncResult:
     provisional: dict | None = None
     #: CASH06 — the ids of the transactions this sync created (the incoming-credit emitter reads them)
     transaction_ids: list[str] = field(default_factory=list)
+    #: ALTREAD1 D2 — reversals: a recorded transaction closed by a flagged row / a flagged row with nothing to reverse
+    transactions_reversed: int = 0
+    transactions_skipped_reversal: int = 0
+    #: ALTREAD1 D2 — the documented fields the ledger has no column for (interest, description, subtype), per created
+    #: transaction id — reported, not persisted ([FIND] in ALTREAD1_NOTES §2)
+    transaction_details: dict[str, dict] = field(default_factory=dict)
+    #: ALTREAD1 D1 — the transactions window read: (date_from, date_to, windows walked)
+    transactions_window: tuple | None = None
+    #: ALTREAD1 D1 — a paged read stopped by the page ceiling: resource → pages read (partial rows were used)
+    paging_ceilings: dict[str, int] = field(default_factory=dict)
+    #: ALTREAD1 D4 — the cost-basis feed: lots stored / unchanged / closed, or the error that stopped it
+    lots: dict | None = None
 
 
 @dataclass
@@ -317,10 +357,14 @@ async def _sync_positions(
     ``_sync_transactions`` can hang a transaction off the asset its matching
     position just resolved, without a second identifier lookup."""
     asset_by_key: dict[str, str] = {}
-    rows = await call_positions(
-        conn, org_id=org_id, environment=environment,
-        account_id=altruist_account_id, transport=transport,
-    )
+    try:
+        rows = await call_positions(
+            conn, org_id=org_id, environment=environment,
+            account_id=altruist_account_id, transport=transport,
+        )
+    except AltruistPagingCeiling as cap:      # D1: stop + record; the rows read so far are still synced
+        rows = cap.partial
+        result.paging_ceilings["positions"] = cap.pages
     for row in rows:
         ext_id = _position_external_id(altruist_account_id, row, as_of)
         key = _security_key(row)
@@ -365,18 +409,52 @@ async def _sync_transactions(
     conn, org_id: str, *, altruist_account_id: str, hollisworks_account_id: str,
     as_of: date, environment: str, transport: Any, asset_by_key: dict[str, str],
     result: AccountSyncResult, xwalk: str = SOURCE_SYSTEM_ALTRUIST, ledger: str = SOURCE_SYSTEM,
+    last_synced: date | None = None,
 ) -> None:
-    rows = await call_transactions(
-        conn, org_id=org_id, environment=environment,
-        account_id=altruist_account_id, transport=transport,
-    )
+    # D1 — an explicit window (the documented default is only the past month): the first sync looks back
+    # LOOKBACK_MONTHS, a later one starts at the last synced date minus 5 business days; walked in ≤ 1-month windows,
+    # every window paged; rows deduped by id across windows.
+    start = transactions_start(as_of, last_synced)
+    windows = transaction_windows(start, as_of)
+    result.transactions_window = (start, as_of, len(windows))
+    rows: list[dict] = []
+    seen_ids: set[str] = set()
+    for lo, hi in windows:
+        try:
+            batch = await call_transactions(
+                conn, org_id=org_id, environment=environment,
+                account_id=altruist_account_id, transport=transport, date_from=lo, date_to=hi,
+            )
+        except AltruistPagingCeiling as cap:
+            batch = cap.partial
+            result.paging_ceilings[f"transactions {lo.isoformat()}..{hi.isoformat()}"] = cap.pages
+        for row in batch:
+            key = _transaction_external_id(altruist_account_id, row)
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+            rows.append(row)
     for row in rows:
         ext_id = _transaction_external_id(altruist_account_id, row)
         try:
+            is_reversal = reversal_flag(row.get("cancellation_reversal_flag"))
             existing = await find_external_reference(
                 conn, org_id=org_id, source_system=xwalk,
                 external_id=ext_id, record_type="transaction",
             )
+            if is_reversal:
+                # D2 — the append-only ledger's own close: a flagged row whose transaction is recorded and current
+                # CLOSES it (valid_to = now(), no successor); nothing recorded → skipped (the feed names no
+                # original, so a reversal is never booked as a new trade nor matched to a guessed one).
+                closed = await _close_transaction(conn, org_id, existing) if existing else False
+                if closed:
+                    result.transactions_reversed += 1
+                else:
+                    result.transactions_skipped_reversal += 1
+                    result.transactions_errors.append(RowError(
+                        external_id=ext_id, reason="cancellation / reversal with no current recorded transaction to "
+                                                   "reverse — skipped, never booked as a new trade"))
+                continue
             if existing:
                 result.transactions_skipped_duplicate += 1
                 continue
@@ -425,15 +503,17 @@ async def _sync_transactions(
                 ))
                 continue
 
-            trade_date = row.get("trade_date")
-            if isinstance(trade_date, str):
-                trade_date = date.fromisoformat(trade_date)
-            settle_date = row.get("settle_date")
-            if isinstance(settle_date, str):
-                settle_date = date.fromisoformat(settle_date)
+            # D1 / D2 — transaction_date (documented YYYY/MM/DD; ISO accepted) → the trade date; a bad date is a
+            # per-row error, never a guess
+            try:
+                trade_date = parse_altruist_date(row.get("trade_date"))
+                settle_date = parse_altruist_date(row.get("settle_date"))
+            except ValueError as exc:
+                result.transactions_errors.append(RowError(external_id=ext_id, reason=str(exc)))
+                continue
             if not isinstance(trade_date, date):
                 result.transactions_errors.append(RowError(
-                    external_id=ext_id, reason=f"trade_date {row.get('trade_date')!r} "
+                    external_id=ext_id, reason=f"transaction_date {row.get('trade_date')!r} "
                     f"is not a usable date",
                 ))
                 continue
@@ -458,8 +538,48 @@ async def _sync_transactions(
             )
             result.transactions_created += 1
             result.transaction_ids.append(str(transaction_id))
+            result.transaction_details[str(transaction_id)] = {
+                "interest": row.get("interest"), "description": row.get("description"),
+                "subtype": row.get("subtype")}
         except (PortfolioError, ValueError) as exc:
             result.transactions_errors.append(RowError(external_id=ext_id, reason=str(exc)))
+
+
+async def _close_transaction(conn, org_id: str, transaction_id: str) -> bool:
+    """D2 — close a recorded, current feed transaction (``valid_to = now()``): the ledger's own close, no successor.
+    False when it is no longer current (already closed / corrected)."""
+    async with _OrgWrite(conn, org_id) as c:
+        closed = await c.fetchval(
+            "UPDATE portfolio.transactions SET valid_to = now() WHERE id = $1::uuid AND org_id = $2::uuid "
+            "AND valid_to IS NULL AND system_to IS NULL RETURNING id", str(transaction_id), org_id)
+    return closed is not None
+
+
+async def _last_synced_date(conn, org_id: str, hollisworks_account_id: str, ledger: str) -> date | None:
+    """D1 — the last synced date: the latest feed position snapshot of this account (the sync stamps its as-of date
+    on every position it writes). None → this is the account's first sync."""
+    async with _OrgWrite(conn, org_id) as c:
+        return await c.fetchval(
+            "SELECT max(as_of_date) FROM portfolio.positions WHERE org_id = $1::uuid AND account_id = $2::uuid "
+            "AND source_system = $3", org_id, hollisworks_account_id, ledger)
+
+
+async def _sync_cost_basis(conn, org_id: str, *, altruist_account_id: str, hollisworks_account_id: str,
+                           environment: str, transport: Any, ledger: str, as_of: date,
+                           result: AccountSyncResult) -> dict:
+    from services import custodian_lots as CL
+
+    try:
+        try:
+            rows = await call_cost_basis(conn, org_id=org_id, environment=environment,
+                                         account_id=altruist_account_id, transport=transport)
+        except AltruistPagingCeiling as cap:
+            rows = cap.partial
+            result.paging_ceilings["cost_basis"] = cap.pages
+        return await CL.store_lots(conn, org_id=org_id, account_id=hollisworks_account_id, source_system=ledger,
+                                   environment=environment, rows=rows, fallback_as_of=as_of)
+    except (AltruistOAuthError, PortfolioError, ValueError) as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 async def list_resolved_altruist_accounts(conn, *, org_id: str,
@@ -529,6 +649,7 @@ async def sync_resolved_accounts(
             altruist_account_id=altruist_account_id,
             hollisworks_account_id=hollisworks_account_id,
         )
+        last_synced = await _last_synced_date(conn, org_id, hollisworks_account_id, ledger)
         asset_by_key = await _sync_positions(
             conn, org_id, altruist_account_id=altruist_account_id,
             hollisworks_account_id=hollisworks_account_id,
@@ -540,7 +661,14 @@ async def sync_resolved_accounts(
             hollisworks_account_id=hollisworks_account_id, as_of=as_of,
             environment=environment, transport=transport,
             asset_by_key=asset_by_key, result=account_result, xwalk=xwalk, ledger=ledger,
+            last_synced=last_synced,
         )
+        # ALTREAD1 D4 — the account's tax lots from the cost-basis feed, stored as CUSTODIAN lots (never a Hollisworks
+        # lot); a failure is recorded on the account result, never fails the sync
+        account_result.lots = await _sync_cost_basis(
+            conn, org_id, altruist_account_id=altruist_account_id,
+            hollisworks_account_id=hollisworks_account_id, environment=environment, transport=transport,
+            ledger=ledger, as_of=as_of, result=account_result)
         # PORTENTRY1 (GAP-PORT-02) — the feed supersedes this account's one-time provisional import (precedence on
         # every shared holding key, then the provisional rows are closed). A failure here never fails the sync.
         if account_result.positions_created:
