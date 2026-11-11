@@ -344,6 +344,13 @@ This file starts with the email item below.
 ---
 
 
+## ALTREAD1 — the Altruist READ client matches Altruist's PUBLISHED Open API (developer.altruist.com, read 2026-11-11); cost basis (tax lots) + account balance; simulator + conformance on the documented shapes
+
+STATUS: IN PROGRESS — branch altread1-work (2026-11-11). Task 1 discovery DONE (docs/altruist/ALTREAD1_NOTES.md §1); Task 2 schema next.
+
+---
+
+
 ## CPSIM04 — the simulated custodian MOVES MONEY and the simulated BANKS answer: a person sends an approved payment to the simulator's transfers API and refreshes its status through the existing payment steps (counterparty simulator v1 COMPLETE)
 
 Branch cpsim04-work (2026-11-11). Notes: `docs/cpsim/CPSIM04_NOTES.md` (Task 1 findings, D1–D11 as built, reuse
