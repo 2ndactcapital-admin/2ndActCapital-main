@@ -153,8 +153,13 @@ def self_routes(check, find):
 
 
 def _section8(text: str) -> str:
+    """§8 only — from its heading to the NEXT top-level ``## `` heading (CPSIM04 FIX 1: cpsim04 added §9 Transfers
+    after it, and the old slice ran to the end of the file, counting §9's cash-type rows as §8 rows)."""
     i = text.find("## 8. Orders")
-    return text[i:] if i >= 0 else ""
+    if i < 0:
+        return ""
+    j = text.find("\n## ", i + 1)
+    return text[i:j] if j >= 0 else text[i:]
 
 
 def self_static(check, find):
@@ -1327,16 +1332,31 @@ async def y_governance(conn):
           all(sod.VERB_DUTIES.get(k) == "write" for k in metas),
           "Send / Import are declared NEVER (trades) for unattended runs and are NOT registered as actions — no "
           "workflow, agent or S29b step can reach them", f"{metas}")
+    # CPSIM04 FIX 1: the TRADE send / import, by module + function. cpsim04 added services.payment_custodian's OWN
+    # ``def send_to_custodian`` (the MONEY send — verify_cpsim04's governance scan proves its callers are only the two
+    # person routes in routers/payments.py); its definition line matched this name-based scan. A definition is not a
+    # call, and a call qualified to payment_custodian (PC.) is the money route — every OTHER reference to the name,
+    # bare or qualified, still counts as a trade caller (nothing looser than before).
     callers = []
     for p in (API_DIR / "services").rglob("*.py"):
+        if p.name == "custodian_execution.py":
+            continue
         t = _code_only(p.read_text(encoding="utf-8"))
-        if re.search(r"\bsend_to_custodian\(|\bimport_fills\(", t) and p.name != "custodian_execution.py":
-            callers.append(str(p.relative_to(API_DIR)))
+        for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_.]*\.)?\b(send_to_custodian|import_fills)\(", t):
+            pre = t[:m.start()].rsplit("\n", 1)[-1]
+            q = (m.group(1) or "").rstrip(".")
+            if re.match(r"\s*(async\s+)?def\s*$", pre) or q in ("PC", "payment_custodian", "services.payment_custodian"):
+                continue
+            callers.append(f"{p.relative_to(API_DIR)}:{q + '.' if q else ''}{m.group(2)}")
     for p in [API_DIR / "workflow_scheduler_tick.py", *(API_DIR / "routers").glob("*.py")]:
         t = _code_only(p.read_text(encoding="utf-8")) if p.exists() else ""
         if re.search(r"\bCX\.send_to_custodian\(|\bCX\.import_fills\(|custodian_execution\.send_to_custodian",
                      t) and p.name != "execution.py":
             callers.append(str(p.relative_to(API_DIR)))
+    ctl = _code_only((API_DIR / "routers" / "execution.py").read_text(encoding="utf-8"))
+    check(bool(re.search(r"\bCX\.send_to_custodian\(", ctl)) and bool(re.search(r"\bCX\.import_fills\(", ctl)),
+          "the scan's positive control: it sees the two person routes' CX.send_to_custodian / CX.import_fills calls "
+          "in routers/execution.py (so an empty caller list below is real)")
     keys = [a.key for a in REGISTRY.all() if "custodian" in a.key or "execution." in a.key]
     check(not callers and not keys, "no unattended path can send: the only callers of send / import are the two "
           "person routes in routers/execution.py; no registered action, workflow tick or trigger names them",
