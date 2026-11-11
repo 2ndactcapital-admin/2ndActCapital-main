@@ -169,7 +169,9 @@ def self_routes(check, find):
     drift = VS.still_gated(o, keys)
     check(not drift, "cpsim02's routes all still exist today with the same gate", f"{drift[:4]}")
     data = json.loads(_src("docs/AUTHZ1_ROUTES.json") or "{}")
-    sim = {(r.get("method"), r.get("path")) for r in data.get("simulator_routes", [])}
+    # cpsim02 fix 1 (B): each JSON row carries "methods" (a list, as authz1_routes.simulator_routes() writes it)
+    sim = {(m, r.get("path")) for r in data.get("simulator_routes", []) for m in (r.get("methods") or [])}
+    check(len(sim) > 0, "docs/AUTHZ1_ROUTES.json carries a non-empty simulator_routes section", f"{len(sim)}")
     check(SIM_ROUTES <= sim, "the six Altruist-compatible simulator routes are listed in the simulator section of "
           "docs/AUTHZ1_ROUTES (own auth, not app routes)", f"missing={sorted(SIM_ROUTES - sim)}")
 
