@@ -576,6 +576,11 @@ def expectation(persona: str, rule: dict, method: str) -> str:
     if kind == "internal":
         return "allow" if persona in ("staff", "org_admin") else "deny"
     if kind == "internal_perm":
+        if rule.get("staff_bypass") is False:
+            # CPSIM01 FIX 1 — require_internal + require_permission: an internal persona holding EVERY named
+            # permission; staff has no bypass here, and a client role (member / other_org) never.
+            return "allow" if persona in ("staff", "org_admin") and set(rule["all_of"]) <= PERSONA_PERMS[persona] \
+                else "deny"
         if persona == "staff":
             return "allow"
         return "allow" if persona == "org_admin" and PERSONA_PERMS[persona] & set(rule["any_of"]) else "deny"
@@ -876,7 +881,7 @@ async def y_real_users(conn):
     now = None
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
-        now = await C.effective_report(conn, legacy=False)
+        now = await C.effective_report(conn, legacy=False, profiles=True)
         principals = {}
         for email, r in now.items():
             p = await load_principal(conn, r["user_id"])
@@ -894,6 +899,19 @@ async def y_real_users(conn):
         if cur["status"] != "active":
             check(p is not None and not p.admitted and p.permissions == frozenset() and cur["effective"] == [],
                   f"{email}: {cur['status']} → no effective permissions (Principal and recompute)")
+    # CPSIM01 FIX 1: the recompute now reads PERMS1's profile + permission-set source (it read roles only, so a real
+    # support_staff user whose 'CSA / Ops' profile carries manage_documents + view_marketplace showed a 2-key diff).
+    # The source must be real and non-vacuous: at least one current user holds a key ONLY through it, and the copy of
+    # the non-client role names equals the code's.
+    from services.authz import INTERNAL_ROLE_NAMES, STAFF_ROLE_NAMES
+    check(C.NON_CLIENT_ROLE_NAMES == (STAFF_ROLE_NAMES | INTERNAL_ROLE_NAMES),
+          "the recompute's non-client role names equal services.authz STAFF_ROLE_NAMES | INTERNAL_ROLE_NAMES",
+          f"{sorted(C.NON_CLIENT_ROLE_NAMES ^ (STAFF_ROLE_NAMES | INTERNAL_ROLE_NAMES))}")
+    via_profile = {e: cur["sources"]["profile_or_sets_only"] for e, cur in now.items()
+                   if cur["status"] == "active" and cur["sources"]["profile_or_sets_only"]}
+    check(bool(via_profile), "the recompute's profile / permission-set source is exercised: at least one real user "
+          "holds a permission ONLY through it (and the Principal agrees, above)",
+          f"{ {e: v[:4] for e, v in list(via_profile.items())[:4]} }")
     # The Task 3 report stays the record of AUTHZ1's own transition (what default-allow had been granting) — a
     # historical document, not live state: only its 'lost' accounting is asserted, never its counts.
     for email, r in report["users"].items():

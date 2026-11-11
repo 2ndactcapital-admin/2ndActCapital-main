@@ -325,8 +325,45 @@ def gates(d: dict) -> dict:
     return {(tuple(r.get("methods") or []), r["path"]): r for r in (d or {}).get("routes", [])}
 
 
+# CPSIM01 FIX 1 — two EXPECTATION corrections in docs/AUTHZ1_ROUTES.json with NO gate change (the `after` text is
+# byte-identical): (1) require_internal + require_permission(X) had been recorded as rule "perm" (a member holding X
+# "allowed") — it is internal_perm, staff_bypass false; (2) the workflow helpers' own Super Admin bypass had been
+# recorded as rule "super" — the gate is the one permission below. An older sprint's END-ref record carrying the old
+# form compares equal to the corrected one ONLY when its `after` gate text is exactly the shape named; anything else
+# is still drift.
+FIX1_WORKFLOW_PERMS = {
+    ("GET", "/api/v1/admin/workflow-runs"): "view_workflow_runs",
+    ("GET", "/api/v1/admin/workflow-runs/{run_id}"): "view_workflow_runs",
+    ("POST", "/api/v1/admin/workflow-runs/{run_id}/steps/{step_id}/decision"): "review_agent_proposals",
+    ("POST", "/api/v1/admin/workflow-triggers"): "configure_workflow_triggers",
+    ("POST", "/api/v1/admin/workflow-triggers/preview"): "configure_workflow_triggers",
+    ("GET", "/api/v1/admin/workflows"): "author_workflows",
+    ("POST", "/api/v1/admin/workflows"): "author_workflows",
+    ("GET", "/api/v1/admin/workflows/{definition_id}"): "author_workflows",
+    ("DELETE", "/api/v1/admin/workflows/{definition_id}"): "author_workflows",
+    ("POST", "/api/v1/admin/workflows/{definition_id}/versions"): "author_workflows",
+    ("GET", "/api/v1/admin/workflows/{definition_id}/versions"): "author_workflows",
+}
+
+
+def fix1_expect(rec: dict):
+    e = rec.get("expect")
+    after = rec.get("after") or ""
+    if not isinstance(e, dict):
+        return e
+    m = re.fullmatch(r"authz (\w+); internal", after)
+    if e.get("rule") == "perm" and m and e.get("any_of") == [m.group(1)] and not e.get("scoped"):
+        x = m.group(1)
+        return {"all_of": [x], "any_of": [x], "rule": "internal_perm", "staff_bypass": False}
+    if e == {"rule": "super"} and after == "super_admin; workflow profile-axis":
+        perm = FIX1_WORKFLOW_PERMS.get(((rec.get("methods") or [""])[0], rec.get("path")))
+        if perm:
+            return {"any_of": [perm], "rule": "perm", "scoped": False}
+    return e
+
+
 def gate_of(rec: dict) -> tuple:
-    return (rec.get("after"), json.dumps(rec.get("expect"), sort_keys=True))
+    return (rec.get("after"), json.dumps(fix1_expect(rec), sort_keys=True))
 
 
 def routes_at(ref: str) -> dict:

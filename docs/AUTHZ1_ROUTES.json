@@ -1605,11 +1605,14 @@
    "before": "token-claim manage_deals",
    "before_effect": "OPEN (token claim absent \u2192 allow)",
    "expect": {
+    "all_of": [
+     "manage_deals"
+    ],
     "any_of": [
      "manage_deals"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -3736,11 +3739,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -3802,11 +3808,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -3890,11 +3899,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -7545,11 +7557,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -7567,11 +7582,14 @@
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "manage_billing"
+    ],
     "any_of": [
      "manage_billing"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -7589,11 +7607,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -7611,11 +7632,14 @@
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "manage_billing"
+    ],
     "any_of": [
      "manage_billing"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -7633,11 +7657,14 @@
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "manage_billing"
+    ],
     "any_of": [
      "manage_billing"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -7655,11 +7682,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -7677,11 +7707,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -7699,11 +7732,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -7721,11 +7757,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -7743,11 +7782,14 @@
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "manage_billing"
+    ],
     "any_of": [
      "manage_billing"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -7765,11 +7807,14 @@
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "manage_billing"
+    ],
     "any_of": [
      "manage_billing"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -7787,11 +7832,14 @@
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "manage_billing"
+    ],
     "any_of": [
      "manage_billing"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -7809,11 +7857,14 @@
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "manage_billing"
+    ],
     "any_of": [
      "manage_billing"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -7831,11 +7882,14 @@
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "manage_billing"
+    ],
     "any_of": [
      "manage_billing"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -7853,11 +7907,14 @@
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "manage_billing"
+    ],
     "any_of": [
      "manage_billing"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": true,
    "methods": [
@@ -7875,11 +7932,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -7897,11 +7957,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -10013,7 +10076,11 @@
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "author_workflows"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10031,7 +10098,11 @@
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "author_workflows"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10049,7 +10120,11 @@
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "author_workflows"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10067,7 +10142,11 @@
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "author_workflows"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10085,7 +10164,11 @@
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "author_workflows"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10103,7 +10186,11 @@
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "view_workflow_runs"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10121,7 +10208,11 @@
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "view_workflow_runs"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10139,7 +10230,11 @@
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "review_agent_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10175,7 +10270,11 @@
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "configure_workflow_triggers"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10193,7 +10292,11 @@
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "configure_workflow_triggers"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10247,7 +10350,11 @@
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
-    "rule": "super"
+    "any_of": [
+     "author_workflows"
+    ],
+    "rule": "perm",
+    "scoped": false
    },
    "find": false,
    "methods": [
@@ -10419,11 +10526,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -10881,11 +10991,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
@@ -10903,11 +11016,14 @@
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
+    "all_of": [
+     "view_portfolio"
+    ],
     "any_of": [
      "view_portfolio"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm",
+    "staff_bypass": false
    },
    "find": false,
    "methods": [
