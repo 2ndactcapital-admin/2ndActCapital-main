@@ -346,7 +346,7 @@ This file starts with the email item below.
 
 ## ALTREAD1 — the Altruist READ client matches Altruist's PUBLISHED Open API (developer.altruist.com, read 2026-11-11); cost basis (tax lots) + account balance; simulator + conformance on the documented shapes
 
-STATUS: IN PROGRESS — branch altread1-work (2026-11-11). Task 1 discovery DONE (docs/altruist/ALTREAD1_NOTES.md §1); Task 2 schema next.
+STATUS: IN PROGRESS — branch altread1-work (2026-11-11). Task 1 discovery DONE (docs/altruist/ALTREAD1_NOTES.md §1). Task 2 schema APPLIED (docs/altread1_part1.sql; scripts/_apply_altread1.py --all 31/31 read back from the catalog; snapshot refreshed). Task 3 client next.
 
 ---
 
