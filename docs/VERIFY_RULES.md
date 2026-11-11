@@ -171,3 +171,21 @@ it reads the LAST line that STARTS with `TOTAL: ` (anchored, multiline), and it
 is a pass only when FAIL is 0, PASS is above 0 and the exit code is 0. A missing
 final line, a timeout (no exit code) or an exit code that disagrees with the
 line all fail. Never write a second, local TOTAL regex.
+
+## Regression mode: sprint verifies run nested verifies `--self-checks-only`; ONE full regression at the end of the sprint cycle (CPSIM04 FIX 1, 2026-11-11)
+
+The nested regressions took most of every sprint's verify time. The shared helper every verify uses to run a nested
+verify — `VT.run_nested` in `apps/api/scripts/_verify_total.py` — honours `VERIFY_REGRESSIONS`:
+
+- **unset or `fast` (the DEFAULT — what `run_sprint.sh` gets):** each nested verify runs with `--self-checks-only`
+  (its static / self-check proof, seconds; timeout capped at 600 s), still judged by its OWN final `TOTAL:` line and
+  exit code, still a `[FAIL]` on any FAIL. One line is printed:
+  `[INFO] full regression deferred to the cycle-end run (VERIFY_REGRESSIONS=full)`.
+- **`full`:** today's behaviour exactly — flat, after teardown, `VERIFY_NESTED=1`, the caller's 2700 s.
+- Any other value is refused (`ValueError`) — a typo never silently picks a mode.
+- A nested script with no `--self-checks-only` mode is a FAIL ("no --self-checks-only") in fast mode — never silently
+  skipped. No nested script is removed from any list; no verify's own assertions change.
+
+`scripts/run_regressions.sh` exports `VERIFY_REGRESSIONS=full` for every verify it runs: that run, unattended at the
+end of each sprint cycle (clear of 07:00 UTC), is where the full regressions are proven. Proof of the helper:
+`verify_cpsim04.py --self-checks-only` section "Regression mode" (temp stub verifies, both modes).

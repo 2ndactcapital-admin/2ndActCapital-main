@@ -161,8 +161,14 @@ def _section9(text: str) -> str:
     return text[i:] if i >= 0 else ""
 
 
+def _flat(text: str) -> str:
+    """CPSIM04 FIX 1 (D1 / D2): docs are hard-wrapped markdown — a fact split across a line break is still stated.
+    Whitespace runs collapse to one space; the words themselves are matched exactly."""
+    return re.sub(r"\s+", " ", text or "")
+
+
 def self_static(check, find):
-    n = _src("docs/cpsim/CPSIM04_NOTES.md")
+    n = _flat(_src("docs/cpsim/CPSIM04_NOTES.md"))
     for d in ("D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11"):
         check(f"| {d} |" in n, f"CPSIM04_NOTES records {d} as built")
     for w in ("CPSIM_BANK", "buy", "sell", "adjustment", "payment_events_human_chk", "S30 floor", "DRY RUN",
@@ -189,8 +195,12 @@ def self_static(check, find):
     adm = _src("docs/cpsim/CPSIM_ADMIN.md")
     check(all(w in adm for w in ("Transfers", "Received", "Record member consent", "cpsim04_capabilities.py --apply",
                                  "altruist_simulator")), "CPSIM_ADMIN.md: transfers, banks, consent, the operator steps")
-    cp = _src("docs/cash/CASH_PAYMENTS.md")
-    check("a person approves, sends and refreshes" in cp, "CASH_PAYMENTS.md: the simulator adapter beside manual")
+    cp = _flat(_src("docs/cash/CASH_PAYMENTS.md"))
+    cpl = cp.lower()
+    check("a person approves, sends and refreshes" in cpl and "**manual** is the default route" in cpl
+          and "`altruist_simulator`" in cp and "stay available beside it" in cp,
+          "CASH_PAYMENTS.md: the simulator adapter beside manual (a person approves, sends and refreshes; manual "
+          "still the default; the sheet / Confirm sent beside it)")
     dd = _src("docs/cpsim/COUNTERPARTY_SIMULATOR_DESIGN_v1.md")
     check("v1 COMPLETE" in dd and "v2" in dd, "the design doc: v1 COMPLETE and the v2 list")
     pa = _code_only(_src("apps/api/services/payment_adapters.py"))
@@ -199,9 +209,73 @@ def self_static(check, find):
           "the ONLY connected payment adapter is the simulator's (key altruist_simulator — never altruist)")
 
 
+def self_regression_mode(check):
+    """CPSIM04 FIX 1 task 0 — the shared nested-run helper honours VERIFY_REGRESSIONS, proven on STUB verifies
+    (temp files), never a real verify."""
+    import tempfile
+    import _verify_total as VT
+    print("── [Y] Regression mode: VT.run_nested honours VERIFY_REGRESSIONS (fast = --self-checks-only, the default; "
+          "full = the full nested run); proven on temp stub verifies ──")
+    stub = (
+        "import sys, os\n"
+        "mode = 'self' if '--self-checks-only' in sys.argv else 'full'\n"
+        "print('[INFO] stub mode=' + mode + ' nested=' + os.environ.get('VERIFY_NESTED', ''))\n"
+        "fail = int(os.environ.get('STUB_FAIL_' + mode.upper(), '0'))\n"
+        "print('[PASS] stub ' + mode)\n"
+        "print('[FAIL] stub failure') if fail else None\n"
+        "print('TOTAL: ' + ('3' if mode == 'self' else '40') + ' PASS, ' + str(fail) + ' FAIL')\n"
+        "sys.exit(1 if fail else 0)\n"
+    )
+    saved = os.environ.get("VERIFY_REGRESSIONS")
+    with tempfile.TemporaryDirectory() as td:
+        good = pathlib.Path(td) / "verify_stub_good.py"
+        good.write_text("# supports --self-checks-only\n" + stub, encoding="utf-8")
+        bare = pathlib.Path(td) / "verify_stub_bare.py"
+        bare.write_text(stub.replace("'--self-checks-only'", "'--self' + '-checks-only'"), encoding="utf-8")
+        try:
+            os.environ.pop("VERIFY_REGRESSIONS", None)
+            check(VT.regression_mode() == "fast", "VERIFY_REGRESSIONS unset → fast (the default)")
+            t, out, _e, code = VT.run_nested(good, timeout=60)
+            check(t.ok and "stub mode=self nested=1" in out and t.passed == 3,
+                  "fast: the stub ran with --self-checks-only + VERIFY_NESTED=1, judged by its own TOTAL", f"{t} {out!r}")
+            t, out, _e, code = VT.run_nested(good, timeout=60, env_extra={"STUB_FAIL_SELF": "1"})
+            check(not t.ok and t.failed == 1, "fast: a FAIL in the self-checks is still a FAIL", f"{t}")
+            t, out, _e, code = VT.run_nested(bare, timeout=60)
+            check(not t.ok and "no --self-checks-only" in t.reason and code == 2,
+                  "fast: a nested script with no --self-checks-only is a FAIL (never silently skipped)", f"{t}")
+            os.environ["VERIFY_REGRESSIONS"] = "full"
+            check(VT.regression_mode() == "full", "VERIFY_REGRESSIONS=full → full")
+            t, out, _e, code = VT.run_nested(good, timeout=60)
+            check(t.ok and "stub mode=full nested=1" in out and t.passed == 40,
+                  "full: the stub ran WITHOUT --self-checks-only (today's behaviour), VERIFY_NESTED=1", f"{t} {out!r}")
+            t, out, _e, code = VT.run_nested(bare, timeout=60)
+            check(t.ok, "full: a script with no --self-checks-only still runs in full", f"{t}")
+            os.environ["VERIFY_REGRESSIONS"] = "fsat"
+            try:
+                VT.regression_mode()
+                check(False, "an unknown VERIFY_REGRESSIONS value is refused")
+            except ValueError:
+                check(True, "an unknown VERIFY_REGRESSIONS value is refused")
+        finally:
+            if saved is None:
+                os.environ.pop("VERIFY_REGRESSIONS", None)
+            else:
+                os.environ["VERIFY_REGRESSIONS"] = saved
+    rr = _src("scripts/run_regressions.sh")
+    check(bool(re.search(r"^export VERIFY_REGRESSIONS=full$", rr, re.M))
+          and 'VERIFY_REGRESSIONS=full VERIFY_NESTED=1 timeout "$TIMEOUT_S"' in rr,
+          "scripts/run_regressions.sh runs every verify with VERIFY_REGRESSIONS=full")
+    vr = _src("docs/VERIFY_RULES.md")
+    check("VERIFY_REGRESSIONS" in vr and "--self-checks-only" in vr, "docs/VERIFY_RULES.md states the regression-mode rule")
+    ps = _src("docs/PROJECT_STATUS.md")
+    check("full regression: scripts/run_regressions.sh at the end of each sprint cycle" in ps,
+          "PROJECT_STATUS names the operator step (full regression at the end of each sprint cycle)")
+
+
 def self_checks(check, find):
     self_routes(check, find)
     self_static(check, find)
+    self_regression_mode(check)
 
 
 if __name__ == "__main__" and VS.requested():
@@ -2193,12 +2267,16 @@ async def y_front_end(conn):
 
 
 def regression():
-    section("[Y] Regressions — each ONCE, flat, AFTER teardown, VERIFY_NESTED=1, 2700 s, its OWN final TOTAL line")
+    mode = VT.regression_mode()
+    section(f"[Y] Regressions — each ONCE, flat, AFTER teardown, VERIFY_NESTED=1, its OWN final TOTAL line "
+            f"(VERIFY_REGRESSIONS={mode}: {'full run, 2700 s' if mode == 'full' else '--self-checks-only, 600 s'})")
     for script in REGRESSIONS:
         t, out, err, code = VT.run_nested(HERE / script, cwd=REPO, timeout=2700, env_extra={"SKIP_BUILD": "1"})
         fails = [ln for ln in out.splitlines() if ln.lstrip().startswith("[FAIL]")]
-        check(bool(t.ok) and not fails, f"{script}: 0 FAIL (its own final TOTAL line and exit code)",
+        check(bool(t.ok) and not fails, f"{script}: 0 FAIL (its own final TOTAL line and exit code)"
+              + (" [--self-checks-only]" if mode == "fast" else ""),
               f"{t.detail()}; {fails[:3]} {err[-200:] if not t.line else ''}")
+        print(f"[INFO] {script} ({mode}): {t.line.strip() if t.line else 'no TOTAL line'}")
 
 
 async def run(name, fn, *args):

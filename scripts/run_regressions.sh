@@ -9,7 +9,7 @@
 # per line, resolved in apps/api/scripts/; blank lines and # comments ignored),
 # ONE AFTER ANOTHER, in the foreground, each as
 #
-#     VERIFY_NESTED=1 timeout 1800 doppler run -p hollisworks -c prd -- \
+#     VERIFY_REGRESSIONS=full VERIFY_NESTED=1 timeout 1800 doppler run -p hollisworks -c prd -- \
 #         apps/api/venv/bin/python -u apps/api/scripts/<name>
 #
 # with its full output in sprint_prompts/logs/regressions/<YYYY-MM-DD>/<name>.out.
@@ -39,6 +39,10 @@
 #   REGRESSION_SUMMARY_OUT   the summary file         (sprint_prompts/logs/regressions_<date>.out)
 #   REGRESSION_WORKER_CHECK  command printing the number of live laptop workers
 set -u
+
+# CPSIM04 FIX 1: this IS the cycle-end full regression — every verify it runs (and every verify those nest) runs
+# its nested regressions in full, not the sprint-time --self-checks-only fast mode (apps/api/scripts/_verify_total.py).
+export VERIFY_REGRESSIONS=full
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 2
@@ -124,7 +128,7 @@ for name in "${names[@]}"; do
   out="$LOG_DIR/$name.out"
   start=$(date +%s)
   # shellcheck disable=SC2086  # RUNNER is a deliberate word-split command prefix
-  VERIFY_NESTED=1 timeout "$TIMEOUT_S" $RUNNER "$SCRIPTS_DIR/$name" >"$out" 2>&1 </dev/null
+  VERIFY_REGRESSIONS=full VERIFY_NESTED=1 timeout "$TIMEOUT_S" $RUNNER "$SCRIPTS_DIR/$name" >"$out" 2>&1 </dev/null
   rc=$?
   secs=$(( $(date +%s) - start ))
   # the script's OWN final TOTAL line (anchored; the last one — _verify_total.final_total)

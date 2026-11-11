@@ -387,6 +387,7 @@ script). Payments guide: `docs/cash/CASH_PAYMENTS.md` (Adapters).
   (no to-do; later events raise one); fills move cash only where the book has a cash row; cpsim01's Bank details tab
   still shows the generated fake numbers in full (cpsim01's design, unchanged).
 
+- **Operator step (CPSIM04 FIX 1, regression mode).** full regression: scripts/run_regressions.sh at the end of each sprint cycle — unattended, clear of 07:00 UTC. Sprint verifies now run their nested verifies `--self-checks-only` by default (`VERIFY_REGRESSIONS` unset / `fast`); `run_regressions.sh` sets `VERIFY_REGRESSIONS=full` (docs/VERIFY_RULES.md).
 - **UPDATE (fix 1, 2026-11-11, IN PROGRESS).** verify_cpsim04 run 1: TOTAL 257 PASS, 9 FAIL (D1, D2, R×3, G, C + nested verify_cpsim03 2 FAIL, verify_authz1 3 FAIL). Fix 1 decisions in CPSIM04_NOTES "Fix 1 findings". Status: being fixed.
 
 ## CPSIM03 — the simulated custodian TRADES: a person sends an approved instruction to the simulated Altruist-compatible orders API, imports the fills through enter_fill, reconciles against the synced feed
