@@ -153,6 +153,21 @@ function legacyDefaultAllowOnly(me) {
   return legacyVisible(me).filter((h) => !without.includes(h));
 }
 
+// CPSIM02 Task 9 — describe EVERY gate shape menuVisibility.mjs defines: {roles}, {perm[, strict]},
+// {staff[, perm], strict}, {internal[, perm], strict}, {anyOf, strict}, {adminArea}. The old ternary fell through to
+// `roles.join` for {internal}, {anyOf} and {adminArea} and crashed. An unrecognised shape is named, never a crash.
+function describeGate(g) {
+  if (!g) return "none";
+  const strict = g.strict ? " (strict)" : "";
+  if (g.adminArea) return "adminArea";
+  if (g.staff) return `staff${g.perm ? ` or perm:${g.perm}` : ""}${strict}`;
+  if (g.internal) return `internal${g.perm ? ` and perm:${g.perm}` : ""}${strict}`;
+  if (Array.isArray(g.anyOf)) return `anyOf:${g.anyOf.join("|")}${strict}`;
+  if (g.perm) return `perm:${g.perm}${strict}`;
+  if (Array.isArray(g.roles)) return `roles:${g.roles.join("|")}`;
+  return `unknown:${Object.keys(g).sort().join(",")}`;
+}
+
 const result = {
   allHrefs: hrefs(MENU_ITEMS),
   // BUGFIX1 hides these from EVERY menu on purpose (no page exists yet).
@@ -164,13 +179,7 @@ const result = {
   gates: MENU_ITEMS.map((i) => ({
     href: i.href,
     label: i.label,
-    gate: i.gate
-      ? i.gate.staff
-        ? `staff${i.gate.perm ? ` or perm:${i.gate.perm}` : ""} (strict)`
-        : i.gate.perm
-        ? `perm:${i.gate.perm}${i.gate.strict ? " (strict)" : ""}`
-        : `roles:${i.gate.roles.join("|")}`
-      : "none",
+    gate: describeGate(i.gate),
   })),
 
   superAdminNoProfiles: {
@@ -208,7 +217,11 @@ const result = {
     const handLoss = [...(AUTHZ1_LEGACY_LOSS[name] ?? [])].sort();
     const expectedLoss = legacyDefaultAllowOnly(me)
       .filter((h) => !strictHrefs.has(h) && !COMING_SOON.includes(h)).sort();
-    const handFloor = handLoss.every((h) => expectedLoss.includes(h));
+    // CPSIM02 Task 9 — the hand floor applies only to items the legacy rule STILL governs: an item a later sprint
+    // moved behind a strict / staff gate (BUGFIX2: billing-groups, custody-import) or removed from MENU_ITEMS
+    // (/admin/workflows became a strict tab) left the comparison's domain exactly like strictHrefs above.
+    const legacyDomain = new Set(MENU_ITEMS.filter((i) => !i.gate?.strict && !i.gate?.staff).map((i) => i.href));
+    const handFloor = handLoss.filter((h) => legacyDomain.has(h)).every((h) => expectedLoss.includes(h));
     return {
       name, now, before, unchanged: sameSet(now, before), lost, expected_loss: expectedLoss,
       hand_loss: handLoss, hand_floor: handFloor,
