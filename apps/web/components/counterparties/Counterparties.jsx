@@ -6,6 +6,7 @@ import {
   exportHref, groupsOf, labelOf, lastFourRef, liveKey, rejectionRows, shortDate, tabsFor, templateHref, transferRow,
   typeOf, vocab,
 } from "@/lib/counterparties.mjs";
+import { refreshExpiryText } from "@/lib/custodianFeed.mjs";
 
 // CPSIM01 — Admin → Counterparties (Super Admin): the registry of SIMULATED counterparties. Every screen carries the
 // SIMULATED banner; every write control renders only inside canWrite(envelope) (exactly true — fails closed); labels,
@@ -475,12 +476,15 @@ export function ConnectionsTab({ id, initialConnections }) {
       {rows.length ? (
         <table className="mt-2 w-full text-left text-sm" data-testid="connections-table">
           <thead className="text-[#64748B]"><tr><th>Organization</th><th>Test</th><th>Points here</th><th>Connection</th>
-            <th>Last sync</th><th /></tr></thead>
+            <th>Refresh token</th><th>Last sync</th><th /></tr></thead>
           <tbody>{rows.map((o) => (
             <tr key={o.id} className="border-t border-[#ece8dd]">
               <td className="py-1">{o.name}</td><td>{o.is_test ? "Test" : "Real (demo households only)"}</td>
               <td>{o.points_here ? "Yes" : o.counterparty_slug ? `No (${o.counterparty_slug})` : "No"}</td>
               <td>{o.connection_status || "none"}</td>
+              {(() => { const x = refreshExpiryText(o); return (
+                <td data-testid={x?.expired ? "refresh-expired" : "refresh-expiry"} className={x?.expired ? "text-[#9B2335]" : ""}>
+                  {x ? x.text : ""}</td>); })()}
               <td>{o.last_sync ? `${o.last_sync.accounts_synced ?? 0} account(s), ${o.last_sync.positions_created ?? 0} position(s)` : ""}</td>
               <td>{w ? (
                 <span className="flex flex-wrap gap-1">

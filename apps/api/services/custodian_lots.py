@@ -38,6 +38,9 @@ SOURCES = ("altruist", "altruist_simulator")
 T_BAL = "public.account_custodian_balances"
 T_LOTS = "portfolio.custodian_tax_lots"
 LOT_FIELDS = ("quantity", "market_value", "cost_basis_unadjusted", "cost_basis_adjusted", "unrealized_gain_loss")
+#: the reconciliation's per-security result — the UI shows these labels (Rule 1)
+RECON_STATUS_LABELS = {"match": "Matches", "differs": "Differs", "only_custodian": "Custodian only",
+                       "only_hollisworks": "Hollisworks only"}
 
 
 def _s(v) -> str | None:
@@ -295,7 +298,7 @@ async def reconcile(conn, org_id: str, account_id: str) -> dict:
             status = "match"
         else:
             status = "differs"
-        rows.append({"key": k, "label": s["label"] or k, "status": status,
+        rows.append({"key": k, "label": s["label"] or k, "status": status, "status_label": RECON_STATUS_LABELS[status],
                      "hollisworks": {"quantity": _s(s["hw_quantity"]), "basis": _s(s["hw_basis"]) if
                                      s["hw_basis_known"] else None, "lots": s["hw_lots"]},
                      "custodian": {"quantity": _s(s["cu_quantity"]), "basis": _s(s["cu_basis"]) if

@@ -12,8 +12,8 @@
 
 import { useState } from "react";
 import {
-  accountChangeBody, changeControls, custodianOptions, custodianSources, householdChangeBody, labelOf, methodOptions,
-  needsTarget, preferenceOptions, requestControl, vocab,
+  accountChangeBody, changeControls, custodianOptions, custodianSources, householdChangeBody, labelOf, lotSourceControl,
+  lotSourceOptions, methodOptions, needsTarget, preferenceOptions, requestControl, vocab,
 } from "@/lib/lotMethod.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -74,7 +74,7 @@ export function RequestForm({ envelope, kind, onSubmit }) {
   const prefs = preferenceOptions(envelope);
   const [form, setForm] = useState({ lot_method: "", gain_preference: "", realize_gains_target: "", reason: "",
     lot_method_override: "", gain_preference_override: "", custodian_cost_basis_method: "unknown",
-    custodian_method_source: "", average_cost_security_ids: [] });
+    custodian_method_source: "", average_cost_security_ids: [], lot_source: "" });
   const set = (k, val) => setForm({ ...form, [k]: val });
   const pref = kind === "household" ? form.gain_preference : form.gain_preference_override;
   const targetOk = !needsTarget(pref) || /^\d+(\.\d+)?$/.test(form.realize_gains_target.trim());
@@ -119,6 +119,11 @@ export function RequestForm({ envelope, kind, onSubmit }) {
           <select className={input} value={form.custodian_method_source} onChange={(e) => set("custodian_method_source", e.target.value)}>
             <option value="">Where it came from</option>
             {sources.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>) : null}
+        {lotSourceControl(envelope) ? (
+          <select className={input} data-testid="lot-source-select" value={form.lot_source} onChange={(e) => set("lot_source", e.target.value)}>
+            <option value="">Lots used by the tax engine: keep</option>
+            {lotSourceOptions(envelope).map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
           </select>) : null}
         <input className={`${input} min-w-[16rem]`} placeholder="Reason" value={form.reason} onChange={(e) => set("reason", e.target.value)} />
       </div>
@@ -167,6 +172,9 @@ export default function LotMethodPanel({ initialEnvelope, kind = "household" }) 
             <p className="mt-1 text-xs text-text-muted">Custodian default: {labelOf(v.custodian_methods, eff.custodian_cost_basis_method)}
               {eff.custodian_method_source ? ` (${labelOf(v.custodian_sources, eff.custodian_method_source)})` : ""}
               {Array.isArray(eff.average_cost_security_ids) && eff.average_cost_security_ids.length ? ` · ${eff.average_cost_security_ids.length} security(ies) at average cost` : ""}</p>
+          ) : null}
+          {kind === "account" && eff.lot_source ? (
+            <p className="mt-1 text-xs text-text-muted" data-testid="lot-source-effective">Lots used by the tax engine: {labelOf(v.lot_sources, eff.lot_source)}</p>
           ) : null}
           {eff.mismatch ? <p className="mt-1 text-xs text-[#9B2335]">{eff.mismatch.message}</p> : null}
           {v.precedence ? <p className="mt-1 text-xs text-text-muted">Precedence: {v.precedence}</p> : null}

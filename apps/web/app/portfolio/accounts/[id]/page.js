@@ -7,6 +7,7 @@ import AccountTaxPanel from "@/components/tax/AccountTaxPanel";
 import HeldAwayPanel from "@/components/heldaway/HeldAwayPanel";
 import AuthorityPanel from "@/components/authority/AuthorityPanel";
 import LotMethodPanel from "@/components/lotmethod/LotMethodPanel";
+import CustodianFeedPanel from "@/components/custodian/CustodianFeedPanel";
 import OneOffForm from "@/components/authority/OneOffForm";
 import { RecordDisclosures } from "@/components/disclosures/Disclosures";
 import SimulatedCustodianBadge from "@/components/counterparties/SimulatedCustodianBadge";
@@ -63,6 +64,16 @@ export default async function AccountPage({ params }) {
       lotMethod = null;
     }
   }
+  // ALTREAD1 — what the custodian reports: its balance (as of its date), its lots, the reconciliation (no
+  // view_proposals or another family's account: no panel)
+  let custodianFeed = null;
+  if (!error) {
+    try {
+      custodianFeed = await fetchAPI(`/api/v1/custodian-feed/accounts/${encodeURIComponent(id)}`);
+    } catch {
+      custodianFeed = null;
+    }
+  }
   // DISCLOSURES1 — the account's disclosures: in force for it, and its overrides (no view_disclosures: no panel)
   let disclosures = null;
   if (!error) {
@@ -86,6 +97,7 @@ export default async function AccountPage({ params }) {
             {heldAway ? <HeldAwayPanel initialEnvelope={heldAway} /> : null}
             {authority ? <AuthorityPanel initialEnvelope={authority} kind="account" /> : null}
             {lotMethod ? <LotMethodPanel initialEnvelope={lotMethod} kind="account" /> : null}
+            {custodianFeed ? <CustodianFeedPanel envelope={custodianFeed} /> : null}
             <OneOffForm envelope={envelope} holdings={holdings} />
             <AccountModelPanel initialEnvelope={envelope} />
             {tax ? <AccountTaxPanel envelope={tax} /> : null}

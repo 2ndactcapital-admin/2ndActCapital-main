@@ -31,6 +31,14 @@ export const methodOptions = (envelope) => keyed(vocab(envelope).methods);
 export const preferenceOptions = (envelope) => keyed(vocab(envelope).gain_preferences);
 export const custodianOptions = (envelope) => keyed(vocab(envelope).custodian_methods);
 export const custodianSources = (envelope) => keyed(vocab(envelope).custodian_sources);
+export const lotSourceOptions = (envelope) => keyed(vocab(envelope).lot_sources);
+
+/** ALTREAD1 — "Lots used by the tax engine" on the account change form: the request control AND the server listing
+ * lot_source as editable AND offering its vocabulary (the change still needs a second person's approval). */
+export function lotSourceControl(envelope) {
+  return requestControl(envelope) && listOf(vocab(envelope).editable).includes("lot_source")
+    && lotSourceOptions(envelope).length > 0;
+}
 
 /** "Request a change" on a household or account lot-method panel. */
 export function requestControl(envelope) {
@@ -97,6 +105,8 @@ export function accountChangeBody(form) {
     average_cost_security_ids: listOf(form.average_cost_security_ids),
     reason: (form.reason || "").trim(),
   };
+  // ALTREAD1 — sent only when chosen; omitted, the server keeps the account's current lot source
+  if (form.lot_source) out.lot_source = form.lot_source;
   if (needsTarget(out.gain_preference_override)) out.realize_gains_target = decimalText(form.realize_gains_target);
   return out;
 }
