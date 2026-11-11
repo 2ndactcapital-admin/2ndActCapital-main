@@ -29,7 +29,7 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from services.altruist_webhook import InvalidSignature, SIGNATURE_HEADER, process_event, verify_signature
+from services.altruist_webhook import InvalidSignature, SIGNATURE_HEADER, process_event, verify_signature_source
 from services.database import get_pool, reset_rls_context, set_rls_context
 
 router = APIRouter(tags=["altruist-webhook"])
@@ -43,7 +43,7 @@ async def altruist_webhook(request: Request):
     signature = request.headers.get(SIGNATURE_HEADER)
 
     try:
-        verify_signature(raw_body, signature)
+        signed_by = verify_signature_source(raw_body, signature)   # cpsim02 D6: the real secret first, then the simulator's
     except InvalidSignature:
         return JSONResponse(status_code=401, content=_GENERIC_REJECTION)
 
@@ -57,14 +57,16 @@ async def altruist_webhook(request: Request):
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            result = await process_event(conn, payload=payload, collect=new_txns)
+            result = await process_event(conn, payload=payload, collect=new_txns, signed_by=signed_by)
     finally:
         reset_rls_context(tokens)
+    # cpsim02 (contract §7.10) — the internal org_id is used here and never returned to the caller
+    org_id = result.pop("org_id", None) if isinstance(result, dict) else None
     # CASH06 — after the sync committed: one cash.incoming_credit event per new credit to a watched account (never
     # raises; a webhook's receipt never depends on it)
-    if new_txns and isinstance(result, dict) and result.get("org_id"):
+    if new_txns and org_id:
         from services import cash_rules
 
-        await cash_rules.publish_incoming_credits(str(result["org_id"]), new_txns)
+        await cash_rules.publish_incoming_credits(str(org_id), new_txns)
 
     return result

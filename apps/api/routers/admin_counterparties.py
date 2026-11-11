@@ -526,3 +526,34 @@ async def book_export(request: Request, counterparty_id: UUID, format: str = "cs
         w.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in SB.COLUMNS[kind]})
     return Response(buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="cpsim_{kind}.csv"'})
+
+
+# ── cpsim02 D10: webhooks — "Send test event" (the flag and the override URL live on PUT /behaviour) ───────────────
+class WebhookTestIn(_Body):
+    account_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
+    event_type: Literal["account.positions_updated", "account.transactions_updated"] = "account.positions_updated"
+
+
+@router.post(f"{_P}/{{counterparty_id}}/webhooks/test")
+async def webhook_test(request: Request, counterparty_id: UUID, body: WebhookTestIn):
+    """One signed event for an account in the book, through the same sender an accepted upload uses. Honours the
+    webhooks flag (off → 409, nothing sent). Every attempt is in the request log (direction out)."""
+    async def fn(c):
+        cp = await R._require(c, counterparty_id)
+        known = await SB.account_exists(c, counterparty_id, body.account_id)
+        return {"slug": cp["slug"], "known": known, "behaviour": await R.behaviour(c, counterparty_id) or {}}
+    principal, out, types = await _sim(request, fn)
+    if not out["known"]:
+        raise HTTPException(status_code=404, detail="no such account in this counterparty's book")
+    if not out["behaviour"].get("webhooks_enabled"):
+        raise HTTPException(status_code=409, detail="webhooks are off for this counterparty (Behaviour tab)")
+    from cpsim import webhooks as SW
+
+    delivery = await SW.send_event(counterparty_id=counterparty_id, slug=out["slug"], account_id=body.account_id,
+                                   event_type=body.event_type, behaviour=out["behaviour"])
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _audit(conn, principal, "counterparty.webhook_test_sent", "counterparty", counterparty_id,
+                     {k: delivery.get(k) for k in ("event_id", "event_type", "account_id", "status", "attempts",
+                                                   "outcome")} | {"simulated": True})
+    return _envelope(principal, {"delivery": delivery}, types)
