@@ -15,7 +15,9 @@ the cpsim work runs AS role ``cpsim_app`` (cpsim.db.as_simulator) and the audit 
     POST /admin/counterparties/{id}/bank/regenerate
     PUT  /admin/counterparties/{id}/fix                     (rotate_password → a new password shown ONCE)
     PUT  /admin/counterparties/{id}/behaviour
-    POST /admin/counterparties/{id}/clock/advance           one US business day (services/us_business_days)
+    POST /admin/counterparties/{id}/clock/advance           one US business day (services/us_business_days); cpsim03:
+                                                             working orders re-evaluated, the response lists the fills
+    GET  /admin/counterparties/{id}/orders                  cpsim03: the orders received (read-only)
     GET  /admin/counterparties/{id}/requests?limit=N        the request log (no bodies, no keys)
     POST /admin/counterparties/{id}/test-message            posts a sample envelope to the mirror IN-PROCESS with the
                                                              key the admin pastes (never stored) — no network
@@ -54,6 +56,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from cpsim import book as SB
 from cpsim import db as SDB
 from cpsim import mirror as SM
+from cpsim import orders as SO
 from cpsim import registry as R
 from services.authz import require_super_admin
 from services.custody.base import parse_text
@@ -68,9 +71,13 @@ GROUP_LABELS = {"connection": "Connection", "fix": "FIX session", "bank_domestic
                 "bank_international": "Bank details (international)", "behaviour": "Behaviour", "clock": "Clock"}
 TABS = [("connection", "Connection"), ("fix", "FIX"), ("bank", "Bank details"), ("behaviour", "Behaviour"),
         ("clock", "Clock"), ("activity", "Activity"), ("import_export", "Import / Export"),
-        ("connections", "Connections"), ("webhooks", "Webhooks"), ("conformance", "Conformance")]
+        ("connections", "Connections"), ("webhooks", "Webhooks"), ("conformance", "Conformance"), ("orders", "Orders")]
 #: cpsim02 — the tabs that need a BOOK (a REST + OAuth custodian type); the page enables them per type from this list
-BOOK_TABS = ["import_export", "connections", "webhooks", "conformance"]
+BOOK_TABS = ["import_export", "connections", "webhooks", "conformance", "orders"]
+#: cpsim03 — what v1 of the simulated order book does NOT do (shown on the Orders tab, CPSIM_ADMIN.md)
+ORDERS_V1_LIMITS = ["Fills move positions and add buy / sell transactions — there is no cash ledger, no corporate "
+                    "actions and no fees (v2).", "A later book upload replaces the account and so overwrites fills.",
+                    "Day orders are not expired; a partial fill's remainder stays working until it is cancelled."]
 EDITABLE = ["name", "notes", "status", "key", "bank_details", "fix_session", "behaviour", "clock", "org_access",
             "book", "connections", "webhooks", "conformance"]
 #: a BOOK file, not a custodian export: refused before decoding (routers/custody_import.py's _read_upload shape)
@@ -326,9 +333,41 @@ async def set_behaviour(request: Request, counterparty_id: UUID, body: Behaviour
 
 @router.post(f"{_P}/{{counterparty_id}}/clock/advance")
 async def advance_clock(request: Request, counterparty_id: UUID):
+    """One US business day — and (cpsim03 D6) every working order re-evaluated at the new date's price, in the SAME
+    transaction; the response (and its audit row) says what the advance filled. Order webhooks after commit."""
+    from datetime import date as _date
+
+    async def fn(c):
+        moved = await R.advance_clock(c, counterparty_id, request.state.principal.user_id)
+        filled = await SO.reevaluate(c, counterparty_id, _date.fromisoformat(moved["to"]))
+        cp = await R._require(c, counterparty_id)
+        return {**moved, "filled": filled, "_slug": cp["slug"], "_behaviour": await R.behaviour(c, counterparty_id) or {}}
     principal, out, types = await _sim(
-        request, lambda c: R.advance_clock(c, counterparty_id, request.state.principal.user_id),
-        action="counterparty.clock_advanced", resource=counterparty_id, audit_payload=lambda o: o)
+        request, fn, action="counterparty.clock_advanced", resource=counterparty_id,
+        audit_payload=lambda o: {"from": o["from"], "to": o["to"],
+                                 "filled": [{k: f[k] for k in ("order_id", "status", "executions")} for f in o["filled"]]})
+    slug, beh = out.pop("_slug"), out.pop("_behaviour")
+    items = [({"order_id": f["order_id"], "client_order_id": f["client_order_id"], "account_id": f["account_id"]},
+              ["order.filled"] if f["executions"] else ["order.updated"]) for f in out["filled"]]
+    if items:
+        from cpsim import webhooks as SW
+
+        await SW.after_orders(counterparty_id=counterparty_id, slug=slug, items=items, behaviour=beh)
+    return _envelope(principal, out, types)
+
+
+@router.get(f"{_P}/{{counterparty_id}}/orders")
+async def orders(request: Request, counterparty_id: UUID, limit: int = 100):
+    """cpsim03 — the Orders tab (read-only): the orders this counterparty received, their outcome and executions."""
+    lim = max(1, min(int(limit), 500))
+
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        return {"rows": await SO.list_recent(c, counterparty_id, lim), "limit": lim,
+                "status_labels": [{"key": k, "label": v} for k, v in SO.STATUS_LABELS.items()],
+                "outcome_labels": [{"key": k, "label": v} for k, v in OUTCOME_LABELS.items()],
+                "v1_limits": ORDERS_V1_LIMITS}
+    principal, out, types = await _sim(request, fn)
     return _envelope(principal, out, types)
 
 
