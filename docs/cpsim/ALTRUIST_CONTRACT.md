@@ -618,3 +618,85 @@ Further obligations:
     entry).
 15. **No error-parameter handling** on the callback (`error`,
     `error_description`).
+
+---
+
+## 8. Orders (ASSUMED — no published Altruist trading API seen)
+
+Written 2026-11-11 for cpsim03 (`docs/cpsim/CPSIM03_NOTES.md` D1). **Altruist's real trading API has never been seen**:
+no repo doc, no code comment, no sandbox call cites an orders contract of any kind. The real Altruist route stays
+manual (`custodian_capabilities` `altruist.equity_trading_api = 'unknown'`; no real trading client exists). Every row
+below is **ASSUMED** — chosen to look like the read API in §3 (same hosts, Bearer access token, JSON, primary list key,
+explicit ids, ISO dates) — and is pinned by the conformance suite's `orders` group (O01–O12,
+`services/altruist_conformance.py`), so the day a real contract arrives the differences are a list, not a hunt.
+
+Client: `services/altruist_trading.py` (the cpsim02 client conventions: hosts resolved per call, `Bearer` access token
+through `require_active_connection`, `Accept: application/json`, a JSON body, 15 s, an optional `transport` on every
+call, `AltruistOAuthError` on any HTTP status ≥ 400 or a transport failure). Server: `cpsim/orders.py` under
+`/cpsim/c/<slug>`. Simulator environment only.
+
+### 8.1 Calls
+
+| # | Call | Status | Notes |
+|---|---|---|---|
+| O-1 | `POST {api_base}/v2/orders` — body below; `201` a new order, `200` the SAME order on a repeat `client_order_id` | ASSUMED | idempotent on `client_order_id` per counterparty: a repeat POST never creates a second order (whatever the repeated body says); `422` a malformed body `{detail, errors: [{field, message}]}`; `404` an account not in the book |
+| O-2 | `GET {api_base}/v2/orders/{order_id}` → `{"order": {…}}` | ASSUMED | `404` an order of another counterparty, or unknown |
+| O-3 | `GET {api_base}/v2/orders?account_id=<id>` → `{"orders": [{…}]}` | ASSUMED | `account_id` required (`400` without); newest first; one response, no pagination |
+| O-4 | `DELETE {api_base}/v2/orders/{order_id}` → `{"order": {…}}` with status `cancelled` | ASSUMED | only while `accepted` / `working` / `partially_filled`; `409` `{detail}` once `filled`, `rejected` or `cancelled` (the reason names the status); executions already made stay |
+| O-5 | resources need an ACCESS token (`Bearer cpsim_at_…`, §2) — the `cpsim_live_` key itself is refused (`401`) | ASSUMED | as §3 |
+| O-6 | every response carries `X-Counterparty-Simulated: true` (simulator only) | simulator | as cpsim02 |
+
+### 8.2 Order request (POST body)
+
+| Field | Type | Status | Rule |
+|---|---|---|---|
+| `client_order_id` | string ≤ 80 | ASSUMED | the Hollisworks execution instruction id (a uuid); the idempotency key |
+| `account_id` | string | ASSUMED | the custodian's account id (the crosswalked external id) |
+| `symbol` | string | ASSUMED | ticker; `symbol` and/or `cusip` — at least one; if both, they must name the same security |
+| `cusip` | string | ASSUMED | |
+| `side` | `buy` \| `sell` | ASSUMED | no short / cover side is defined (shorts stay manual — rep13) |
+| `quantity` | decimal string | ASSUMED | exactly one of `quantity` / `notional`, > 0 |
+| `notional` | decimal string | ASSUMED | an amount in the account currency; converted at the fill price (fractional shares) |
+| `order_type` | `market` \| `limit` | ASSUMED | |
+| `limit_price` | decimal string | ASSUMED | required for `limit`, refused for `market` |
+| `time_in_force` | `day` \| `gtc` | ASSUMED | recorded; v1 of the simulator does not expire `day` orders (CPSIM03_NOTES §4) — the client sends `gtc` |
+
+Decimals travel as STRINGS both ways (a JSON float is refused, as everywhere in the execution path).
+
+### 8.3 Order response (`order`)
+
+| Field | Type | Status |
+|---|---|---|
+| `order_id` | string (`sim-o-<16 hex>`) | ASSUMED |
+| `client_order_id`, `account_id`, `symbol`, `cusip`, `side`, `quantity`, `notional`, `order_type`, `limit_price`, `time_in_force` | as sent (decimals as strings) | ASSUMED |
+| `status` | `accepted` \| `working` \| `partially_filled` \| `filled` \| `rejected` \| `cancelled` | ASSUMED |
+| `reject_reason` | string or null | ASSUMED |
+| `filled_quantity` | decimal string | ASSUMED |
+| `average_price` | decimal string or null | ASSUMED |
+| `executions` | list (below), oldest first | ASSUMED |
+| `created_at`, `updated_at` | ISO 8601 UTC | ASSUMED |
+| `trade_date` | ISO date — the counterparty's business date at receipt | ASSUMED |
+
+`executions[]`: `exec_id` (string `sim-e-<16 hex>`), `quantity`, `price` (decimal strings), `executed_at` (ISO 8601
+UTC, the counterparty's wall clock — never its business date), `trade_date` (ISO date, the business date),
+`settle_date` (ISO date, trade date + 1 US business day). All ASSUMED.
+
+### 8.4 Webhooks (outbound, simulator → us) — ASSUMED
+
+`order.updated` (an order accepted, working, rejected or cancelled) and `order.filled` (any new execution), only when
+the counterparty's behaviour has webhooks on. Body (compact JSON, the signed bytes): `{event_id, event_type, order_id,
+client_order_id, account_id, environment: "simulator", occurred_at}`; signed as §4 / cpsim02 D10
+(`X-Altruist-Signature`, HMAC-SHA256 hex with `ALTRUIST_SIMULATOR_WEBHOOK_SECRET`). The receiver treats an order event
+as a NOTIFICATION: the account's resync runs as for any event (§4), plus a to-do for the instruction's sender ("fills
+available — import them"). **A webhook never books a fill.**
+
+### 8.5 Simulator outcomes (D6) — the simulated counterparty's scripted behaviour, not a contract claim
+
+From the behaviour row when the order is received; price = the last PLATFORM close on or before the counterparty's
+clock date. accept → filled in full (a limit buy only if price ≤ limit, a limit sell only if price ≥ limit, else
+working); reject → rejected with the behaviour's reason; partial → one execution for `partial_pct` of the quantity
+(rounded down to the unit: one share for a whole-share quantity, 0.000001 otherwise), the remainder working until
+cancelled; delay → working until the clock advances, then filled as accept. No price → rejected `no price`; a security
+type other than equity / fund → rejected `unsupported instrument`; a sell above the position → rejected `insufficient
+position`. Working orders are re-evaluated on every clock advance (delay orders and unmarketable limits; a partial's
+remainder stays working).
