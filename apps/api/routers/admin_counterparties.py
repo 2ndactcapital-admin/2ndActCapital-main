@@ -20,25 +20,43 @@ the cpsim work runs AS role ``cpsim_app`` (cpsim.db.as_simulator) and the audit 
     POST /admin/counterparties/{id}/test-message            posts a sample envelope to the mirror IN-PROCESS with the
                                                              key the admin pastes (never stored) — no network
 
+cpsim02 — the BOOK (the counterparty's custodian data), audited ``counterparty.book_*``:
+    GET  /admin/counterparties/{id}/book                    live counts + the upload history + vocabularies
+    GET  /admin/counterparties/{id}/book/template?kind=&format=csv|json   the template (columns, one example row)
+    POST /admin/counterparties/{id}/book/preview            multipart file + kind → the validation report (writes
+                                                             nothing but its audit row)
+    POST /admin/counterparties/{id}/book/accept             the SAME file re-posted → replace the named accounts' rows,
+                                                             log the upload, fire the D10 webhooks
+    GET  /admin/counterparties/{id}/book/export?kind=&format=csv | ?format=json   the import columns (a round trip) /
+                                                             the API's own response shapes
+  Files are parsed HERE (CSV utf-8 with a header row, or JSON: a list of objects or {"rows": [...]}) and handed to the
+  package as plain rows (the package parses no file format). Limit: MAX_BOOK_BYTES, refused 413 before decoding.
+
 ``target_org_id`` names the org a Super Admin is switching, a platform action (like /orgs/{org_id}/settings) — never the
 caller's own tenant scope, which still comes only from the verified session. Every response says ``simulated: true``.
 """
 
 from __future__ import annotations
 
+import csv
+import hashlib
+import io
 import json
 from typing import Literal
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from cpsim import book as SB
 from cpsim import db as SDB
 from cpsim import mirror as SM
 from cpsim import registry as R
 from services.authz import require_super_admin
+from services.custody.base import parse_text
 from services.database import get_pool
 
 router = APIRouter(tags=["admin-counterparties"])
@@ -50,7 +68,12 @@ GROUP_LABELS = {"connection": "Connection", "fix": "FIX session", "bank_domestic
                 "bank_international": "Bank details (international)", "behaviour": "Behaviour", "clock": "Clock"}
 TABS = [("connection", "Connection"), ("fix", "FIX"), ("bank", "Bank details"), ("behaviour", "Behaviour"),
         ("clock", "Clock"), ("activity", "Activity"), ("import_export", "Import / Export")]
-EDITABLE = ["name", "notes", "status", "key", "bank_details", "fix_session", "behaviour", "clock", "org_access"]
+EDITABLE = ["name", "notes", "status", "key", "bank_details", "fix_session", "behaviour", "clock", "org_access",
+            "book", "connections", "webhooks", "conformance"]
+#: a BOOK file, not a custodian export: refused before decoding (routers/custody_import.py's _read_upload shape)
+MAX_BOOK_BYTES = 2 * 1024 * 1024
+BOOK_KIND_LABELS = {"households": "Households", "accounts": "Accounts", "positions": "Positions (holdings and values)",
+                    "transactions": "Transactions"}
 
 
 class _Body(BaseModel):
@@ -88,6 +111,7 @@ class BehaviourIn(_Body):
     ach_return_code: str | None = Field(default=None, pattern=r"^R[0-9]{2}$")
     ach_return_after_days: int | None = Field(default=None, ge=0, le=60)
     webhooks_enabled: bool | None = None
+    webhook_url: str | None = Field(default=None, max_length=500, pattern=r"^https://[^\s#?]+$")
 
 
 class OrgAccessIn(_Body):
@@ -336,3 +360,169 @@ async def test_message(request: Request, counterparty_id: UUID, body: TestMessag
                      {"status": res.status_code, "message_id": envelope["message_id"], "simulated": True})
     return _envelope(principal, {"sent": envelope, "status": res.status_code, "reply": reply,
                                  "simulated_header": res.headers.get("x-counterparty-simulated")}, types)
+
+
+# ── cpsim02: the book ───────────────────────────────────────────────────────────────────────────────────────────
+def _book_vocab() -> dict:
+    return {"kinds": [{"key": k, "label": BOOK_KIND_LABELS[k], "columns": list(SB.COLUMNS[k]),
+                       "required": list(SB.REQUIRED[k])} for k in SB.KINDS],
+            "reasons": [{"key": k, "label": v} for k, v in SB.REASONS.items()],
+            "formats": ["csv", "json"], "mode": "replace", "max_bytes": MAX_BOOK_BYTES, "max_rows": SB.MAX_ROWS}
+
+
+def _kind(kind: str) -> str:
+    if kind not in SB.KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(SB.KINDS)}")
+    return kind
+
+
+async def _read_book(file: UploadFile, fmt: str | None) -> tuple[list[dict], str, str, str]:
+    """(rows, format, sha256, file name). Parsed in the ROUTER — the package receives plain rows."""
+    raw = await file.read(MAX_BOOK_BYTES + 1)
+    if not raw:
+        raise HTTPException(status_code=400, detail="the uploaded file is empty")
+    if len(raw) > MAX_BOOK_BYTES:
+        raise HTTPException(status_code=413, detail=f"a book file is limited to {MAX_BOOK_BYTES // 1024} KB")
+    name = (file.filename or "upload").strip()[:255] or "upload"
+    f = (fmt or ("json" if name.lower().endswith(".json") else "csv")).lower()
+    if f not in ("csv", "json"):
+        raise HTTPException(status_code=400, detail="format must be csv or json")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="the file is not UTF-8 text") from exc
+    if f == "json":
+        try:
+            doc = json.loads(text)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="the file is not valid JSON") from exc
+        rows = doc.get("rows") if isinstance(doc, dict) else doc
+        if not isinstance(rows, list):
+            raise HTTPException(status_code=400, detail='JSON must be a list of rows or {"rows": [...]}')
+    else:
+        reader = csv.DictReader(io.StringIO(text))
+        if not reader.fieldnames:
+            raise HTTPException(status_code=400, detail="the CSV has no header row")
+        rows = [{(k or "").strip(): ("" if v is None else (parse_text(v) or "")) for k, v in r.items()
+                 if (k or "").strip()} for r in reader]
+    if len(rows) > SB.MAX_ROWS:
+        raise HTTPException(status_code=413, detail=f"at most {SB.MAX_ROWS} rows per upload")
+    return rows, f, hashlib.sha256(raw).hexdigest(), name
+
+
+def _book_err(fn):
+    async def wrapped(conn):
+        try:
+            return await fn(conn)
+        except SB.BookError as exc:
+            raise R.RegistryError(str(exc)) from exc
+    return wrapped
+
+
+@router.get(f"{_P}/{{counterparty_id}}/book")
+async def book_summary(request: Request, counterparty_id: UUID):
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        return {"counts": await SB.counts(c, counterparty_id), "uploads": await SB.uploads(c, counterparty_id, 50),
+                "business_date": await R.business_date(c, counterparty_id)}
+    principal, out, types = await _sim(request, fn)
+    env = _envelope(principal, out, types)
+    env["vocabularies"]["book"] = _book_vocab()
+    return env
+
+
+@router.get(f"{_P}/{{counterparty_id}}/book/template")
+async def book_template(request: Request, counterparty_id: UUID, kind: str, format: str = "csv"):  # noqa: A002
+    _kind(kind)
+    if format not in ("csv", "json"):
+        raise HTTPException(status_code=400, detail="format must be csv or json")
+    principal, _cp, _types = await _sim(request, lambda c: R._require(c, counterparty_id),
+                                        action="counterparty.book_template_downloaded", resource=counterparty_id,
+                                        audit_payload={"kind": kind, "format": format})
+    t = SB.template(kind)
+    if format == "json":
+        return Response(json.dumps({"kind": kind, "rows": [t["example"]], "columns": t["columns"],
+                                    "required": t["required"], "simulated": True}, indent=2),
+                        media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="cpsim_{kind}_template.json"'})
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=t["columns"], lineterminator="\n")
+    w.writeheader()
+    w.writerow(t["example"])
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="cpsim_{kind}_template.csv"'})
+
+
+@router.post(f"{_P}/{{counterparty_id}}/book/preview")
+async def book_preview(request: Request, counterparty_id: UUID, kind: str = Form(...), file: UploadFile = File(...),
+                       format: str | None = Form(default=None)):  # noqa: A002
+    require_super_admin(request)
+    _kind(kind)
+    rows, fmt_, sha, name = await _read_book(file, format)
+
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        return await SB.validate(c, counterparty_id, kind, rows)
+    principal, out, types = await _sim(
+        request, _book_err(fn), action="counterparty.book_previewed", resource=counterparty_id,
+        audit_payload=lambda o: {"kind": kind, "file_name": name, "sha256": sha, "format": fmt_, **o["counts"]})
+    out = {**out, "file_name": name, "sha256": sha, "format": fmt_}
+    env = _envelope(principal, out, types)
+    env["vocabularies"]["book"] = _book_vocab()
+    return env
+
+
+@router.post(f"{_P}/{{counterparty_id}}/book/accept")
+async def book_accept(request: Request, counterparty_id: UUID, kind: str = Form(...), file: UploadFile = File(...),
+                      format: str | None = Form(default=None)):  # noqa: A002
+    require_super_admin(request)
+    _kind(kind)
+    rows, fmt_, sha, name = await _read_book(file, format)
+
+    async def fn(c):
+        cp = await R._require(c, counterparty_id)
+        res = await SB.accept(c, counterparty_id, kind, rows, file_name=name, sha256=sha, fmt_=fmt_,
+                              actor=request.state.principal.user_id)
+        return {**res, "slug": cp["slug"], "behaviour": await R.behaviour(c, counterparty_id)}
+    principal, out, types = await _sim(
+        request, _book_err(fn), action="counterparty.book_accepted", resource=counterparty_id,
+        audit_payload=lambda o: {"kind": kind, "file_name": name, "sha256": sha, "format": fmt_,
+                                 "upload_id": o["upload_id"], **o["counts"],
+                                 "accounts_affected": o["accounts_affected"]})
+    # D10 — AFTER the book committed: one signed event per affected account (only when webhooks are on)
+    from cpsim import webhooks as SW
+
+    beh = out.pop("behaviour") or {}
+    deliveries = await SW.after_upload(counterparty_id=counterparty_id, slug=out["slug"], kind=kind,
+                                       accounts=out["accounts_affected"], behaviour=beh)
+    out["webhooks"] = deliveries
+    return _envelope(principal, out, types)
+
+
+@router.get(f"{_P}/{{counterparty_id}}/book/export")
+async def book_export(request: Request, counterparty_id: UUID, format: str = "csv",  # noqa: A002
+                      kind: str | None = None):
+    if format not in ("csv", "json"):
+        raise HTTPException(status_code=400, detail="format must be csv or json")
+    if format == "csv":
+        _kind(kind or "")
+
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        if format == "csv":
+            return await SB.export_rows(c, counterparty_id, kind)
+        clock = await R.business_date(c, counterparty_id) or R.today()
+        return await SB.export_api(c, counterparty_id, clock)
+    principal, out, _types = await _sim(request, _book_err(fn), action="counterparty.book_exported",
+                                        resource=counterparty_id, audit_payload={"kind": kind, "format": format})
+    if format == "json":
+        return Response(json.dumps(jsonable_encoder({**out, "simulated": True}), indent=2),
+                        media_type="application/json",
+                        headers={"Content-Disposition": 'attachment; filename="cpsim_book.json"'})
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=list(SB.COLUMNS[kind]), lineterminator="\n")
+    w.writeheader()
+    for r in out:
+        w.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in SB.COLUMNS[kind]})
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="cpsim_{kind}.csv"'})
