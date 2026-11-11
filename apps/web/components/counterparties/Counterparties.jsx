@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  IMPORT_EXPORT_NOTE, SIMULATED_NOTE, canWrite, groupsOf, labelOf, liveKey, shortDate, tabsFor, typeOf, vocab,
+  IMPORT_EXPORT_NOTE, SIMULATED_NOTE, bookKinds, canAccept, canWrite, conformanceSummary, deliveries, exportHref,
+  groupsOf, labelOf, liveKey, rejectionRows, shortDate, tabsFor, templateHref, typeOf, vocab,
 } from "@/lib/counterparties.mjs";
 
 // CPSIM01 — Admin → Counterparties (Super Admin): the registry of SIMULATED counterparties. Every screen carries the
@@ -21,6 +22,24 @@ async function call(path, method = "GET", body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
   return data;
+}
+
+async function upload(path, form) {
+  const res = await fetch(`${API}/${path}`, { method: "POST", body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+  return data;
+}
+
+// Loads a tab's own envelope once (unless the page already supplied it).
+function useLoaded(initial, path) {
+  const [data, setData] = useState(initial || null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    if (initial || !path) return;
+    call(path).then(setData).catch((e) => setError(e.message));
+  }, [initial, path]);
+  return [data, setData, error];
 }
 
 export function SimulatedBanner() {
@@ -308,7 +327,250 @@ function ActivityTab({ requests }) {
   );
 }
 
-export function CounterpartyDetail({ envelope, requests, initialTab = "connection" }) {
+// ── cpsim02: Import / Export ───────────────────────────────────────────────────────────────────────────────────
+export function RejectionTable({ preview, env }) {
+  const rows = rejectionRows(preview, env);
+  if (!rows.length) return <p className="mt-2 text-sm text-[#2D6A4F]" data-testid="no-rejections">No rejected rows.</p>;
+  return (
+    <table className="mt-2 w-full text-left text-xs" data-testid="rejection-table">
+      <thead className="text-[#64748B]"><tr><th>Row</th><th>Id</th><th>Reason</th><th>Detail</th></tr></thead>
+      <tbody>{rows.map((r) => (
+        <tr key={`${r.row}-${r.reason}`} className="border-t border-[#ece8dd]" data-reason={r.reason}>
+          <td>{r.row}</td><td>{r.id}</td><td className="text-[#9B2335]">{r.label}</td><td>{r.detail}</td></tr>))}</tbody>
+    </table>
+  );
+}
+
+export function ImportExportTab({ id, initialBook, initialPreview = null }) {
+  const [book, setBook, loadError] = useLoaded(initialBook, initialBook ? null : `${id}/book`);
+  const [kind, setKind] = useState("positions");
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(initialPreview);
+  const [accepted, setAccepted] = useState(null);
+  const [error, setError] = useState(null);
+  const env = book;
+  const kinds = bookKinds(env);
+  const w = canWrite(env);
+  function form() {
+    const f = new FormData();
+    f.append("kind", kind);
+    f.append("file", file);
+    return f;
+  }
+  async function doPreview() {
+    setError(null); setAccepted(null);
+    try { setPreview(await upload(`${id}/book/preview`, form())); } catch (e) { setError(e.message); }
+  }
+  async function doAccept() {
+    setError(null);
+    try {
+      setAccepted(await upload(`${id}/book/accept`, form()));
+      setPreview(null);
+      setBook(await call(`${id}/book`));
+    } catch (e) { setError(e.message); }
+  }
+  if (loadError) return <p className="text-sm text-[#9B2335]" data-testid="tab-import-export">{loadError}</p>;
+  if (!env) return <p className="text-sm text-[#64748B]" data-testid="tab-import-export">Loading the book…</p>;
+  return (
+    <div data-testid="tab-import-export" className="space-y-4">
+      <p className="text-xs text-[#64748B]">The simulated custodian&apos;s book. Each upload REPLACES the rows of the
+        accounts it names; positions and transactions are validated against the security master. Served back through
+        the simulator&apos;s API on its clock date.</p>
+      <dl className="grid gap-3 text-sm md:grid-cols-4" data-testid="book-counts">
+        {kinds.map((k) => <Field key={k.key} label={k.label} value={String(env.counts?.[k.key] ?? 0)} />)}
+      </dl>
+      <div>
+        <p className="text-sm font-semibold text-navy">Templates</p>
+        <ul className="mt-1 flex flex-wrap gap-3 text-sm" data-testid="book-templates">
+          {kinds.map((k) => (
+            <li key={k.key}>{k.label}: <a className="text-navy underline" href={templateHref(id, k.key, "csv")}>CSV</a>
+              {" · "}<a className="text-navy underline" href={templateHref(id, k.key, "json")}>JSON</a></li>))}
+        </ul>
+      </div>
+      {w ? (
+        <div className="rounded-[6px] border border-[#ece8dd] p-3" data-testid="book-upload">
+          <p className="text-sm font-semibold text-navy">Upload</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+            <select className="rounded border border-[#E2E8F0] px-2 py-1" value={kind} onChange={(e) => setKind(e.target.value)}>
+              {kinds.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+            </select>
+            <input type="file" accept=".csv,.json" onChange={(e) => { setFile(e.target.files?.[0] || null); setPreview(null); }} />
+            <button type="button" className={btn} disabled={!file} onClick={doPreview}>Preview</button>
+            {canAccept(env, preview) && file ? <button type="button" className={btn} onClick={doAccept}
+              data-testid="book-accept">Accept {preview.counts.accepted} row(s)</button> : null}
+          </div>
+        </div>
+      ) : null}
+      {error ? <p className="text-sm text-[#9B2335]">{error}</p> : null}
+      {preview ? (
+        <div data-testid="book-preview">
+          <p className="text-sm">Preview of {preview.file_name}: <span className="text-[#2D6A4F]">{preview.counts?.accepted} accepted</span>,{" "}
+            <span className="text-[#9B2335]">{preview.counts?.rejected} rejected</span> of {preview.counts?.rows}.</p>
+          <RejectionTable preview={preview} env={env} />
+        </div>
+      ) : null}
+      {accepted ? <p className="text-sm text-[#2D6A4F]" data-testid="book-accepted">Accepted {accepted.counts?.accepted} row(s);
+        {" "}{(accepted.webhooks || []).length} webhook event(s).</p> : null}
+      <div>
+        <p className="text-sm font-semibold text-navy">Export</p>
+        <ul className="mt-1 flex flex-wrap gap-3 text-sm" data-testid="book-export">
+          {kinds.map((k) => <li key={k.key}><a className="text-navy underline" href={exportHref(id, "csv", k.key)}>{k.label} (CSV)</a></li>)}
+          <li><a className="text-navy underline" href={exportHref(id, "json")}>Whole book as the API serves it (JSON)</a></li>
+        </ul>
+      </div>
+      <div>
+        <p className="text-sm font-semibold text-navy">Upload history</p>
+        {(env.uploads || []).length ? (
+          <table className="mt-1 w-full text-left text-xs" data-testid="book-history">
+            <thead className="text-[#64748B]"><tr><th>At</th><th>File</th><th>Kind</th><th>Accepted</th><th>Rejected</th></tr></thead>
+            <tbody>{env.uploads.map((u) => (
+              <tr key={u.id} className="border-t border-[#ece8dd]"><td>{shortDate(u.uploaded_at)}</td><td>{u.file_name}</td>
+                <td>{labelOf(kinds, u.kind)}</td><td>{u.rows_accepted}</td><td>{u.rows_rejected}</td></tr>))}</tbody>
+          </table>
+        ) : <p className="text-sm text-[#64748B]">No uploads yet.</p>}
+      </div>
+    </div>
+  );
+}
+
+// ── cpsim02: Connections — allowed orgs, point / connect / sync (through the /altruist functions) ─────────────────
+export function ConnectionsTab({ id, initialConnections }) {
+  const [env, setEnv, loadError] = useLoaded(initialConnections, initialConnections ? null : `${id}/connections`);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  if (loadError) return <p className="text-sm text-[#9B2335]" data-testid="tab-connections">{loadError}</p>;
+  if (!env) return <p className="text-sm text-[#64748B]" data-testid="tab-connections">Loading…</p>;
+  const w = canWrite(env);
+  async function act(path, method = "POST", body) {
+    setError(null);
+    try { setResult(await call(`${id}/connections/${path}`, method, body)); setEnv(await call(`${id}/connections`)); }
+    catch (e) { setError(e.message); }
+  }
+  const rows = env.rows || [];
+  return (
+    <div data-testid="tab-connections">
+      <p className="text-xs text-[#64748B]">Organizations with counterparty_sim.allowed on. Point one at this counterparty,
+        then Connect (server-to-server authorize, the same callback handling) and Sync — the existing Altruist-compatible
+        integration does the work; nothing here writes a portfolio table.</p>
+      {error ? <p className="text-sm text-[#9B2335]">{error}</p> : null}
+      {rows.length ? (
+        <table className="mt-2 w-full text-left text-sm" data-testid="connections-table">
+          <thead className="text-[#64748B]"><tr><th>Organization</th><th>Test</th><th>Points here</th><th>Connection</th>
+            <th>Last sync</th><th /></tr></thead>
+          <tbody>{rows.map((o) => (
+            <tr key={o.id} className="border-t border-[#ece8dd]">
+              <td className="py-1">{o.name}</td><td>{o.is_test ? "Test" : "Real (demo households only)"}</td>
+              <td>{o.points_here ? "Yes" : o.counterparty_slug ? `No (${o.counterparty_slug})` : "No"}</td>
+              <td>{o.connection_status || "none"}</td>
+              <td>{o.last_sync ? `${o.last_sync.accounts_synced ?? 0} account(s), ${o.last_sync.positions_created ?? 0} position(s)` : ""}</td>
+              <td>{w ? (
+                <span className="flex flex-wrap gap-1">
+                  <button type="button" className={btn} onClick={() => act(o.id, "PUT", { point: !o.points_here })}>
+                    {o.points_here ? "Unpoint" : "Point here"}</button>
+                  {o.points_here ? <button type="button" className={btn} onClick={() => act(`${o.id}/connect`)}>Connect</button> : null}
+                  {o.points_here && o.connection_status ? <button type="button" className={btn}
+                    onClick={() => act(`${o.id}/sync`)}>Sync now</button> : null}
+                </span>) : null}</td>
+            </tr>))}</tbody>
+        </table>
+      ) : <p className="mt-2 text-sm text-[#64748B]" data-testid="connections-empty">No organization is allowed yet (Org access).</p>}
+      {result?.sync ? <p className="mt-2 text-sm text-[#2D6A4F]" data-testid="connections-result">Synced {result.sync.accounts_synced} account(s):
+        {" "}{result.sync.positions_created} position(s), {result.sync.transactions_created} transaction(s) created.</p> : null}
+    </div>
+  );
+}
+
+// ── cpsim02: Webhooks — the flag + override URL (Behaviour row), "Send test event", the delivery log ──────────────
+export function WebhooksTab({ env, d, act, requests }) {
+  const b = d.behaviour || {};
+  const [account, setAccount] = useState("");
+  const [url, setUrl] = useState(b.webhook_url || "");
+  const [sent, setSent] = useState(null);
+  const [error, setError] = useState(null);
+  const w = canWrite(env);
+  async function test() {
+    setError(null);
+    try { setSent((await call(`${d.counterparty.id}/webhooks/test`, "POST", { account_id: account })).delivery); }
+    catch (e) { setError(e.message); }
+  }
+  const out = deliveries(requests);
+  return (
+    <div data-testid="tab-webhooks" className="space-y-3">
+      <dl className="grid gap-3 text-sm md:grid-cols-3">
+        <Field label="Webhooks" value={b.webhooks_enabled ? "On" : "Off"} />
+        <Field label="Target" value={b.webhook_url || "CPSIM_BASE_URL + /api/v1/altruist/webhook"} />
+        <Field label="Signature" value="X-Altruist-Signature (HMAC-SHA256, simulator secret)" />
+      </dl>
+      {w ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="webhook-actions">
+          <button type="button" className={btn} onClick={() => act("behaviour", "PUT", { webhooks_enabled: !b.webhooks_enabled })}>
+            {b.webhooks_enabled ? "Webhooks off" : "Webhooks on"}</button>
+          <input className="rounded border border-[#E2E8F0] px-2 py-1" placeholder="https:// override (optional)" value={url}
+            onChange={(e) => setUrl(e.target.value)} />
+          <button type="button" className={btn} onClick={() => act("behaviour", "PUT", { webhook_url: url || null })}>Save URL</button>
+          <input className="rounded border border-[#E2E8F0] px-2 py-1" placeholder="account id in the book" value={account}
+            onChange={(e) => setAccount(e.target.value)} />
+          <button type="button" className={btn} disabled={!account || !b.webhooks_enabled} onClick={test}>Send test event</button>
+        </div>
+      ) : null}
+      {error ? <p className="text-sm text-[#9B2335]">{error}</p> : null}
+      {sent ? <p className="text-sm" data-testid="webhook-sent">{sent.event_type} → {sent.outcome} (HTTP {sent.status ?? "—"},
+        {" "}{sent.attempts} attempt(s))</p> : null}
+      <p className="text-sm font-semibold text-navy">Deliveries</p>
+      {out.length ? (
+        <table className="w-full text-left text-xs" data-testid="webhook-deliveries">
+          <thead className="text-[#64748B]"><tr><th>At</th><th>Event</th><th>Status</th><th>Outcome</th><th>Latency</th></tr></thead>
+          <tbody>{out.map((r) => (
+            <tr key={r.id} className="border-t border-[#ece8dd]"><td>{r.at}</td><td>{r.message_type}</td><td>{r.status}</td>
+              <td>{r.auth_outcome}</td><td>{r.latency_ms == null ? "" : `${r.latency_ms} ms`}</td></tr>))}</tbody>
+        </table>
+      ) : <p className="text-sm text-[#64748B]">No deliveries yet.</p>}
+    </div>
+  );
+}
+
+// ── cpsim02: Conformance — run the suite against this counterparty; the last result ──────────────────────────────
+export function ConformanceTab({ id, initialConformance }) {
+  const [env, setEnv, loadError] = useLoaded(initialConformance, initialConformance ? null : `${id}/conformance`);
+  const [key, setKey] = useState("");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  if (loadError) return <p className="text-sm text-[#9B2335]" data-testid="tab-conformance">{loadError}</p>;
+  if (!env) return <p className="text-sm text-[#64748B]" data-testid="tab-conformance">Loading…</p>;
+  const last = conformanceSummary(env.last);
+  async function run() {
+    setError(null); setBusy(true);
+    try { await call(`${id}/conformance`, "POST", { key }); setEnv(await call(`${id}/conformance`)); setKey(""); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div data-testid="tab-conformance" className="space-y-3">
+      <p className="text-xs text-[#64748B]">The suite that will run against the real sandbox the day access arrives —
+        every check cites its contract row. Here it runs in-process against this counterparty with the key you paste
+        (never stored).</p>
+      {canWrite(env) ? (
+        <div className="flex flex-wrap gap-2 text-sm" data-testid="conformance-run">
+          <input type="password" className="rounded border border-[#E2E8F0] px-2 py-1" placeholder="cpsim_live_…" value={key}
+            onChange={(e) => setKey(e.target.value)} autoComplete="off" />
+          <button type="button" className={btn} disabled={!key || busy} onClick={run}>Run conformance</button>
+        </div>
+      ) : null}
+      {error ? <p className="text-sm text-[#9B2335]">{error}</p> : null}
+      {last ? (
+        <div data-testid="conformance-last">
+          <p className="text-sm">Last run {shortDate(last.at)}: <span className="text-[#2D6A4F]">{last.passed} passed</span>,{" "}
+            <span className={last.failed ? "text-[#9B2335]" : "text-[#64748B]"}>{last.failed} failed</span>.</p>
+          {last.failures.length ? <ul className="mt-1 text-xs text-[#9B2335]">{last.failures.map((f) => (
+            <li key={f.id}>{f.id} · {f.contract} · {f.label}</li>))}</ul> : null}
+        </div>
+      ) : <p className="text-sm text-[#64748B]" data-testid="conformance-none">No run yet.</p>}
+    </div>
+  );
+}
+
+export function CounterpartyDetail({ envelope, requests, initialTab = "connection", book = null, connections = null,
+  conformance = null }) {
   const [env, setEnv] = useState(envelope);
   const [log, setLog] = useState(requests);
   const [tab, setTab] = useState(initialTab);
@@ -332,7 +594,12 @@ export function CounterpartyDetail({ envelope, requests, initialTab = "connectio
     connection: <ConnectionTab env={env} d={env} act={act} />, fix: <FixTab env={env} d={env} act={act} />,
     bank: <BankTab env={env} d={env} act={act} />, behaviour: <BehaviourTab env={env} d={env} act={act} />,
     clock: <ClockTab env={env} d={env} act={act} />, activity: <ActivityTab requests={log} />,
-    import_export: <p className="text-sm text-[#64748B]" data-testid="tab-import-export">{IMPORT_EXPORT_NOTE}</p>,
+    import_export: tabs.find((t) => t.key === "import_export")?.enabled
+      ? <ImportExportTab id={id} initialBook={book} />
+      : <p className="text-sm text-[#64748B]" data-testid="tab-import-export">{IMPORT_EXPORT_NOTE}</p>,
+    connections: <ConnectionsTab id={id} initialConnections={connections} />,
+    webhooks: <WebhooksTab env={env} d={env} act={act} requests={log} />,
+    conformance: <ConformanceTab id={id} initialConformance={conformance} />,
   };
   return (
     <section className={card} data-testid="cp-detail">

@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { getRequestAuthClient } from "@/lib/authServer";
 
 // CPSIM01 — Admin → Counterparties (Super Admin). Forwards to /api/v1/admin/counterparties/<path> with the caller's own
-// token (host-aware Auth0 client, Rule 5). JSON only; no org_id is ever added on this side.
+// token (host-aware Auth0 client, Rule 5). No org_id is ever added on this side.
+// CPSIM02 — a book upload is multipart (forwarded byte for byte with its own Content-Type), and a template / export is
+// a file (CSV or JSON with a Content-Disposition), passed through as-is; everything else stays JSON.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function forward(request, { params }) {
@@ -26,10 +28,24 @@ async function forward(request, { params }) {
   const headers = { Authorization: `Bearer ${token}` };
   let body;
   if (!["GET", "HEAD"].includes(request.method)) {
-    body = await request.text();
-    if (body) headers["Content-Type"] = "application/json";
+    const type = request.headers.get("content-type") || "";
+    if (type.startsWith("multipart/form-data")) {
+      body = await request.arrayBuffer();
+      headers["Content-Type"] = type;
+    } else {
+      body = await request.text();
+      if (body) headers["Content-Type"] = "application/json";
+    }
   }
   const res = await fetch(url, { method: request.method, headers, body: body || undefined, cache: "no-store" });
+  const disposition = res.headers.get("content-disposition");
+  if (res.ok && disposition) {
+    return new NextResponse(await res.arrayBuffer(), {
+      status: res.status,
+      headers: { "Content-Type": res.headers.get("content-type") || "application/octet-stream",
+        "Content-Disposition": disposition },
+    });
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = data?.detail;

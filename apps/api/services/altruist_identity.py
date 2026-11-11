@@ -91,6 +91,16 @@ async def simulator_account_allowed(conn, org_id: str, hollisworks_account_id: s
         ))
 
 
+async def simulator_fed(conn, org_id: str, hollisworks_account_id: str) -> bool:
+    """cpsim02 — is this account crosswalked to a SIMULATED custodian (the "Simulated custodian" badge)?"""
+    async with _OrgWrite(conn, org_id) as c:
+        return bool(await c.fetchval(
+            f"SELECT EXISTS (SELECT 1 FROM {TABLE_EXTERNAL_REFERENCES} WHERE org_id = $1::uuid AND source_system = $2 "
+            f"AND record_type = $3 AND record_id = $4::uuid)",
+            org_id, SOURCE_SYSTEM_ALTRUIST_SIMULATOR, RECORD_TYPE_ACCOUNT, hollisworks_account_id,
+        ))
+
+
 async def _lookup_account_reference(conn, org_id: str, external_id: str,
                                     source: str = SOURCE_SYSTEM_ALTRUIST) -> str | None:
     """The existing Hollisworks accounts.id for this Altruist account, if any."""
