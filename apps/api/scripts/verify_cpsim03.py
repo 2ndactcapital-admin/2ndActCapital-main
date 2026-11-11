@@ -352,7 +352,9 @@ CPSIM_TABLES = ("cpsim.counterparties", "cpsim.counterparty_credentials", "cpsim
                 "cpsim.counterparty_clock", "cpsim.request_log", "cpsim.book_uploads", "cpsim.book_households",
                 "cpsim.book_accounts", "cpsim.book_positions", "cpsim.book_transactions", "cpsim.oauth_codes",
                 "cpsim.oauth_tokens", "cpsim.orders", "cpsim.order_executions")
-NEW_CPSIM_PRIVS = {"orders": {"SELECT", "INSERT", "UPDATE"}, "order_executions": {"SELECT", "INSERT"}}
+# fix 1: from the ONE list verify_cpsim02 reads too (orders: S/I/U; order_executions: S/I) — asserted exactly below
+NEW_CPSIM_PRIVS = {t: set(FX.cpsim_app_privileges(t)) for t in ("orders", "order_executions")}
+assert NEW_CPSIM_PRIVS == {"orders": {"SELECT", "INSERT", "UPDATE"}, "order_executions": {"SELECT", "INSERT"}}
 
 S: dict = {"cp": {}, "keys": {}, "client_ids": {}, "issued": [], "ins": {}, "orders": {}, "bodies": []}
 NETWORK_CALLS: list[str] = []

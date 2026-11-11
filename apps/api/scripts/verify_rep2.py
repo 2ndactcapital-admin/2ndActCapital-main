@@ -839,9 +839,22 @@ async def y_capabilities(conn):
         find("Altruist capabilities recorded since rep2 (no longer all 'unknown')", f"{recorded}")
     check(man.get("equity_trading_api", {}).get("value") == "no" and man.get("model_api", {}).get("value") == "no",
           "manual: trade APIs 'no'")
-    check(all((c.get("evidence") or "").strip() and c.get("as_of") and c.get("evidence_kind") in
-              ("document", "url", "assumed") for c in list(alt.values()) + list(man.values())),
-          "every seeded capability carries evidence, its kind and an as-of date")
+    # cpsim03 fix 1 (VHK2 scoping): "seeded" = a RECORDED row. A key added after the seed with no row for a custodian
+    # (cash07's payment_sheet for Altruist) is served as a synthesized cell (recorded: false, as_of None) — not a
+    # seeded capability. Those cells must still be 'unknown' and NOT available; each is listed as a [FIND].
+    cells = list(alt.values()) + list(man.values())
+    seeded = [c for c in cells if c.get("recorded") is not False]
+    unrec = [c for c in cells if c.get("recorded") is False]
+    check(bool(seeded) and all((c.get("evidence") or "").strip() and c.get("as_of") and c.get("evidence_kind") in
+                               ("document", "url", "assumed") for c in seeded),
+          "every seeded capability carries evidence, its kind and an as-of date",
+          f"{len(seeded)} recorded; bad {[(c['custodian_code'], c['capability_key']) for c in seeded if not c.get('as_of')]}")
+    check(all(c.get("value") == "unknown" and c.get("available") is False and c.get("version_no") is None
+              for c in unrec), "a key with no recorded row is served as 'unknown', NOT available, version-less",
+          f"{[(c['custodian_code'], c['capability_key'], c.get('value')) for c in unrec]}")
+    if unrec:
+        find("capability keys with no recorded row (served as 'unknown')",
+             f"{sorted((c['custodian_code'], c['capability_key']) for c in unrec)}")
     check(out.get("permissions", {}).get("can_write") is False and out.get("vocabularies", {}).get("editable") == [],
           "staff envelope: read-only (can_write false, editable [])")
     code_m, out_m = await api(U_MEMBER, "GET", "/api/v1/custodians/capabilities")

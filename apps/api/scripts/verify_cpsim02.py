@@ -922,13 +922,14 @@ async def y_schema(conn):
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) a
         WHERE a.grantee = (SELECT oid FROM pg_roles WHERE rolname = 'cpsim_app') AND c.relkind IN ('r', 'v', 'm', 'p',
         'S')""")}
-    expect = {(f"cpsim.{t}", p) for t in tabs for p in ("SELECT", "INSERT", "UPDATE", "DELETE")
-              if not (t == "book_uploads" and p in ("UPDATE", "DELETE"))}
+    # cpsim03 fix 1: the documented narrower grants (the upload log; cpsim03's append-only executions and never-deleted
+    # orders) come from ONE list both verifies share — still the EXACT set, nothing looser
+    expect = {(f"cpsim.{t}", p) for t in tabs for p in FX.cpsim_app_privileges(t)}
     expect |= {(f"portfolio.{t}", "SELECT") for t in ("securities_global", "securities_global_identifiers",
                                                        "securities_global_prices")}
     check(bool(privs) and privs == expect,
-          "cpsim_app's relation privileges are EXACTLY: S/I/U/D on every cpsim table except the upload log (SELECT + "
-          "INSERT only), SELECT on the three security-master / price tables — nothing new in public",
+          "cpsim_app's relation privileges are EXACTLY: S/I/U/D on every cpsim table except the documented "
+          f"narrower grants {sorted((t, sorted(w)) for t, w in FX.CPSIM_APP_WITHHELD.items())} (_cpsim_fixtures), SELECT on the three security-master / price tables — nothing new in public",
           f"extra={sorted(privs - expect)[:5]} missing={sorted(expect - privs)[:5]}")
     others = {(r["t"], r["g"]) for r in await platform(conn, """
         SELECT n.nspname || '.' || c.relname AS t, COALESCE(g.rolname, 'PUBLIC') AS g

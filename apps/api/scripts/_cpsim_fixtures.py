@@ -38,6 +38,21 @@ CP_TABLES = ("cpsim.order_executions", "cpsim.orders", "cpsim.oauth_tokens", "cp
              "cpsim.counterparty_behaviour", "cpsim.counterparty_clock", "cpsim.counterparty_credentials")
 
 
+#: cpsim03 fix 1 — the ONE place both verify_cpsim02 and verify_cpsim03 read cpsim_app's documented, deliberately
+#: NARROWER grants from. Every other cpsim table: exactly SELECT / INSERT / UPDATE / DELETE. Each entry names its source.
+CPSIM_APP_FULL = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
+CPSIM_APP_WITHHELD = {
+    "book_uploads": frozenset({"UPDATE", "DELETE"}),       # cpsim02: the upload log is append-only (SELECT + INSERT)
+    "order_executions": frozenset({"UPDATE", "DELETE"}),   # docs/cpsim03_part1.sql: executions append-only
+    "orders": frozenset({"DELETE"}),                       # docs/cpsim03_part1.sql: system-axis, never deleted
+}
+
+
+def cpsim_app_privileges(table: str) -> frozenset:
+    """The EXACT relation privileges cpsim_app must hold on ``cpsim.<table>`` (no wildcard, nothing looser)."""
+    return CPSIM_APP_FULL - CPSIM_APP_WITHHELD.get(table, frozenset())
+
+
 class TimeoutASGITransport(httpx.ASGITransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         t = (request.extensions.get("timeout") or {}).get("read")
