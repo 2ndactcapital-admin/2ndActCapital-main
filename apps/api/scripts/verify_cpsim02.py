@@ -1169,13 +1169,13 @@ async def y_read_api(conn):
     check(SO.digest(tok.access_token) in hashes and not any(r["token_hash"] == tok.access_token for r in stored)
           and all(len(r["last4"]) == 4 for r in stored), "tokens are stored as sha256 (+ last four) only")
     api_base = hosts["api_base"]
-    hh = await AO.fetch_resource(api_base=api_base, resource="households", access_token=tok.access_token)
+    hh = await AO.fetch_resource(api_base=api_base, resource="households", access_token=tok.access_token, transport=APP_T)
     check(sorted(h["id"] for h in hh) == sorted([HH1, HH2, HH3]), "households (fetch_resource — the path every "
           "call_* uses): the book's three households", f"{[h['id'] for h in hh]}")
-    ac = await AO.fetch_resource(api_base=api_base, resource="accounts", access_token=tok.access_token, param=HH1)
+    ac = await AO.fetch_resource(api_base=api_base, resource="accounts", access_token=tok.access_token, param=HH1, transport=APP_T)
     check(sorted(a["id"] for a in ac) == sorted([A1, A2]), "accounts?household_id=: filtered by household",
           f"{[a['id'] for a in ac]}")
-    ps = await AO.fetch_resource(api_base=api_base, resource="positions", access_token=tok.access_token, param=A1)
+    ps = await AO.fetch_resource(api_base=api_base, resource="positions", access_token=tok.access_token, param=A1, transport=APP_T)
     by_id = {p["id"]: p for p in ps}
     sec, cash = by_id.get("cpv-p-a1-thu") or {}, by_id.get("cpv-p-a1-cash-thu") or {}
     exp_mv = (10 * Decimal(PRICE_THU)).quantize(Decimal("0.01"))
@@ -1184,7 +1184,7 @@ async def y_read_api(conn):
           "quantity" in cash and cash.get("quantity") is None,
           "positions?account_id=: the Thursday snapshot on Friday's clock; a blank market value = quantity × the "
           "last PLATFORM price on or before the as-of date; cash carries no quantity", f"{dumps(ps)[:400]}")
-    tx = await AO.fetch_resource(api_base=api_base, resource="transactions", access_token=tok.access_token, param=A1)
+    tx = await AO.fetch_resource(api_base=api_base, resource="transactions", access_token=tok.access_token, param=A1, transport=APP_T)
     check(sorted(t["id"] for t in tx) == ["cpv-t-a1-buy-thu", "cpv-t-a1-int-thu"] and
           all(t["type"] in APS.TRANSACTION_TYPE_MAP for t in tx), "transactions?account_id=: trade_date ≤ the clock; "
           "every type one the client maps", f"{[t['id'] for t in tx]}")
@@ -1278,7 +1278,7 @@ async def y_behaviour(conn):
     note_audit("counterparty.behaviour_updated", S["cp"]["main"]) if c1 == HTTP_OK else None
     err = None
     try:
-        await AO.fetch_resource(api_base=hosts["api_base"], resource="households", access_token=tok.access_token)
+        await AO.fetch_resource(api_base=hosts["api_base"], resource="households", access_token=tok.access_token, transport=APP_T)
     except AO.AltruistOAuthError as exc:
         err = str(exc)
     raw_r = await raw_sim("GET", f"{hosts['api_base']}/api/v2/households",
@@ -1302,7 +1302,7 @@ async def y_behaviour(conn):
           f"(injected {DELAY_CLIENT_TIMEOUT_S} s through TimeoutASGITransport) as AltruistOAuthError", f"{err2} {el:.1f}s")
     c3, _ = await api(U_SA, "PUT", cpu("main", "/behaviour"), {"default_outcome": "accept", "delay_seconds": None})
     note_audit("counterparty.behaviour_updated", S["cp"]["main"]) if c3 == HTTP_OK else None
-    ok = await AO.fetch_resource(api_base=hosts["api_base"], resource="households", access_token=tok.access_token)
+    ok = await AO.fetch_resource(api_base=hosts["api_base"], resource="households", access_token=tok.access_token, transport=APP_T)
     check(c3 == HTTP_OK and len(ok) == 3, "behaviour back to accept: served again")
 
 
@@ -1435,15 +1435,15 @@ async def y_clock(conn):
     tok = await AO.exchange_code_for_tokens(environment=AO.SIMULATOR, code=code, hosts=hosts)
     S["issued"] += [code, tok.access_token, tok.refresh_token]
     p1 = {p["id"] for p in await AO.fetch_resource(api_base=hosts["api_base"], resource="positions",
-                                                   access_token=tok.access_token, param=A1)}
+                                                   access_token=tok.access_token, param=A1, transport=APP_T)}
     t1 = {t["id"] for t in await AO.fetch_resource(api_base=hosts["api_base"], resource="transactions",
-                                                   access_token=tok.access_token, param=A1)}
+                                                   access_token=tok.access_token, param=A1, transport=APP_T)}
     ca, adv = await api(U_SA, "POST", cpu("main", "/clock/advance"))
     note_audit("counterparty.clock_advanced", S["cp"]["main"]) if ca == HTTP_OK else None
     p2 = {p["id"] for p in await AO.fetch_resource(api_base=hosts["api_base"], resource="positions",
-                                                   access_token=tok.access_token, param=A1)}
+                                                   access_token=tok.access_token, param=A1, transport=APP_T)}
     t2 = {t["id"] for t in await AO.fetch_resource(api_base=hosts["api_base"], resource="transactions",
-                                                   access_token=tok.access_token, param=A1)}
+                                                   access_token=tok.access_token, param=A1, transport=APP_T)}
     check(p1 == {"cpv-p-a1-thu", "cpv-p-a1-cash-thu"} and "cpv-t-a1-buy-mon" not in t1 and ca == HTTP_OK and
           adv.get("to") == MON.isoformat() and p2 == {"cpv-p-a1-mon", "cpv-p-a1-cash-mon"} and
           "cpv-t-a1-buy-mon" in t2, "Friday: the Thursday snapshot, no Monday trade; advance → Monday: the Monday "
@@ -1636,7 +1636,7 @@ async def y_e2e(conn):
           "crosswalked to REAL Altruist) becomes one exception; no account is ever created",
           f"{cs} {dumps(s1)} {exc_map}")
     served_p = len(await AO.fetch_resource(api_base=sim_hosts()["api_base"], resource="positions",
-                                           access_token=S["tokens"].access_token, param=A1)) if S.get("tokens") else -1
+                                           access_token=S["tokens"].access_token, param=A1, transport=APP_T)) if S.get("tokens") else -1
     check(p1 == served_p and p1 > 0 and t1 >= 1 and srcs == {SIM_LEDGER},
           "positions + transactions synced into T's fixture account, tagged altruist_simulator (re-read "
           "independently)", f"positions={p1} served={served_p} transactions={t1} {srcs}")
