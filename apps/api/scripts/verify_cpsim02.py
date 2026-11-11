@@ -2171,8 +2171,10 @@ async def cleanup_only(conn) -> int:
 FIXTURE_SECTIONS = (("read_api", y_read_api), ("behaviour", y_behaviour), ("book", y_book), ("clock", y_clock),
                     ("client", y_client), ("e2e", y_e2e), ("isolation", y_isolation), ("webhooks", y_webhooks),
                     ("conformance", y_conformance), ("admin", y_admin), ("safety", y_safety), ("harness", y_harness))
+# cpsim02 fix 1: webhooks uploads MONDAY rows and expects the resync to add positions — served only once the clock
+# section has advanced the counterparty to Monday (the full run's order); the one-off now declares that dependency
 ONLY_NEEDS = {"read_api": (), "behaviour": (), "book": (), "clock": (), "client": (), "e2e": ("read_api",),
-              "isolation": ("read_api", "e2e"), "webhooks": ("read_api", "e2e"), "conformance": (),
+              "isolation": ("read_api", "e2e"), "webhooks": ("read_api", "clock", "e2e"), "conformance": (),
               "admin": ("read_api", "e2e"), "safety": (), "harness": ()}
 
 
