@@ -32,9 +32,10 @@ BEGIN_STRINGS = ("FIX.4.2", "FIX.4.4", "FIXT.1.1")
 FIX_FIELDS = ("begin_string", "sender_comp_id", "target_comp_id", "host", "port", "heartbt_int", "reset_on_logon",
               "username")
 BEHAVIOUR_FIELDS = ("default_outcome", "reject_reason", "partial_pct", "delay_seconds", "ach_return_code",
-                    "ach_return_after_days", "webhooks_enabled")
+                    "ach_return_after_days", "webhooks_enabled", "webhook_url")
 BANK_GROUPS = {"bank_domestic": "domestic", "bank_international": "international"}
 SETTING_ALLOWED = "counterparty_sim.allowed"
+SETTING_COUNTERPARTY = "counterparty_sim.altruist_counterparty"     # cpsim02 D2: the slug an org's simulator talks to
 
 _today = None   # injectable (tests): a zero-argument callable returning a date
 
@@ -112,6 +113,13 @@ async def business_date(conn, counterparty_id) -> date | None:
                                "AND valid_to IS NULL", str(counterparty_id))
 
 
+async def behaviour(conn, counterparty_id) -> dict | None:
+    return _d(await conn.fetchrow(
+        "SELECT default_outcome, reject_reason, partial_pct, delay_seconds, ach_return_code, ach_return_after_days, "
+        "webhooks_enabled, webhook_url FROM cpsim.counterparty_behaviour WHERE counterparty_id = $1::uuid "
+        "AND valid_to IS NULL", str(counterparty_id)))
+
+
 async def list_counterparties(conn) -> list[dict]:
     rows = await conn.fetch(
         """SELECT c.id, c.slug, c.name, c.institution_type, t.label AS institution_type_label, c.status,
@@ -145,7 +153,7 @@ async def detail(conn, counterparty_id) -> dict:
         "FROM cpsim.counterparty_bank_details WHERE counterparty_id = $1::uuid AND valid_to IS NULL ORDER BY kind", cid)]
     behaviour = _d(await conn.fetchrow(
         "SELECT id, default_outcome, reject_reason, partial_pct, delay_seconds, ach_return_code, ach_return_after_days, "
-        "webhooks_enabled, valid_from FROM cpsim.counterparty_behaviour WHERE counterparty_id = $1::uuid "
+        "webhooks_enabled, webhook_url, valid_from FROM cpsim.counterparty_behaviour WHERE counterparty_id = $1::uuid "
         "AND valid_to IS NULL", cid))
     clock = [dict(r) for r in await conn.fetch(
         "SELECT business_date, reason, valid_from, valid_to FROM cpsim.counterparty_clock WHERE counterparty_id = "
@@ -159,7 +167,7 @@ async def detail(conn, counterparty_id) -> dict:
 
 async def request_log(conn, counterparty_id, limit: int = 50) -> list[dict]:
     return [dict(r) for r in await conn.fetch(
-        "SELECT id, method, path, status, auth_outcome, shape_valid, error_count, message_type, at "
+        "SELECT id, method, path, status, auth_outcome, shape_valid, error_count, message_type, direction, latency_ms, at "
         "FROM cpsim.request_log WHERE counterparty_id = $1::uuid ORDER BY at DESC LIMIT $2",
         str(counterparty_id), int(limit))]
 
@@ -353,11 +361,11 @@ async def set_behaviour(conn, counterparty_id, fields: dict, actor) -> dict:
         raise RegistryError(f"default outcome must be one of {', '.join(OUTCOMES)}")
     await _guard(conn.execute(
         "INSERT INTO cpsim.counterparty_behaviour (counterparty_id, default_outcome, reject_reason, partial_pct, "
-        "delay_seconds, ach_return_code, ach_return_after_days, webhooks_enabled, created_by) VALUES ($1::uuid, $2, $3, "
-        "$4::numeric, $5::int, $6, $7::int, $8, $9::uuid)", str(cp["id"]), new["default_outcome"],
+        "delay_seconds, ach_return_code, ach_return_after_days, webhooks_enabled, webhook_url, created_by) VALUES "
+        "($1::uuid, $2, $3, $4::numeric, $5::int, $6, $7::int, $8, $9, $10::uuid)", str(cp["id"]), new["default_outcome"],
         new.get("reject_reason") or None, None if new.get("partial_pct") is None else str(new["partial_pct"]),
         new.get("delay_seconds"), new.get("ach_return_code") or None, new.get("ach_return_after_days"),
-        bool(new.get("webhooks_enabled")), _uid(actor)))
+        bool(new.get("webhooks_enabled")), new.get("webhook_url") or None, _uid(actor)))
     return {"before": _jsonable(base), "after": _jsonable({k: new.get(k) for k in BEHAVIOUR_FIELDS})}
 
 
@@ -411,17 +419,18 @@ async def authenticate(conn, cp: dict, presented: str | None) -> str:
 
 
 async def log_request(conn, *, counterparty_id, slug, method, path, status, auth_outcome, shape_valid=None,
-                      error_count=0, message_type=None) -> None:
+                      error_count=0, message_type=None, direction="in", latency_ms=None) -> None:
     safe_path = (path or "/")[:300]
     if "cpsim_" in safe_path:
         safe_path = "[redacted path]"
     mt = message_type if (isinstance(message_type, str) and "cpsim_" not in message_type) else None
     await conn.execute(
         "INSERT INTO cpsim.request_log (counterparty_id, slug, method, path, status, auth_outcome, shape_valid, "
-        "error_count, message_type) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)",
+        "error_count, message_type, direction, latency_ms) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         str(counterparty_id) if counterparty_id else None, slug, method if method in (
             "GET", "POST", "PUT", "PATCH", "DELETE") else "GET", safe_path, int(status), auth_outcome, shape_valid,
-        int(error_count), mt[:80] if mt else None)
+        int(error_count), mt[:80] if mt else None, direction if direction in ("in", "out") else "in",
+        None if latency_ms is None else max(0, int(latency_ms)))
 
 
 async def may_connect(conn, org_id, household_id=None) -> bool:
