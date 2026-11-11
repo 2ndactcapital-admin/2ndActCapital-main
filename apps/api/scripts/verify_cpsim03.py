@@ -231,7 +231,6 @@ from services import sod  # noqa: E402
 from services import users as users_mod  # noqa: E402
 from services import workflow_autonomy as WA  # noqa: E402
 from services.action_registry import REGISTRY  # noqa: E402
-from services.custody.trading import AltruistTradeAdapter  # noqa: E402
 import services.database as DBM  # noqa: E402
 
 TAG = "cpsim03verify"

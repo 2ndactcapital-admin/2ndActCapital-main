@@ -200,22 +200,20 @@ export function CustodianOrderPanel({ envelope, orderView, setOrderView, onDone 
   const c = instructionControls(envelope);
   const m = custodianModel(envelope);
   const [msg, setMsg] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const action = useBusy(); // CATCHALL1 busy — Send to custodian / Import fills
   useEffect(() => {
     if (!m.orderId || orderView || !setOrderView) return;
     fetch(`/api/execution/instructions/${d.id}/custodian-order`).then((r) => r.json().then((j) => (r.ok ? j : null)))
       .then((j) => j && setOrderView(j)).catch(() => {});
   }, [m.orderId, d.id, orderView, setOrderView]);
   if (!m.simulated && !m.sendRefused) return null;
-  async function run(path) {
-    setMsg(null); setBusy(true);
-    try {
-      const out = await call(`instructions/${d.id}/${path}`, {});
-      if (out.outcome === "rejected") setMsg(`Refused by the custodian: ${out.reason}`);
-      if (setOrderView) setOrderView(null);
-      onDone?.();
-    } catch (err) { setMsg(err.message); } finally { setBusy(false); }
-  }
+  const run = (path) => action.run(async () => {
+    setMsg(null);
+    const out = await call(`instructions/${d.id}/${path}`, {});
+    if (out.outcome === "rejected") setMsg(`Refused by the custodian: ${out.reason}`);
+    if (setOrderView) setOrderView(null);
+    onDone?.();
+  });
   const execs = orderExecutions(orderView);
   const order = orderView?.order || null;
   return (
@@ -230,9 +228,10 @@ export function CustodianOrderPanel({ envelope, orderView, setOrderView, onDone 
         <p className="mt-1" data-testid="custodian-send-refused">Send to custodian is not available: {m.sendRefused}</p>
       ) : null}
       <div className="mt-3 flex flex-wrap gap-2">
-        {c.sendToCustodian ? <button type="button" className={primary} disabled={busy} onClick={() => run("send-to-custodian")}>Send to custodian (simulated)</button> : null}
-        {c.importFills ? <button type="button" className={primary} disabled={busy} onClick={() => run("import-fills")}>Import fills</button> : null}
+        {c.sendToCustodian ? <BusyButton busy={action.busy} busyLabel="Sending…" className={primary} onClick={() => run("send-to-custodian")}>Send to custodian (simulated)</BusyButton> : null}
+        {c.importFills ? <BusyButton busy={action.busy} busyLabel="Importing…" className={primary} onClick={() => run("import-fills")}>Import fills</BusyButton> : null}
       </div>
+      <BusyError error={action.error} className="mt-2 block text-[#9B2335]" />
       {order ? (
         <div className="mt-3" data-testid="custodian-order">
           <p>Order {order.order_id} — <span className="font-medium text-navy">{order.status}</span>{order.reject_reason ? ` (${order.reject_reason})` : ""} · filled {order.filled_quantity}</p>
