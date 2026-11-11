@@ -1601,34 +1601,129 @@ async def y_governance(conn):
           "services.workflow_autonomy")
     check(sod.VERB_DUTIES.get("cash.payment_send") == "write" and sod.VERB_DUTIES.get("cash.payment_refresh") == "write",
           "services.sod.VERB_DUTIES names both as 'write' duties")
-    keys = [k for k in REGISTRY if any(w in k for w in ("payment", "transfer", "custodian"))]
-    check(not any(k in REGISTRY for k in ("cash.payment_send", "cash.payment_refresh")) and not any(
-        ("send" in k or "refresh" in k) and "payment" in k for k in keys),
-          "neither is registered as an action (no workflow action, S29b step, agent or trigger can name them)",
-          f"{keys[:5]}")
+    # CPSIM04 FIX 1 (G): the registry is an ActionRegistry (not iterable) — enumerate it through its public API,
+    # REGISTRY.all(), after register_all() (what the app's lifespan does), exactly as cpsim03's scan reads it.
+    from services.assistant_actions import register_all as _register_all
+    if not REGISTRY.all():
+        _register_all()
+    acts = REGISTRY.all()
+    keys = [a.key for a in acts]
+    pay_keys = [k for k in keys if any(w in k for w in ("payment", "transfer", "custodian"))]
+    check(bool(acts) and all(REGISTRY.get(k) is None for k in ("cash.payment_send", "cash.payment_refresh"))
+          and not any(("send" in k or "refresh" in k or "settle" in k) and ("payment" in k or "transfer" in k)
+                      for k in pay_keys),
+          f"neither is registered as an action ({len(acts)} registered actions enumerated; no workflow action, S29b "
+          "step, agent or trigger can name them)", f"{pay_keys[:5]}")
+    money_rx = re.compile(r"payment_custodian|altruist_transfers|\bsend_to_custodian\(|\brefresh_from_custodian\(|"
+                          r"\bmark_sent\(|\bsettle\(|\backnowledge\(|\brecord_return\(|\bcustodian_reject\(|"
+                          r"\bconsent_requested\(|/v2/transfers")
+
+    def _closure(fn) -> str:
+        """The source of ``fn`` plus every function of ITS OWN module it calls, transitively (one module deep)."""
+        mod = sys.modules.get(getattr(fn, "__module__", "") or "")
+        seen, todo, out = set(), [fn], []
+        while todo:
+            f = todo.pop()
+            name = getattr(f, "__name__", None)
+            if name in seen:
+                continue
+            seen.add(name)
+            try:
+                src = _code_only(inspect.getsource(f))
+            except (OSError, TypeError):
+                out.append(f"<no source for {name}>")
+                continue
+            out.append(src)
+            for callee in set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\(", src)):
+                g = getattr(mod, callee, None) if mod else None
+                if inspect.isfunction(g) and g.__module__ == getattr(mod, "__name__", None) and callee not in seen:
+                    todo.append(g)
+        return "\n".join(out)
+
+    # positive control: the same scan DOES see the money path where it really is (else every "no hit" proves nothing)
+    ctl = [nm for nm, f in (("payment_custodian.send_to_custodian", PC.send_to_custodian),
+                            ("payment_custodian.refresh_from_custodian", PC.refresh_from_custodian))
+           if money_rx.search(_closure(f))]
+    check(len(ctl) == 2, "the scan's positive control: it detects the money path in payment_custodian's own Send and "
+          "Refresh (so a clean result below is real)", f"{ctl}")
+    hits, nosrc = [], []
+    for a in acts:
+        for h in (a.handler, a.draft_handler):
+            if h is None:
+                continue
+            src = _closure(h)
+            if "<no source for" in src:
+                nosrc.append(a.key)
+            m = money_rx.search(src)
+            if m:
+                hits.append(f"{a.key}:{getattr(h, '__name__', h)}:{m.group(0)}")
+    inv = [a.key for a in acts if a.workflow_invocable]
+    check(not hits and not nosrc, f"every registered action ({len(acts)}; {len(inv)} workflow-invocable, incl. "
+          f"{', '.join(sorted(inv)[:4])}…) — handler and draft handler, with every same-module function they call — "
+          "never sends, refreshes, settles or records a custodian status for a payment", f"{hits[:5]} {nosrc[:5]}")
+    import importlib
+    sweeps, sweep_hits = [], []
+    for p in sorted((API_DIR / "services").glob("*.py")):
+        if not re.search(r"^(?:async )?def [A-Za-z_]*sweep[A-Za-z_]*\(", p.read_text(encoding="utf-8"), re.M):
+            continue
+        mod = importlib.import_module(f"services.{p.stem}")
+        for nm, f in inspect.getmembers(mod, inspect.isfunction):
+            if "sweep" in nm and f.__module__ == mod.__name__:
+                sweeps.append(f"{p.stem}.{nm}")
+                m = money_rx.search(_closure(f))
+                if m:
+                    sweep_hits.append(f"{p.stem}.{nm}:{m.group(0)}")
+    check(len(sweeps) >= 5 and "payments.sweep_tick" in sweeps and not sweep_hits,
+          f"every sweep ({len(sweeps)}: {', '.join(sweeps[:6])}…), with every same-module function it calls, never "
+          "sends, refreshes or settles money (the payment sweep only expires / flags)", f"{sweep_hits[:5]}")
+    tick = API_DIR / "workflow_scheduler_tick.py"
+    tsrc = _code_only(tick.read_text(encoding="utf-8")) if tick.exists() else ""
+    check(bool(tsrc) and not money_rx.search(tsrc),
+          "the scheduler tick (apps/api/workflow_scheduler_tick.py — every trigger, sweep and scheduled run starts "
+          "here) names no send / refresh / settle path", f"exists={tick.exists()} {money_rx.search(tsrc)}")
     rf = va.get("cash.rule_fire", {})
     check(rf.get("class") == WA.ELIGIBLE_WITH_CAP and rf.get("draft_only") is True and rf.get("submits_for_approval")
           is True, "a cash06 rule still only drafts + submits (S29b eligible_with_cap, draft only)", f"{rf}")
-    callers = []
-    for p in sorted(list((API_DIR / "services").glob("*.py")) + list((API_DIR / "routers").glob("*.py")) +
-                    [API_DIR / "scripts" / "workflow_scheduler_tick.py"] + list((API_DIR / "cpsim").glob("*.py"))):
-        src = _code_only(p.read_text(encoding="utf-8"))
-        for fn in ("send_to_custodian(", "refresh_from_custodian("):
-            for m in re.finditer(re.escape(fn), src):
-                line = src[:m.start()].rsplit("\n", 1)[-1]
-                if "def " in line:
-                    continue
-                callers.append(f"{p.relative_to(API_DIR)}:{fn}")
-    pay_callers = sorted({c for c in callers if "PC." in c or "payment" in c})
-    check(bool(callers) and all(c.startswith("routers/payments.py") or c.startswith("services/custodian_execution.py")
-                                or c.startswith("routers/execution.py") or c.startswith("services/execution.py")
-                                for c in callers)
-          and any(c.startswith("routers/payments.py") for c in callers),
-          "code scan (every services / routers / cpsim module and the scheduler tick): the payment Send / Refresh are "
-          "called only by the person routes in routers/payments.py (cpsim03's execution Send stays in its own router)",
-          f"{sorted(set(callers))[:8]} {pay_callers[:4]}")
-    for f in ("scripts/workflow_scheduler_tick.py", "services/cash_rules.py", "services/action_registry.py"):
-        src = _code_only((API_DIR / f).read_text(encoding="utf-8")) if (API_DIR / f).exists() else ""
+    # every reference to a send / refresh, classified by MODULE: PC / payment_custodian = the money route (cpsim04),
+    # CX / custodian_execution = the trade route (cpsim03, its own verify). Unclassified = FAIL.
+    money, trade, unknown = [], [], []
+    files = (sorted((API_DIR / "services").rglob("*.py")) + sorted((API_DIR / "routers").glob("*.py"))
+             + sorted((API_DIR / "cpsim").glob("*.py")) + [tick, API_DIR / "main.py"])
+    for p in files:
+        src = _code_only(p.read_text(encoding="utf-8")) if p.exists() else ""
+        rel = str(p.relative_to(API_DIR))
+        imports_pc = bool(re.search(r"from services\.payment_custodian import[^\n]*\b(send_to_custodian|"
+                                    r"refresh_from_custodian)\b", src))
+        for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_.]*\.)?\b(send_to_custodian|refresh_from_custodian)\(", src):
+            line = src[:m.start()].rsplit("\n", 1)[-1]
+            if re.match(r"\s*(async\s+)?def\s*$", line):
+                continue
+            q = (m.group(1) or "").rstrip(".")
+            fn_ = src[:m.start()].rsplit("\nasync def ", 1)[-1].split("(", 1)[0]
+            ref = f"{rel}:{fn_}:{m.group(2)}"
+            if q in ("PC", "payment_custodian", "services.payment_custodian") or (not q and imports_pc):
+                money.append(ref)
+            elif q in ("CX", "custodian_execution", "services.custodian_execution"):
+                trade.append(ref)
+            else:
+                unknown.append(f"{ref} (qualifier {q!r})")
+    rp = _code_only(_src("apps/api/routers/payments.py"))
+    routed = all(re.search(r"@router\.post\([^)]*\)\s*\nasync def " + re.escape(r.split(":")[1]) + r"\(", rp)
+                 for r in money)
+    check(sorted(money) == ["routers/payments.py:payment_refresh_from_custodian_route:refresh_from_custodian",
+                            "routers/payments.py:payment_send_to_custodian_route:send_to_custodian"] and routed
+          and not unknown,
+          "code scan (every services / routers / cpsim module, main.py and the scheduler tick), by MODULE: the payment "
+          "Send / Refresh (services.payment_custodian) are called ONLY by the two person routes in routers/payments.py "
+          "(@router.post); every other send is cpsim03's trade send (custodian_execution); nothing unclassified",
+          f"money={money} trade={trade[:4]} unknown={unknown[:4]} routed={routed}")
+    for f in ("workflow_scheduler_tick.py", "services/cash_rules.py", "services/action_registry.py",
+              "services/workflow_engine.py", "services/domain_events.py"):
+        pth = API_DIR / f
+        src = _code_only(pth.read_text(encoding="utf-8")) if pth.exists() else None
+        if src is None:
+            print(f"[INFO] {f} does not exist (not scanned)")
+            continue
         check("payment_custodian" not in src and "altruist_transfers" not in src,
               f"{f} never reaches the custodian-payment code")
 
