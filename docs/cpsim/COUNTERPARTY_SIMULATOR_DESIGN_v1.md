@@ -1,7 +1,7 @@
 # Counterparty Simulator — design v1 (2026-11-10)
 
-Status: **agreed (Joe, 2026-11-10); four sprints, cpsim01–cpsim04. cpsim01 + cpsim02 merged; cpsim03 built
-(2026-11-11, see `CPSIM03_NOTES.md`).** A semi-independent module that plays the other side of
+Status: **agreed (Joe, 2026-11-10); four sprints, cpsim01–cpsim04 — v1 COMPLETE (2026-11-11).** cpsim01–cpsim03
+merged; cpsim04 built (2026-11-11, see `CPSIM04_NOTES.md`; verify written, not yet run). A semi-independent module that plays the other side of
 Hollisworks — custodians and banks — so the app can be tested and demoed end
 to end without a real counterparty. Altruist first.
 
@@ -92,8 +92,8 @@ a simulator defect.
 | **cpsim01** | The Altruist contract written down; the `cpsim` schema, role and mounted sub-app; counterparty registry + admin page; safety rules; fake-credential generators; behaviour settings and clock (stored); one working mirror endpoint. |
 | **cpsim02** — done 2026-11-10 (verify written, not run) | Altruist read API (OAuth, households, accounts, positions, transactions) + bulk import / export; webhooks out; the existing Altruist integration connected to it for an allowed org; the conformance suite. |
 | **cpsim03** — done 2026-11-11 (verify written, not run; `CPSIM03_NOTES.md`) | Orders: the simulator accepts orders from the Altruist execution router, answers with scripted outcomes (accept / reject / partial / fill at the last price in the price table), reports fills; Hollisworks reconciles. |
-| **cpsim04** | Payments and banks: the payment adapter for a simulated custodian and the two bank types — acknowledge, settle, return (ACH codes), status feed; the clock drives settlement and returns. |
-| later (v2) | Ledgers that move; Schwab file formats; FIX engine if a custodian needs it; multi-day scenarios; fault injection. |
+| **cpsim04** — done 2026-11-11 (verify written, not run; `CPSIM04_NOTES.md`) | Payments and banks: the payment adapter for a simulated custodian and the two bank types — acknowledge, settle, return (ACH codes), status feed, member consent; a cash ledger (transfers and fills move cash); the clock drives settlement and returns. **v1 COMPLETE.** |
+| later (v2) | A FIX engine (if a custodian needs it); Schwab file formats; multi-day scenarios; fault injection (timeouts, partial outages, duplicate / out-of-order webhooks); fees and corporate actions in the book; banks on their own clocks; third-party payees (after counsel). |
 
 Not in v1: FIX sessions, real file formats for Schwab, independent ledgers.
 
@@ -118,3 +118,16 @@ keeping simulated and real data apart (database-level rules, not just UI);
 "mirror" needing scripted outcomes to be useful; time (the clock); FIX being
 a large build with no current consumer; fake bank numbers vs the platform's
 bank-number guard (kept in `cpsim` only).
+
+## 8 · v1 COMPLETE (2026-11-11) and the v2 list
+
+v1 (cpsim01–cpsim04) is complete: registry + admin, the Altruist-compatible read API, books and webhooks, orders and
+fills, transfers, banks, consent, returns and a cash ledger — every flow person-driven, every contract field ASSUMED
+and pinned by the conformance suite (C, O and T groups).
+
+v2 candidates (none scheduled): a **FIX engine** (Schwab-style sessions are stored, never spoken); **Schwab file
+formats** (custody import files instead of an API); **multi-day scenarios** (scripted calendars: maturities, coupon and
+dividend dates, standing transfers); **fault injection** (timeouts, 5xx bursts, duplicate and out-of-order webhooks,
+partial fills over days); **fees and corporate actions** in the simulator's book; **banks on their own clocks** (today a
+bank's legs are booked on the sending custodian's date); **third-party payees** — only after counsel, with cash08's
+switch.

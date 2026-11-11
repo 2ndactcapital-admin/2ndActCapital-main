@@ -169,6 +169,33 @@ registers neither Send nor Refresh anywhere; the verify scans every one of these
    ledger; creating one would add a position cpsim03's books never had). Cash may go negative from fills (no buying
    power check in v1); transfers never overdraw.
 8. **Same counterparty for two orgs shares a book** (cpsim03 finding 12) — unchanged; the verify gives each org its own.
+9. **A bank's legs are booked on the SENDING custodian's clock** (its credit, a return's debit): the bank has a clock of
+   its own (cpsim01), but a transfer is driven by the custodian that moved the money. A bank's read API (its own clock)
+   can therefore lag the ledger until its clock is advanced too. The Received tab reads the movements directly. v2.
+10. **The send-time webhook can arrive before the payment is marked sent** (the same race cpsim03 logged for orders):
+    the receiver then finds no payment carrying that transfer id and raises no to-do; the Send response already tells
+    the sender. Later events (the clock's settlement / return, consent) do raise the to-do.
+11. **A fill's cash moves only where the account's book has a cash row.** If an account gains a cash row later (a
+    transfer credit creates one), fills that settled before then are settled in cash at the next advance. Documented,
+    not changed (v1 has no buying-power model).
+12. **cpsim01's Bank details tab shows the generated fake numbers in full** (its own design: they fail every real
+    check). cpsim04 never shows more than the last four anywhere it added (transfer responses, payment pages, Transfers /
+    Received tabs, crosswalks, audit rows).
+13. **Refresh also runs on a reconciled payment** (`reconciled → returned` is a legal edge, so a late ACH return can be
+    recorded), beyond the four statuses the prompt named. A custodian-side **cancel** is reported, never applied (the
+    payment is cancelled by a person).
+14. **Checks stay manual**: the transfers contract has ACH, wire and journal (D4 condition "rail").
+15. **Every D4 condition is re-checked at Send** (the route is read again, then mark_sent's checks run BEFORE the HTTP
+    call). If mark_sent then fails (a race), the transfer exists at the custodian and the payment stays approved; a
+    repeat Send re-POSTs the same `client_transfer_id` and gets the same transfer (§9.1) — never a second one.
+
+## 9. Final state (Task 10)
+
+All ten tasks committed on `cpsim04-work`. The verify (`apps/api/scripts/verify_cpsim04.py`) is WRITTEN, NOT RUN.
+Proven during the sprint without the verify: the schema read back 22/22 (`_apply_cpsim04.py --verify`); the in-process
+conformance run 51 PASS / 0 FAIL with 0 leftovers; node tests 45/45 (cpsim04 8 + cash07 + cpsim01–03); the boundary
+check OK; `authz1_routes.py --check` and `visibility1_routes.py --check` CURRENT; both loaders' dry runs (cpsim03 still
+22 to set; cpsim04 6 to set). Not run: `npm run build`, the regressions, the verify.
 
 ## 5. The capability loader — `--dry-run` (Task 5, 2026-11-11, run once)
 

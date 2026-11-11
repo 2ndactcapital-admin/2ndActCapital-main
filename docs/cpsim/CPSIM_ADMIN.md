@@ -221,3 +221,74 @@ reason on the instruction page.
 **Operator step (cpsim03):** `python3 apps/api/scripts/cpsim03_capabilities.py --apply --actor-email <Super Admin>`
 when ready to demo trading (the script defaults to a dry run). Nothing else changes. Schema
 `docs/cpsim03_part1.sql` (applied 2026-11-11). Verify: `apps/api/scripts/verify_cpsim03.py` (written, not yet run).
+
+## 13. Money: transfers, banks, consent, returns, the cash ledger (cpsim04)
+
+Hollisworks sends an APPROVED payment instruction to this custodian's transfers API (`/cpsim/c/<slug>/v2/transfers`,
+contract §9 — every field ASSUMED) only when a PERSON presses **Send to custodian (simulated)** on the payment, and
+records each status the custodian reports only when a person presses **Refresh status from custodian**. Nothing moves
+and nothing is recorded on its own. The manual route (payment sheet + Confirm sent) stays available beside it.
+
+**The cash ledger.** An account's balance is its USD **cash row** (row_type cash) in the book — the same row the read
+API serves. Every move is a `cpsim.cash_movements` row (append-only, once per leg) plus the cash row moved (a snapshot
+dated the clock date) plus a feed transaction with an explicit id: `<transfer>-out` (`transfer_out` / `ach_out` /
+`wire_out`), `<transfer>-in` (`transfer_in` / `ach_in` / `wire_in`), `<transfer>-rtn-src` / `-rtn-dst` (`ach_return`,
+signed). Hollisworks maps them to sell / buy / adjustment (D2). A cpsim03 fill now moves cash too, on its settle date
+(the clock advance): a buy debits, a sell credits — only for an account whose book has a cash row. A later book upload
+REPLACES the account (and so its cash ledger), as before.
+
+**Lifecycle** (on THIS custodian's clock):
+
+| Step | When | What |
+|---|---|---|
+| Received | at receipt | Behaviour **Reject** → rejected with the reason; **Require member consent** → awaiting consent; **Delay** → waits for the next clock advance |
+| Acknowledged | at receipt (or after consent / the delay) | a bank destination is checked by the bank first; the source must hold the amount (else rejected "insufficient funds"); the source is debited |
+| Settled | clock ≥ settle date (journal and wire: the value date; ACH: value date + 1 business day) | the destination credited (this custodian's account, or the bank's book account) |
+| Returned (ACH) | `ach_return_after_days` business days after settlement | both legs reversed; the code from THIS custodian's behaviour first, else the receiving bank's |
+
+**Transfers tab** (the custodian): every transfer received, its events, its reject / return reason, the cash ledger's
+last moves, and **Record member consent** on a transfer awaiting it (the custodian's e-consent screen, simulated).
+**Behaviour → Require member consent** switches consent on (`consent_required`). **Advance one business day** now also
+acknowledges delayed transfers, settles what is due, returns what is due and settles fills' cash — the Clock tab lists
+it, and `transfer.updated` webhooks are sent (when on).
+
+**Banks** (Domestic bank, International bank). A bank keeps a book too (**Import / Export** — households, accounts, cash
+positions) and has a **Received** tab: transfers sent to it, its cash ledger, and the platform accounts linked to it.
+A bank checks every transfer against its FAKE details: a domestic bank the last four of its ACH routing number (ACH)
+or wire routing number (wire) and the account in its book; an international bank its BIC and the last four of its IBAN
+(wires only). A mismatch, or a bank behaviour of Reject, rejects the transfer with the bank's reason. **Regenerate**
+the bank details after linking and every linked reference is stale — the next transfer is rejected "the routing
+number does not match" (the real-world wrong-ABA failure). Bank details appear as their last four on the Transfers and
+Received tabs.
+
+**Link a platform account to a bank** (Received tab, Super Admin): org + account + the bank's book account id → a
+crosswalk `portfolio.external_references` source `CPSIM_BANK`, external id `<bank slug>:<account id>:<references>` —
+the references are LAST FOUR digits only (and the fake BIC). Allowed orgs only; a real org's demo households only.
+
+**Who can move money through it** — ALL must hold, else the payment stays manual and says why: the source is
+crosswalked `ALTRUIST_SIMULATOR` (never real Altruist); the org is allowed, pointed here and connected; the household
+passes the demo rule; the org's `cash.payment_adapters` lists `altruist_simulator`; the capability matrix says
+`altruist_simulator` `payment_status_feed` and the rail are `yes`; the destination is this custodian's account (journal)
+or a linked bank account (ACH / wire; international: wire). Checks stay manual.
+
+**Operator steps (cpsim04), in order:**
+1. `python3 apps/api/scripts/cpsim04_capabilities.py --apply --actor-email <Super Admin>` (ach / wire / journal /
+   payment_status_feed = yes for `altruist_simulator`; the script defaults to a dry run). cpsim03's loader for trading.
+2. Add `altruist_simulator` to `cash.payment_adapters` for the DEMO org only — never `altruist`.
+3. Run `apps/api/scripts/verify_cpsim04.py` (written, not yet run).
+
+### The full demo script
+
+1. **Upload a book** — Admin → Counterparties → the custodian → Import / Export: households, accounts (two of one
+   family), positions with a CASH row per account (e.g. 100,000.00 and 0.00) and a few securities.
+2. **Connect** — Org access on; Connections → point the demo org here → Connect (the first sync runs).
+3. **Trade** — Replication Studio or an instruction: approve it (a second person), **Send to custodian (simulated)**.
+4. **Fill** — the order fills at the last platform price (or Advance one business day for a delayed / limit order);
+   **Import fills**; reconcile against the synced buy.
+5. **Move cash** — Household → Treasury → Payments: a journal between the family's two accounts (or an ACH / wire to a
+   linked bank account); a second person approves; **Send to custodian (simulated)**; **Refresh status from
+   custodian** (acknowledged → settled); Advance one business day for an ACH.
+6. **Return** — set Behaviour → ACH return R01 after 2 days, send an ACH, advance three business days, Refresh: the
+   payment is Returned (R01), both legs reversed in the book.
+7. **Reconcile** — sync (Connections → Sync); on the payment, Reconcile → the matched feed rows are preselected →
+   Reconcile → Close.

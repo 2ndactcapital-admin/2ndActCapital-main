@@ -71,9 +71,23 @@ trading authority) to a second person.
 
 ## Adapters
 
-Only **manual** ships (`services/payment_adapters.py`). An org setting `cash.payment_adapters` (a list of custodian
-keys) "enables" a direct adapter for a custodian; with no connected implementation that custodian's payments are
-refused with the reason ("not connected — use the manual route"). Adding a real adapter: the checklist in the module.
+**Manual** is the default route (`services/payment_adapters.py`). An org setting `cash.payment_adapters` (a list of
+custodian keys) "enables" a direct adapter for a custodian; with no connected implementation that custodian's payments
+are refused with the reason ("not connected — use the manual route"). Adding a real adapter: the checklist in the
+module.
+
+**The simulated custodian's adapter (cpsim04)** — the ONE connected implementation, for a SIMULATED custodian only
+(key `altruist_simulator`; never `altruist`, so enabling it can never touch a real Altruist account). **A person
+approves, sends and refreshes**: a second person approves (the S30 floor, unchanged); a person presses **Send to
+custodian (simulated)** — every Confirm-sent check runs first (the rail, the value date, BOTH authority checks), then
+the transfer goes to the simulator and the payment is SENT through the same `mark_sent` (channel `custodian_api`, the
+custodian's transfer id kept); a person presses **Refresh status from custodian** — each new custodian status is
+recorded through the same steps (consent requested, acknowledged, settled on the custodian's date, rejected with its
+reason, returned with its code), that person the actor of each. A custodian webhook only raises a to-do ("custodian
+status changed — refresh"). Reconcile is unchanged (the matched feed rows are preselected). It is offered only when
+every condition holds (docs/cpsim/CPSIM_ADMIN.md §13); otherwise the payment page says why it is manual. The payment
+sheet and Confirm sent stay available beside it. Nothing is sent, refreshed or settled by any rule, workflow, sweep or
+agent.
 
 ## Never
 

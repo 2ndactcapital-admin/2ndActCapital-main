@@ -69,3 +69,4 @@ verify_cash08.py
 verify_cpsim01.py
 verify_cpsim02.py
 verify_cpsim03.py
+verify_cpsim04.py
