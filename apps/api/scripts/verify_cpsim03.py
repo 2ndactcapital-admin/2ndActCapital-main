@@ -1106,12 +1106,16 @@ async def seed(conn) -> None:
             await conn.execute("INSERT INTO portfolio.securities_global_prices (global_security_id, price_date, price, "
                                "currency_code, price_type, source, provider_key) VALUES ($1, $2, $3::numeric, 'USD', "
                                "'close', 'cpsim03 verify', $4)", sid, d, px, PROVIDER_KEY)
-    # the tenant asset the sync matches (by ticker) — LINKED to the security master, so reconcile's same-security rule
-    # can hold (the sync itself creates unlinked assets; CPSIM03_NOTES §4)
+    # the tenant asset the sync matches — LINKED to the security master, so reconcile's same-security rule can hold
+    # (the sync itself creates unlinked assets; CPSIM03_NOTES §4). fix 1: the sync matches cusip → isin → ticker and
+    # the book serves the CUSIP only, so the linked asset carries the CUSIP (primary) — with the ticker alone the sync
+    # never matched it and made its own unlinked asset (book / fills FAILs, a vacuous reconcile PASS).
     aid = await PA.create_asset(conn, org_id=str(ORG_A), name=NAME + "EQ asset", asset_type="equity",
                                 global_security_id=str(SEC_EQ), currency_code="USD")
-    await PA.add_identifier(conn, org_id=str(ORG_A), asset_id=aid, id_type="ticker", id_value=TICKER_EQ,
+    await PA.add_identifier(conn, org_id=str(ORG_A), asset_id=aid, id_type="cusip", id_value=CUSIP_EQ,
                             is_primary=True)
+    await PA.add_identifier(conn, org_id=str(ORG_A), asset_id=aid, id_type="ticker", id_value=TICKER_EQ,
+                            is_primary=False)
     S["asset_eq"] = aid
     await set_cap(conn, "yes")
     os_ = {r["id"] for r in await platform(conn, "SELECT id FROM organizations WHERE id = ANY($1::uuid[]) AND is_test",
@@ -1580,10 +1584,11 @@ async def y_fills(conn):
     cr, orr = await api(U_SD, "POST", f"{_X}/instructions/{iid}/reconcile",
                         {"method": "custodian_data", "reference": order.get("order_id"), "transaction_ids": pre})
     row = await instruction(conn, iid)
-    check(cr == HTTP_OK and row.get("status") == "reconciled" and row.get("reconcile_method") == "custodian_data" and
+    check(cr == HTTP_OK and bool(pre) and pre == S.get("synced_accept") and row.get("status") == "reconciled" and
+          row.get("reconcile_method") == "custodian_data" and
           row.get("reconcile_reference") == order.get("order_id"), "Reconcile (custodian_data, reference = the "
           "custodian order id, the synced transaction) → reconciled — a person, through the existing reconcile",
-          f"{cr} {dumps(orr)[:200]}")
+          f"{cr} pre={pre} {dumps(orr)[:200]}")
 
 
 # ── webhooks (D9) ───────────────────────────────────────────────────────────────────────────────────────────────
