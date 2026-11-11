@@ -168,6 +168,18 @@ async def _executions(conn, order_row_id) -> list:
                                  "ORDER BY executed_at, exec_id", str(order_row_id)))
 
 
+async def _executions_by_row(conn, order_row_ids) -> dict:
+    """fix 3 — the executions of MANY orders in ONE query (the lists were N+1: one query per order, so a list's latency
+    grew linearly with the account's order count). Same rows, same per-order order as ``_executions``."""
+    ids = [str(i) for i in order_row_ids]
+    out: dict = {i: [] for i in ids}
+    if ids:
+        for e in await conn.fetch("SELECT * FROM cpsim.order_executions WHERE order_row_id = ANY($1::uuid[]) "
+                                  "ORDER BY order_row_id, executed_at, exec_id", ids):
+            out[str(e["order_row_id"])].append(e)
+    return out
+
+
 def _filled(execs) -> tuple[Decimal, Decimal]:
     q = sum((Decimal(e["quantity"]) for e in execs), Decimal(0))
     n = sum((Decimal(e["quantity"]) * Decimal(e["price"]) for e in execs), Decimal(0))
@@ -202,7 +214,8 @@ async def list_for_account(conn, counterparty_id, account_id: str) -> list[dict]
     rows = await conn.fetch("SELECT * FROM cpsim.orders WHERE counterparty_id = $1::uuid AND account_external_id = $2 "
                             "AND system_to IS NULL ORDER BY created_at DESC, order_id", str(counterparty_id),
                             account_id)
-    return [order_out(r, await _executions(conn, r["id"])) for r in rows]
+    execs = await _executions_by_row(conn, [r["id"] for r in rows])
+    return [order_out(r, execs[str(r["id"])]) for r in rows]
 
 
 async def list_recent(conn, counterparty_id, limit: int = 100) -> list[dict]:
@@ -210,8 +223,9 @@ async def list_recent(conn, counterparty_id, limit: int = 100) -> list[dict]:
     rows = await conn.fetch("SELECT * FROM cpsim.orders WHERE counterparty_id = $1::uuid AND system_to IS NULL "
                             "ORDER BY created_at DESC, order_id LIMIT $2", str(counterparty_id), int(limit))
     out = []
+    execs = await _executions_by_row(conn, [r["id"] for r in rows])
     for r in rows:
-        o = order_out(r, await _executions(conn, r["id"]))
+        o = order_out(r, execs[str(r["id"])])
         o["outcome"] = r["outcome"]
         out.append(o)
     return out

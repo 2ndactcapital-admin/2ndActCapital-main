@@ -244,3 +244,36 @@ every real fingerprint unchanged), so no leftover rows needed removing. Each FAI
 | X2 315 "B asks for A's order — the order exists" | VERIFY (cascade of G) | `S["orders"]["accept"]` was empty: the accept Send was refused. | Fixed by outcomes owning its instruction. |
 | P verify_cpsim02 exact grants: missing executions UPDATE/DELETE, orders DELETE | VERIFY | Catalog = docs/cpsim03_part1.sql:141-142 (orders S/I/U; executions S/I), deliberately stricter. cpsim02's exact-set check knew only the upload-log exception. | `_cpsim_fixtures.CPSIM_APP_WITHHELD` / `cpsim_app_privileges()` is now the ONE list. verify_cpsim02 builds its EXACT expected set from it, and verify_cpsim03's `NEW_CPSIM_PRIVS` derives from it (asserted equal to S/I/U and S/I). No DELETE grant was added: teardown of both tables stays on the operator (owner) DSN with `cpsim.allow_teardown = 'fixture'`, as the upload log does (the log's teardown removed 7 executions that way). |
 | Q verify_rep2 "every seeded capability carries evidence" | VERIFY (in rep2; not cpsim03-caused) | Read-only catalog query: current Altruist rows lack ONLY key `payment_sheet`, added to `CAPABILITY_KEYS` by cash07 (c283a4a) with no Altruist row. `matrix()` serves the gap as a synthesized cell (`recorded: false`, `as_of None`), which rep2's live scan counted as seeded. (a) fixture rows `zz_%`: 0; (b) `altruist_simulator` rows, any version: **0** (loader not applied); (c) live-state scan → VERIFY. | rep2 checks evidence on RECORDED cells (non-empty set). Unrecorded cells must be `unknown`, not available and version-less, and each is listed as a [FIND]. No capability row was written. |
+
+## 9b. Fix 2 + fix 3 (cpsim03.fix2 / .fix3, 2026-11-11)
+
+Fix 2 is recorded in its commit messages (1661258, 448a0aa, 41a4f5e, 1eaab39, 09838c6): repeat rule in contract §8.1 +
+conformance O15; `--cleanup-only` per-table counts + real-row fingerprints (377 leftovers → 0, 13/0); VERIFY G2 — the
+maker test is now a real `services.sod` maker-checker refusal (fixture U_MA); verify_rep2 `--only`; per-section
+one-offs. [FIND] conformance O03 failed once in 10 runs (detail lost); the verify prints every failing conformance
+detail. Assertion unchanged.
+
+**Fix 3, Task 2 — O03.** One-off harness (not committed; `/tmp/o03h/repro.py`): the in-process fixture of
+`cpsim_altruist_conformance.run_in_process`, then `altruist_conformance.run` 10 times in ONE fixture (orders group
+included; `held` advanced by the 2 shares each run's buy fills), every in-process call timed through a subclass of
+`FX.TimeoutASGITransport`. Same 15 s client read timeout; O03 never skipped. No network (0 attempts).
+
+| run | before the fix: O03 / its GET list | after the fix: O03 / its GET list |
+|---|---|---|
+| 1 | PASS / 0.57 s | PASS / 1.21 s |
+| 4 | PASS / 3.76 s | PASS / 1.31 s |
+| 8 | PASS / 2.95 s — **O05 FAIL: a `GET /v2/orders` took 16.6 s → in-process ReadTimeout** | PASS / 1.48 s |
+| 10 | PASS / 4.30 s | PASS / 1.47 s |
+| all | **O03 10/10 PASS**, 1 other FAIL (O05) | **O03 10/10 PASS**, 0 other FAILs |
+
+- Evidence: before the fix the `GET /v2/orders` latency rose with every run (0.57 → 4.3 s) while every other call
+  stayed flat — it grew with the account's ORDER COUNT. `cpsim/orders.list_for_account` (and `list_recent`, the admin
+  Orders tab) ran one `order_executions` query per order: N+1 round trips over the pooler. The 16.6 s list in run 8 is
+  the slow path plus a latency spike outrunning the 15 s timeout. The harness is NOT the cause: the suite is
+  sequential (one request at a time; no shared-transport contention), and fix 1's `drain()` concerns webhook
+  delivery, which these list calls do not wait on.
+- **CODE (simulator, minimal):** `_executions_by_row` — the executions of every listed order in ONE query
+  (`order_row_id = ANY(...)`, same per-order ordering). Both lists use it. Single-order paths are unchanged.
+- The ORIGINAL fix-2 O03 failure (a fresh fixture, so its list held 1 order) is still not reproduced; its cause is not
+  proven. The same class of failure — one call outrunning the 15 s read timeout — was reproduced once (O05, run 8)
+  and the slow path that fed it is fixed. The printed-detail guard stays in place. Client timeout NOT lengthened.
