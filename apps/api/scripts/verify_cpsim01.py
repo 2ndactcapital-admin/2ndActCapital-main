@@ -254,7 +254,12 @@ def _id(n: int) -> UUID:
     return UUID(f"{FIXTURE_ID_PREFIX}{n:04d}")
 
 
-ORG_T, ORG_T2, ORG_R = _id(1), _id(2), _id(3)          # ORG_R: non-test, ROLLED BACK only
+ORG_T, ORG_T2 = _id(1), _id(2)
+# ORG_R: non-test, ROLLED BACK only. fix 1: it must sit OUTSIDE the reserved '99000000-' prefix — REP6FIX2's
+# organizations_mark_test_fixture trigger forces is_test = true for every id there, so _id(3) silently became a TEST
+# org and the "non-test org" proof read a test org (may_connect correctly said true for plain/mixed/empty). A fixed id
+# outside the prefix, asserted in guard_prefix to match no real org, and never committed (the insert rolls back).
+ORG_R = UUID("c5130000-0000-4000-8000-0000c9510003")
 FIXTURE_ORGS = [ORG_T, ORG_T2]
 U_SA, U_OA, U_MEM = _id(10), _id(11), _id(12)
 ALL_USERS = [U_SA, U_OA, U_MEM]
@@ -836,9 +841,11 @@ async def guard_prefix(conn) -> bool:
                       fetch="fetchval"))
     lg = int(await sim(conn, "SELECT count(*) FROM cpsim.request_log WHERE slug LIKE $1", SLUG_PREFIX + "%",
                        fetch="fetchval"))
-    return check(o == 0 and u == 0 and e == 0 and c == 0 and lg == 0,
-                 "the reserved prefixes (fixture ids, sign-in tag, 'CPSIM01 VERIFY' names, the 'cpsimverify-' slug) "
-                 "match no real row", f"orgs={o} users={u} entities={e} counterparties={c} logs={lg}")
+    r = int(await platform(conn, "SELECT count(*) FROM organizations WHERE id = $1::uuid", ORG_R, fetch="fetchval"))
+    return check(o == 0 and u == 0 and e == 0 and c == 0 and lg == 0 and r == 0,
+                 "the reserved prefixes (fixture ids, sign-in tag, 'CPSIM01 VERIFY' names, the 'cpsimverify-' slug, "
+                 "the out-of-prefix rolled-back org id) match no real row",
+                 f"orgs={o} users={u} entities={e} counterparties={c} logs={lg} org_r={r}")
 
 
 async def seed(conn) -> None:
@@ -1369,8 +1376,11 @@ async def y_admin(conn):
     check(code == 200 and beh is not None and beh["default_outcome"] == "reject" and beh["ach_return_code"] == "R01"
           and beh["webhooks_enabled"] is True, "behaviour stored (reject with reason, ACH return R01 after 2 days, "
           "webhooks on)", f"{code} {dumps(b)[:200]} {dict(beh) if beh else None}")
-    code, b = await api(U_SA, "PUT", f"{_P}/{cid}/behaviour", {"default_outcome": "reject"})
-    check(code == 400, "a reject without a reason is refused (400 — the database CHECK, named)",
+    # fix 1: PUT /behaviour is a SPARSE update (exclude_unset, merged onto the live row), and the PUT above stored
+    # reject_reason='closed' — so a bare {"default_outcome": "reject"} merged into a VALID row (200). Clearing the
+    # reason explicitly makes the merged row a reject with no reason; the database CHECK must still refuse it.
+    code, b = await api(U_SA, "PUT", f"{_P}/{cid}/behaviour", {"default_outcome": "reject", "reject_reason": None})
+    check(code == 400 and "counterparty_behaviour_reject_chk" in dumps(b), "a reject without a reason is refused (400 — the database CHECK, named)",
           f"{code} {dumps(b)[:200]}")
     code, b = await api(U_SA, "PUT", f"{_P}/{S['cp']['schwab']}/fix", {"begin_string": "FIXT.1.1",
                                                                        "rotate_password": True})
