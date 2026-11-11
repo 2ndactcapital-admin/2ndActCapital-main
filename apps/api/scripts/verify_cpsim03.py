@@ -1818,9 +1818,9 @@ async def y_conformance(conn):
     except (OSError, ValueError):
         doc = {}
     res = {r["id"]: r["passed"] for r in doc.get("results", [])}
-    want = [f"O{n:02d}" for n in range(1, 15)]
+    want = [f"O{n:02d}" for n in range(1, 16)]
     check(code == 0 and all(res.get(k) is True for k in want) and doc.get("failed") == 0,
-          "the in-process conformance run: every orders check O01–O14 PASS, 0 FAIL overall",
+          "the in-process conformance run: every orders check O01–O15 PASS (O15 = the different-body repeat rule), 0 FAIL overall",
           f"{code} {[k for k in want if res.get(k) is not True]} {(out + err)[-300:]}")
     code2, out2, _e2 = run_cmd([sys.executable, str(CONFORMANCE), "--target", "sandbox"], REPO, timeout=120)
     check(code2 == REFUSED_EXIT and "orders group: skipped — no published Altruist orders contract" in out2,

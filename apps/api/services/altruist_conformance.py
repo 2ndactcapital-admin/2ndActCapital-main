@@ -10,7 +10,7 @@ uses) — so client and server are proven to agree. It ALSO reads each raw respo
 No database, no simulator import: the target is a base URL + credentials (+ an optional transport). The runner
 (scripts/cpsim_altruist_conformance.py) and the admin page (routers/admin_counterparties.py) supply them.
 
-cpsim03 D10 — the ``orders`` group (O01–O13, contract §8 — every field ASSUMED), driven through the orders client
+cpsim03 D10 — the ``orders`` group (O01–O13 + O15, contract §8 — every field ASSUMED), driven through the orders client
 (services/altruist_trading.py ``post_order`` / ``get_order`` / ``delete_order``) and raw requests. Simulator ONLY: any
 other target skips it with "no published Altruist orders contract". It PLACES ORDERS and so moves the target's book
 (§8.5), so it runs only when the caller passes a fixture book (``orders=``): the in-process fixture run does; the admin
@@ -327,7 +327,7 @@ TS_RX = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
 
 
 async def _orders_group(S: Suite, *, raw, api: str, access: str, credentials, transport, timeout: float, fx: dict):
-    """O01–O13 (contract §8). ``fx`` = {account_id, cusip, held} — a fixture account holding ``held`` shares of a
+    """O01–O13 + O15 (contract §8). ``fx`` = {account_id, cusip, held} — a fixture account holding ``held`` shares of a
     priced equity / fund security named by ``cusip``."""
     from decimal import Decimal
 
@@ -373,6 +373,23 @@ async def _orders_group(S: Suite, *, raw, api: str, access: str, credentials, tr
                 f"status {status}, same id {again.get('order_id') == first.get('order_id')}, orders {len(same)}")
     except Exception as exc:  # noqa: BLE001
         S.check(False, "O03", "§8.1 O-1 (idempotent)", "idempotent POST", f"{type(exc).__name__}: {exc}")
+    try:
+        # cpsim03 fix 2 — the repeat rule pinned on a body that differs in EVERY order field: a repeat POST with the same
+        # client_order_id returns the ORIGINAL order unchanged, 200, whatever the body — and still exactly one order
+        other = {"client_order_id": buy["client_order_id"], "account_id": acct, "cusip": cusip, "side": "sell",
+                 "quantity": "1", "order_type": "limit", "limit_price": "0.01", "time_in_force": "day"}
+        status, again = await AT.post_order(order=other, **kw)
+        got = await AT.get_order(order_id=first.get("order_id", "x"), **kw)
+        r = await raw("GET", f"{api}/v2/orders", params={"account_id": acct}, headers=hdr)
+        same = [o for o in (r.json().get("orders") or []) if o.get("client_order_id") == buy["client_order_id"]]
+        orig = {k: first.get(k) for k in ORDER_FIELDS}
+        diff = [k for k in ORDER_FIELDS if again.get(k) != orig[k] or got.get(k) != orig[k]]
+        S.check(bool(first) and status == 200 and not diff and len(same) == 1, "O15", "§8.1 O-1 (repeat rule)",
+                "a repeat POST with the same client_order_id but a DIFFERENT body (sell / limit / day / qty 1) returns "
+                "the original order unchanged (every §8.3 field), 200 — and there is still exactly one order",
+                f"status {status}, changed {diff}, orders {len(same)}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O15", "§8.1 O-1 (repeat rule)", "different-body repeat POST", f"{type(exc).__name__}: {exc}")
     try:
         got = await AT.get_order(order_id=first.get("order_id", "x"), **kw)
         S.check(got.get("order_id") == first.get("order_id") and got.get("status") == first.get("status"), "O04",

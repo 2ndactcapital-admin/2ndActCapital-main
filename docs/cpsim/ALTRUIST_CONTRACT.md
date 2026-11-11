@@ -627,7 +627,7 @@ Written 2026-11-11 for cpsim03 (`docs/cpsim/CPSIM03_NOTES.md` D1). **Altruist's 
 no repo doc, no code comment, no sandbox call cites an orders contract of any kind. The real Altruist route stays
 manual (`custodian_capabilities` `altruist.equity_trading_api = 'unknown'`; no real trading client exists). Every row
 below is **ASSUMED** — chosen to look like the read API in §3 (same hosts, Bearer access token, JSON, primary list key,
-explicit ids, ISO dates) — and is pinned by the conformance suite's `orders` group (O01–O12,
+explicit ids, ISO dates) — and is pinned by the conformance suite's `orders` group (O01–O15,
 `services/altruist_conformance.py`), so the day a real contract arrives the differences are a list, not a hunt.
 
 Client: `services/altruist_trading.py` (the cpsim02 client conventions: hosts resolved per call, `Bearer` access token
@@ -645,6 +645,13 @@ call, `AltruistOAuthError` on any HTTP status ≥ 400 or a transport failure). S
 | O-4 | `DELETE {api_base}/v2/orders/{order_id}` → `{"order": {…}}` with status `cancelled` | ASSUMED | only while `accepted` / `working` / `partially_filled`; `409` `{detail}` once `filled`, `rejected` or `cancelled` (the reason names the status); executions already made stay |
 | O-5 | resources need an ACCESS token (`Bearer cpsim_at_…`, §2) — the `cpsim_live_` key itself is refused (`401`) | ASSUMED | as §3 |
 | O-6 | every response carries `X-Counterparty-Simulated: true` (simulator only) | simulator | as cpsim02 |
+
+**The repeat rule (O-1, pinned by conformance O03 + O15):** a repeat `POST /v2/orders` with the same
+`client_order_id` (per counterparty) returns the **original order unchanged, `200`, whatever the body** — a different
+side, quantity, order type, limit price or time in force is ignored, not validated against the original, not merged and
+not refused; exactly one order exists for that `client_order_id`. The simulator enforces it with
+`orders_client_order_live_uq` (UNIQUE `(counterparty_id, client_order_id) WHERE system_to IS NULL`) and answers a repeat
+with the live order as stored. ASSUMED, like the rest of §8 (CPSIM03_NOTES §9, fix 1 finding I).
 
 ### 8.2 Order request (POST body)
 
