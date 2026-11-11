@@ -315,8 +315,9 @@ class AltruistTradeAdapter(TradeAdapter):
     #: second Altruist export name) still declares ALTRUIST's capability.
     capability_custodian = "altruist"
     capability_key = "equity_trading_api"
-    #: cpsim03 — the SIMULATED custodian's capability code (D3; a verify substitutes its own fixture code)
-    simulator_capability_custodian = "altruist_simulator"
+    #: cpsim03 — the SIMULATED custodian's capability code: None → services.custodian_execution
+    #: .SIMULATOR_CAPABILITY_CUSTODIAN ('altruist_simulator', D3), the ONE place a verify substitutes its fixture code
+    simulator_capability_custodian: str | None = None
 
     async def declared(self, conn):
         from services.custodian_capabilities import capability
@@ -340,7 +341,8 @@ class AltruistTradeAdapter(TradeAdapter):
                    "presses Send to custodian, then imports the fills")
             result = await ManualTradeAdapter().submit(ctx, trade_list, reason=why, notes=notes,
                                                        routed_via=CX.ROUTE)
-            result.adapter, result.routed_to = self.simulator_capability_custodian, CX.ROUTE
+            result.adapter = self.simulator_capability_custodian or CX.SIMULATOR_CAPABILITY_CUSTODIAN
+            result.routed_to = CX.ROUTE
             result.simulator = {"route": True, "condition": None, "reason": sim["reason"]}
             return result
         if not available(cap):

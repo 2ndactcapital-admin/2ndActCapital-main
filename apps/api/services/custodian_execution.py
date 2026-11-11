@@ -73,8 +73,7 @@ def _refused(condition: str, reason: str) -> dict:
     return {"ok": False, "condition": condition, "reason": reason, "slug": None, "external_account_id": None}
 
 
-async def simulator_route(conn, org_id, account: dict, *,
-                          capability_custodian: str = SIMULATOR_CAPABILITY_CUSTODIAN) -> dict:
+async def simulator_route(conn, org_id, account: dict, *, capability_custodian: str | None = None) -> dict:
     """D2 — ``{ok, condition, reason, slug, external_account_id}``. Reads public tables only (the crosswalk, the org
     settings, the connection, the public may-connect wrapper, the capability matrix)."""
     from services import authority as AU
@@ -102,7 +101,8 @@ async def simulator_route(conn, org_id, account: dict, *,
     e = AU.effective(account)
     if e["custody"] != "integrated" or e["authority"] != "managed":
         return _refused("authority", "only an integrated, managed account may be traded through a custodian API")
-    cap = await capability(conn, capability_custodian, CAPABILITY_KEY)
+    capability_custodian = capability_custodian or SIMULATOR_CAPABILITY_CUSTODIAN   # read at call time (a verify
+    cap = await capability(conn, capability_custodian, CAPABILITY_KEY)                # substitutes a fixture code)
     if not available(cap):
         return _refused("capability", f"{capability_custodian} {CAPABILITY_KEY} is '{cap.value}' (evidence: "
                                       f"{cap.evidence}) — unknown is treated as not available")
