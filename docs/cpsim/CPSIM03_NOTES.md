@@ -146,3 +146,22 @@ one byte. The orders client is a NEW module (`services/altruist_trading.py`) tha
   `detail` adds `custodian` (no network); `actions_for` adds two actions only when that panel allows them.
 - `services/custodian_capabilities.py` — one label (`altruist_simulator`); the matrix therefore lists that code
   (every cell 'unknown', `recorded: false`) until the loader is applied.
+
+## 7. The in-process conformance run with the `orders` group (Task 8, 2026-11-11)
+
+`python3 apps/api/scripts/cpsim_altruist_conformance.py --target simulator` (fixture counterparty `cpsimconf-…`, created
+and torn down by the run; the fixture security is read at run time — a live equity / fund with a unique CUSIP and a
+platform close on or before the clock date): **34 PASS, 0 FAIL** — cpsim02's C01–C20 unchanged, plus O01 POST (client
+`post_order`) 201 + every §8.3 field · O02 market accept fills in full, execution fields, decimal strings, settle a later
+US business day, ISO UTC · O03 idempotent repeat POST (200, same order, one order) · O04 GET one (client `get_order`) ·
+O05 list by account, one response, 400 without account_id · O06 a JSON-float quantity 422 naming the field, nothing
+created · O07 unmarketable limit working → DELETE (client `delete_order`) cancelled → second DELETE 409 · O08 DELETE a
+filled order 409 naming its status · O09 oversell rejected "insufficient position" · O10 orders need an ACCESS token
+(none / the cpsim_ key → 401) · O11 unknown order 404 · O12 the fill moved the book (position + 2, transaction
+`sim-x-<exec_id>` served) · O13 SIMULATED header on order responses · O14 order webhook body + signature verified by the
+receiver's own code. Leftover fixture rows after the run: **0**.
+
+`--target sandbox` prints `orders group: skipped — no published Altruist orders contract` before anything else (and,
+without `--i-have-sandbox-access`, refuses to start — exit 2, unchanged). In the suite core the skip is
+`orders_group_skip(environment, orders)`: any real environment → that reason; the admin page's run against a live
+counterparty passes no fixture and reports O00 "not run: the orders group places orders and moves the book".
