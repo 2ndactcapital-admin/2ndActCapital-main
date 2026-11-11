@@ -213,9 +213,15 @@ async def send_to_custodian(pool, *, org_id, instruction_id, actor_id, transport
         sec = await X._security(conn, row["global_security_id"])
         body = order_body(row, sec, route["external_account_id"])
         try:
-            http_status, order = await AT.submit_order(conn, org_id=str(org_id), order=body, transport=transport)
+            session = await AT.order_session(conn, org_id=str(org_id))
         except _api_errors() as exc:
             raise _api_error(exc) from exc
+    # fix 1: the connection (and the transaction the RLS pool opened on it) is released BEFORE the HTTP call — the
+    # API never holds a transaction open while it waits on the custodian. Every gate above is re-checked by mark_sent.
+    try:
+        http_status, order = await AT.submit_with_session(session, order=body, transport=transport)
+    except _api_errors() as exc:
+        raise _api_error(exc) from exc
     if order.get("client_order_id") != str(row["id"]) or not order.get("order_id"):
         raise X.ExecutionConflict("the simulated custodian answered with an order that is not this instruction's")
     status = order.get("status")

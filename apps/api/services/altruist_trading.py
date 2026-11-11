@@ -124,11 +124,25 @@ async def _session(conn, *, org_id: str, environment: str) -> tuple[str, str]:
     return hosts["api_base"], token
 
 
+async def order_session(conn, *, org_id: str, environment: str = SIMULATOR) -> dict:
+    """fix 1 — what an orders call needs (api base + access token), read on ``conn``, so the caller can RELEASE its
+    connection (and the transaction the RLS pool opened on it) BEFORE the HTTP call. Same refusals as every call."""
+    api_base, token = await _session(conn, org_id=org_id, environment=environment)
+    return {"api_base": api_base, "access_token": token, "environment": environment}
+
+
+async def submit_with_session(session: dict, *, order: dict, timeout: float = TIMEOUT_S,
+                              transport: Any = None) -> tuple[int, dict]:
+    """POST /v2/orders with a session from :func:`order_session` — no database connection held."""
+    env = session["environment"]
+    return await post_order(api_base=session["api_base"], access_token=session["access_token"], order=order,
+                            timeout=timeout, transport=_transport_for(env, transport))
+
+
 async def submit_order(conn, *, org_id: str, order: dict, environment: str = SIMULATOR, timeout: float = TIMEOUT_S,
                        transport: Any = None) -> tuple[int, dict]:
-    api_base, token = await _session(conn, org_id=org_id, environment=environment)
-    return await post_order(api_base=api_base, access_token=token, order=order, timeout=timeout,
-                            transport=_transport_for(environment, transport))
+    session = await order_session(conn, org_id=org_id, environment=environment)
+    return await submit_with_session(session, order=order, timeout=timeout, transport=transport)
 
 
 async def fetch_order(conn, *, org_id: str, order_id: str, environment: str = SIMULATOR, timeout: float = TIMEOUT_S,

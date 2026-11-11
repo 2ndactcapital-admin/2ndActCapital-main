@@ -15,6 +15,12 @@
              ``order.filled`` (a new execution), body ``{event_id, event_type, order_id, client_order_id, account_id,
              environment: "simulator", occurred_at}``, same secret, signature, retries and log; webhooks on only
              (:func:`after_orders`). The receiver treats them as a notification — it never books a fill.
+  fix 1      the ORDERS API never delivers inline: :func:`schedule_orders` starts the delivery as a detached task after
+             the order's transaction committed and returns at once, so the order response never waits on a webhook
+             (the receiver runs a full account resync per event — inline, that alone outran the client's 15 s read
+             timeout while the caller held its own transaction open). Same events, secret, retries (1 + RETRIES) and
+             request_log rows. :func:`drain` awaits what is in flight (tests; a clean shutdown). An in-flight
+             delivery is lost if the process stops — acceptable for a simulator; the receiver books nothing anyway.
 
 ``set_transport`` / ``set_sleep`` are test injection points (the verify posts in-process to the real receiver through an
 ASGI transport); production leaves both unset.
@@ -155,3 +161,36 @@ async def after_orders(*, counterparty_id, slug: str, items: list[tuple[dict, li
                 out.append(await send_event(counterparty_id=counterparty_id, slug=slug, account_id=order["account_id"],
                                             event_type=t, behaviour=behaviour, order=order))
     return out
+
+
+# ── fix 1: order events are delivered AFTER the response, never inside the order request ─────────────────────────
+_PENDING: set = set()
+
+
+async def _deliver_orders(kw: dict) -> list:
+    try:
+        return await after_orders(**kw)
+    except Exception as exc:  # noqa: BLE001 — a delivery problem never surfaces in an order call
+        print(f"[cpsim] order webhook delivery failed: {type(exc).__name__}")
+        return []
+
+
+def schedule_orders(*, counterparty_id, slug: str, items: list[tuple[dict, list[str]]],
+                    behaviour: dict | None) -> asyncio.Task | None:
+    """Start the order-event delivery as a detached task (webhooks on only) and return immediately."""
+    if not (behaviour or {}).get("webhooks_enabled") or not items:
+        return None
+    task = asyncio.get_running_loop().create_task(_deliver_orders(
+        {"counterparty_id": counterparty_id, "slug": slug, "items": items, "behaviour": behaviour}))
+    _PENDING.add(task)
+    task.add_done_callback(_PENDING.discard)
+    return task
+
+
+async def drain(timeout: float = 120.0) -> list:
+    """Await every scheduled order delivery still in flight; returns their results (one list per task)."""
+    tasks = list(_PENDING)
+    if not tasks:
+        return []
+    done, _late = await asyncio.wait(tasks, timeout=timeout)
+    return [t.result() for t in done if not t.cancelled()]

@@ -70,6 +70,7 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -828,7 +829,9 @@ async def import_fills(uid, iid) -> tuple[int, dict]:
 
 
 async def behaviour(**fields) -> int:
-    code, _ = await api(U_SA, "PUT", cpu("main", "/behaviour"), fields)
+    code, out = await api(U_SA, "PUT", cpu("main", "/behaviour"), fields)
+    if code != HTTP_OK:   # fix 1: a refused PUT once left webhooks OFF silently (delay needs delay_seconds)
+        check(False, f"the Super Admin's behaviour PUT {sorted(fields)} → 200", f"{code} {dumps(out)[:300]}")
     return code
 
 
@@ -1584,12 +1587,25 @@ async def y_fills(conn):
 # ── webhooks (D9) ───────────────────────────────────────────────────────────────────────────────────────────────
 async def y_webhooks(conn):
     section("[Y] Webhooks: order events signed and received; a to-do for the sender; nothing booked by the webhook")
-    await behaviour(default_outcome="delay", webhooks_enabled=True)
-    iid, o = await _send_ok(conn, "webhook", trade_list(ACC_SIM, quantity="1"))
-    # the events raised DURING the send (order.updated) reach the receiver before Hollisworks has recorded the order
-    # id (the send's own response carries the outcome) — they raise no to-do. The proof is the event AFTER the send:
-    # the next clock advance fills the delayed order and the simulator sends order.filled.
+    # fix 1: the section sets every field its outcome needs itself (delay needs delay_seconds) — never inherited
+    await behaviour(default_outcome="delay", delay_seconds=0, webhooks_enabled=True)
+    iid = await approved(conn, trade_list(ACC_SIM, quantity="1"), "webhook")
+    t0 = time.monotonic()
+    c_s, o = await send(U_SD, iid) if iid else (0, {})
+    took = time.monotonic() - t0
+    check(bool(iid) and c_s == HTTP_OK and o.get("outcome") == "sent" and took < AT.TIMEOUT_S / 2,
+          f"webhook: with webhooks ON, Send to custodian → sent in {took:.1f} s, well under the client's "
+          f"{AT.TIMEOUT_S:.0f} s read timeout — the order response never waits on a webhook (fix 1)",
+          f"{c_s} {dumps(o)[:300]}")
+    # order.updated is delivered AFTER the response (a detached task): await it, then prove it arrived after the send
+    after_send = await SW.drain()
+    upd = [d for batch in after_send for d in batch if d.get("event_type") == "order.updated"]
+    check(len(upd) == 1 and upd[0].get("status") == HTTP_OK and upd[0].get("outcome") == "delivered",
+          "… order.updated was delivered AFTER the send returned (scheduled, not inline), once, 200 from the receiver",
+          f"{after_send}")
+    # the next clock advance fills the delayed order and the simulator sends order.filled
     ca, oa = await api(U_SA, "POST", cpu("main", "/clock/advance"))
+    await SW.drain()
     await behaviour(default_outcome="accept", webhooks_enabled=False)
     evs = await platform(conn, "SELECT event_id, event_type, raw_payload FROM altruist_webhook_events WHERE "
                                "event_type LIKE 'order.%' AND org_id = $1::uuid", ORG_A)
@@ -1625,7 +1641,7 @@ async def y_webhooks(conn):
                                       "related_id = $3::uuid", ORG_A, CX.TODO_SOURCE_FILLS, iid))
     check(r.status_code == HTTP_OK and r.json().get("status") == "refused_environment" and n_todo == 1,
           "a REAL-secret order event claiming the simulator is refused (cpsim02 rule) and raises no second to-do",
-          f"{r.status_code} {r.text[:200]}")
+          f"{r.status_code} {r.text[:200]} to-dos={n_todo}")
 
 
 # ── isolation ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1979,6 +1995,7 @@ async def main_async() -> int:
     finally:
         section("[Y] Teardown — zero fixture rows; every touched table at its pre-test count; real + demo rows "
                 "unchanged; no counterparty, order or book row left")
+        await SW.drain()   # fix 1: no scheduled order webhook is still in flight when the stubs / pools go away
         restore_stubs()
         await close_app_pools()
         try:

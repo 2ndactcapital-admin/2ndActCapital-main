@@ -266,7 +266,8 @@ def create_app() -> FastAPI:
     async def _orders(slug: str, request: Request, tail: str, message_type: str, work):
         """Access-token auth as the read API; then ``work(conn, cp, clock, behaviour)`` in ONE transaction. Behaviour
         decides an order's OUTCOME (D6) — it never turns an orders call into a 503, and delay_seconds stays a
-        read-API setting. Webhooks (D9) are sent after the transaction commits."""
+        read-API setting. Webhooks (D9) are scheduled after the transaction commits and delivered outside the
+        request (fix 1: never inline)."""
         log = _log(request, slug, tail, message_type)
         try:
             async with DB.tx() as conn:
@@ -294,7 +295,8 @@ def create_app() -> FastAPI:
         if events:
             from cpsim import webhooks as W
 
-            await W.after_orders(counterparty_id=cp["id"], slug=cp["slug"], items=events, behaviour=beh)
+            # fix 1: delivered AFTER the transaction committed and OUTSIDE this request — the response never waits
+            W.schedule_orders(counterparty_id=cp["id"], slug=cp["slug"], items=events, behaviour=beh)
         return _out(status, body)
 
     @sub.post("/c/{slug}/v2/orders")
