@@ -181,3 +181,43 @@ runs are kept and the latest shown with every failed check and the contract row 
 
 Schema: `docs/cpsim02_part1.sql` (applied 2026-11-10). Verify: `apps/api/scripts/verify_cpsim02.py` (written, not yet
 run); in `scripts/regression_set.txt`.
+
+## 12. Orders (cpsim03)
+
+Hollisworks sends an APPROVED execution instruction to this counterparty's orders API (`/cpsim/c/<slug>/v2/orders`,
+contract §8 — every field ASSUMED) only when a PERSON presses **Send to custodian (simulated)** on the instruction
+page, and books the executions only when a person presses **Import fills**. Nothing is sent or booked on its own.
+
+**Behaviour → outcome** (the behaviour row in force when the order ARRIVES; price = the last platform close on or before
+the clock date):
+
+| Behaviour | Outcome |
+|---|---|
+| Accept | Filled in full at that price. A limit buy fills only if price ≤ limit, a limit sell only if price ≥ limit; otherwise **working**. |
+| Reject with reason | **Rejected** with the reason. The instruction stays approved; the sender gets a to-do. |
+| Partial % | One execution for that % of the quantity (rounded down to a whole share, or 0.000001 for a fractional quantity); the remainder **working** until it is cancelled. |
+| Delay | **Working** until the clock advances, then filled as Accept. (`delay_seconds` stays a read-API setting.) |
+| (any) | No price → rejected "no price"; a security that is not an equity or fund → "unsupported instrument"; a sell above the position → "insufficient position". |
+
+**The clock and working orders.** **Advance one business day** now also re-evaluates every working order at the new
+date's price (delayed orders, and limits that have become marketable); the Clock tab shows what the advance filled,
+and order webhooks are sent for it. A notional order converts at the fill price (fractional); settle = trade date + 1
+US business day.
+
+**The book moves for fills only** (a contained step toward v2): each execution adds a buy / sell transaction
+`sim-x-<exec_id>` and moves the account's position (a snapshot dated the clock date). **No cash ledger, no corporate
+actions, no fees.** A later book upload REPLACES the account as before — and so overwrites fills.
+
+**Orders tab** (read-only): every order received, its outcome, status, reject reason and executions, each marked
+SIMULATED. **Webhooks** (when on): `order.updated` / `order.filled` with the order and client order ids, signed like
+the account events; the receiver raises a to-do for the instruction's sender — it never books a fill.
+
+**Who can trade against it.** An account routes to this simulator only when ALL hold: it is crosswalked
+`ALTRUIST_SIMULATOR` (and never to real Altruist); the org's `counterparty_sim.allowed` is on, pointed here, and
+connected; its household passes the demo rule (a real org: demo households only); it is integrated + managed; and the
+capability matrix says `altruist_simulator` `equity_trading_api = yes`. Any one missing → the manual route, with the
+reason on the instruction page.
+
+**Operator step (cpsim03):** `python3 apps/api/scripts/cpsim03_capabilities.py --apply --actor-email <Super Admin>`
+when ready to demo trading (the script defaults to a dry run). Nothing else changes. Schema
+`docs/cpsim03_part1.sql` (applied 2026-11-11). Verify: `apps/api/scripts/verify_cpsim03.py` (written, not yet run).

@@ -20,6 +20,12 @@ no trading client. So:
   HTTP code for trading is written here.
 * :func:`route_trade_list` picks the adapter from the account's custodian_code
   + capabilities. A held-away account always goes manual.
+* cpsim03 — the ONE exception: an account of a SIMULATED Altruist-compatible
+  custodian (services.custodian_execution.simulator_route, D2 — every condition,
+  the real Altruist route never) gets the same DRAFT instructions with
+  ``routed_via='custodian_api'``. Nothing is sent at submit (``sent_externally``
+  stays False); after the unchanged maker-checker approval a PERSON presses
+  "Send to custodian". The real Altruist route is unchanged (manual).
 
 A missing capability DOWNGRADES (manual instruction, with a note per trade);
 it never blocks the list.
@@ -208,11 +214,17 @@ class SubmissionResult:
     instruction_ids: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     sent_externally: bool = False
+    #: cpsim03 (additive): the simulator route decision ``{route: bool, condition, reason}`` — set by the Altruist
+    #: adapter only, and published only when set (every other route's dict is unchanged)
+    simulator: dict | None = None
 
     def as_dict(self) -> dict:
-        return {"adapter": self.adapter, "routed_to": self.routed_to, "reason": self.reason,
-                "instruction_ids": list(self.instruction_ids), "notes": list(self.notes),
-                "sent_externally": self.sent_externally}
+        out = {"adapter": self.adapter, "routed_to": self.routed_to, "reason": self.reason,
+               "instruction_ids": list(self.instruction_ids), "notes": list(self.notes),
+               "sent_externally": self.sent_externally}
+        if self.simulator is not None:
+            out["simulator"] = dict(self.simulator)
+        return out
 
 
 class ShortSaleNotDeclared(Exception):
@@ -260,13 +272,14 @@ class ManualTradeAdapter(TradeAdapter):
 
     custodian_key = "manual"
 
-    async def submit(self, ctx, trade_list, *, reason=None, notes=None) -> SubmissionResult:
+    async def submit(self, ctx, trade_list, *, reason=None, notes=None, routed_via: str | None = None
+                     ) -> SubmissionResult:
         from services import execution
 
         why = reason or "manual route: every trade becomes an execution instruction carried out by a person"
         rows = await execution.create_instructions(
             ctx.pool, org_id=ctx.org_id, actor_id=ctx.actor_id, account=ctx.account, trade_list=trade_list,
-            routed_via=self.custodian_key, routing_reason=why, upstream=ctx.upstream)
+            routed_via=routed_via or self.custodian_key, routing_reason=why, upstream=ctx.upstream)
         return SubmissionResult(adapter=self.custodian_key, routed_to="manual", reason=why,
                                 instruction_ids=[str(r["id"]) for r in rows], notes=list(notes or []))
 
@@ -291,7 +304,10 @@ class ManualTradeAdapter(TradeAdapter):
 class AltruistTradeAdapter(TradeAdapter):
     """Declares ``equity_trading_api`` from the capabilities table; routes to
     the manual adapter while it is not an evidenced 'yes', and says so. No
-    trading HTTP client exists in this build, so it routes manual even then."""
+    REAL Altruist trading client exists in this build, so it routes manual even
+    then. cpsim03 (D4): an account of a SIMULATED Altruist-compatible custodian
+    that meets every D2 condition gets the same DRAFT instructions routed
+    ``custodian_api`` — nothing is sent here."""
 
     custodian_key = "altruist"
     #: The capabilities row this adapter reads. Fixed, not the registry key: a
@@ -299,6 +315,9 @@ class AltruistTradeAdapter(TradeAdapter):
     #: second Altruist export name) still declares ALTRUIST's capability.
     capability_custodian = "altruist"
     capability_key = "equity_trading_api"
+    #: cpsim03 — the SIMULATED custodian's capability code: None → services.custodian_execution
+    #: .SIMULATOR_CAPABILITY_CUSTODIAN ('altruist_simulator', D3), the ONE place a verify substitutes its fixture code
+    simulator_capability_custodian: str | None = None
 
     async def declared(self, conn):
         from services.custodian_capabilities import capability
@@ -306,10 +325,26 @@ class AltruistTradeAdapter(TradeAdapter):
         return await capability(conn, self.capability_custodian, self.capability_key)
 
     async def submit(self, ctx, trade_list, *, reason=None, notes=None) -> SubmissionResult:
+        from services import custodian_execution as CX
         from services.custodian_capabilities import available
 
         async with ctx.pool.acquire() as conn:
             cap = await self.declared(conn)
+            sim = await CX.simulator_route(conn, ctx.org_id, ctx.account,
+                                           capability_custodian=self.simulator_capability_custodian)
+        if sim["ok"]:
+            per_trade = CX.trade_refusal(trade_list.trades)
+            if per_trade:
+                sim = {**sim, "ok": False, "condition": "trade", "reason": per_trade}
+        if sim["ok"]:      # D4 — the SAME draft instructions, the route recorded; nothing is sent at submit
+            why = (f"custodian API route — simulated custodian {sim['slug']} (SIMULATED): after approval a person "
+                   "presses Send to custodian, then imports the fills")
+            result = await ManualTradeAdapter().submit(ctx, trade_list, reason=why, notes=notes,
+                                                       routed_via=CX.ROUTE)
+            result.adapter = self.simulator_capability_custodian or CX.SIMULATOR_CAPABILITY_CUSTODIAN
+            result.routed_to = CX.ROUTE
+            result.simulator = {"route": True, "condition": None, "reason": sim["reason"]}
+            return result
         if not available(cap):
             why = (f"Altruist {self.capability_key} is '{cap.value}' (evidence: {cap.evidence}) — unknown is "
                    "treated as not available, so every trade is routed to manual execution instructions")
@@ -318,12 +353,30 @@ class AltruistTradeAdapter(TradeAdapter):
                    "this build — routed to manual execution instructions")
         result = await ManualTradeAdapter().submit(ctx, trade_list, reason=why, notes=notes)
         result.adapter = self.capability_custodian
+        result.simulator = {"route": False, "condition": sim["condition"], "reason": sim["reason"]}
         return result
 
     async def status(self, ctx, submission) -> list[dict]:
-        return await ManualTradeAdapter().status(ctx, submission)
+        """cpsim03 — an instruction sent to a custodian API also reports its custodian order's status (read live)."""
+        from services import custodian_execution as CX
+        from services import execution
+
+        out = []
+        for item in await ManualTradeAdapter().status(ctx, submission):
+            async with ctx.pool.acquire() as conn:
+                row = await execution.load(conn, ctx.org_id, item["id"])
+                if row.get("custodian_order_id"):
+                    try:
+                        order = await CX._order_of(conn, ctx.org_id, row, None)
+                        item = {**item, "custodian_order_id": row["custodian_order_id"],
+                                "custodian_status": order.get("status")}
+                    except execution.ExecutionError as exc:
+                        item = {**item, "custodian_order_id": row["custodian_order_id"], "custodian_error": str(exc)}
+            out.append(item)
+        return out
 
     async def cancel(self, ctx, submission, reason) -> list[dict]:
+        # execution.cancel cancels a working custodian order at the custodian FIRST (cpsim03 D11)
         return await ManualTradeAdapter().cancel(ctx, submission, reason)
 
 

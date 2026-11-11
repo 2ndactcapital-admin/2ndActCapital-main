@@ -11,6 +11,16 @@
              request_log row (direction 'out', status, latency) — never the secret, never the signature.
   when       after an accepted positions / transactions upload, one event per affected account — ONLY when the
              behaviour row has webhooks_enabled; and on demand from the admin page ("Send test event", same flag).
+  cpsim03    ORDER events (contract §8.4): ``order.updated`` (accepted / working / rejected / cancelled) and
+             ``order.filled`` (a new execution), body ``{event_id, event_type, order_id, client_order_id, account_id,
+             environment: "simulator", occurred_at}``, same secret, signature, retries and log; webhooks on only
+             (:func:`after_orders`). The receiver treats them as a notification — it never books a fill.
+  fix 1      the ORDERS API never delivers inline: :func:`schedule_orders` starts the delivery as a detached task after
+             the order's transaction committed and returns at once, so the order response never waits on a webhook
+             (the receiver runs a full account resync per event — inline, that alone outran the client's 15 s read
+             timeout while the caller held its own transaction open). Same events, secret, retries (1 + RETRIES) and
+             request_log rows. :func:`drain` awaits what is in flight (tests; a clean shutdown). An in-flight
+             delivery is lost if the process stops — acceptable for a simulator; the receiver books nothing anyway.
 
 ``set_transport`` / ``set_sleep`` are test injection points (the verify posts in-process to the real receiver through an
 ASGI transport); production leaves both unset.
@@ -39,6 +49,7 @@ BASE_ENV = "CPSIM_BASE_URL"
 RECEIVER_PATH = "/api/v1/altruist/webhook"
 SIGNATURE_HEADER = "X-Altruist-Signature"
 EVENT_TYPES = {"positions": "account.positions_updated", "transactions": "account.transactions_updated"}
+ORDER_EVENT_TYPES = ("order.updated", "order.filled")
 RETRIES = 2
 BACKOFF_S = (0.5, 1.5)
 TIMEOUT_S = 15.0
@@ -76,10 +87,12 @@ def target(behaviour: dict | None) -> str | None:
     return base + RECEIVER_PATH if base.startswith("https://") else None
 
 
-def event_body(event_type: str, account_id: str, occurred_at: datetime | None = None) -> bytes:
-    doc = {"event_id": f"cpsim-evt-{uuid.uuid4().hex}", "event_type": event_type, "account_id": account_id,
-           "environment": "simulator",
-           "occurred_at": (occurred_at or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")}
+def event_body(event_type: str, account_id: str, occurred_at: datetime | None = None, order: dict | None = None) -> bytes:
+    doc = {"event_id": f"cpsim-evt-{uuid.uuid4().hex}", "event_type": event_type}
+    if order is not None:       # cpsim03 — an order event names the order (contract §8.4)
+        doc.update({"order_id": order["order_id"], "client_order_id": order["client_order_id"]})
+    doc.update({"account_id": account_id, "environment": "simulator",
+                "occurred_at": (occurred_at or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")})
     return json.dumps(doc, separators=(",", ":")).encode("utf-8")
 
 
@@ -93,11 +106,12 @@ async def _log(counterparty_id, slug, path, status, outcome, event_type, latency
         print(f"[cpsim] outbound log write failed: {type(exc).__name__}")
 
 
-async def send_event(*, counterparty_id, slug: str, account_id: str, event_type: str, behaviour: dict | None) -> dict:
+async def send_event(*, counterparty_id, slug: str, account_id: str, event_type: str, behaviour: dict | None,
+                     order: dict | None = None) -> dict:
     """One event, signed, with retries. Returns {event_id, event_type, account_id, status, attempts, outcome}."""
     url = target(behaviour)
     key = secret()
-    body = event_body(event_type, account_id)
+    body = event_body(event_type, account_id, order=order)
     event_id = json.loads(body)["event_id"]
     path = urlsplit(url).path if url else RECEIVER_PATH
     if key is None or url is None:
@@ -133,3 +147,50 @@ async def after_upload(*, counterparty_id, slug: str, kind: str, accounts: list[
         return []
     return [await send_event(counterparty_id=counterparty_id, slug=slug, account_id=a, event_type=EVENT_TYPES[kind],
                              behaviour=behaviour) for a in accounts]
+
+
+async def after_orders(*, counterparty_id, slug: str, items: list[tuple[dict, list[str]]], behaviour: dict | None) -> list:
+    """cpsim03 — one signed event per (order, event type), webhooks on only. ``items`` = [(order dict with order_id /
+    client_order_id / account_id, [event types])]."""
+    if not (behaviour or {}).get("webhooks_enabled"):
+        return []
+    out = []
+    for order, types in items:
+        for t in types:
+            if t in ORDER_EVENT_TYPES:
+                out.append(await send_event(counterparty_id=counterparty_id, slug=slug, account_id=order["account_id"],
+                                            event_type=t, behaviour=behaviour, order=order))
+    return out
+
+
+# ── fix 1: order events are delivered AFTER the response, never inside the order request ─────────────────────────
+_PENDING: set = set()
+
+
+async def _deliver_orders(kw: dict) -> list:
+    try:
+        return await after_orders(**kw)
+    except Exception as exc:  # noqa: BLE001 — a delivery problem never surfaces in an order call
+        print(f"[cpsim] order webhook delivery failed: {type(exc).__name__}")
+        return []
+
+
+def schedule_orders(*, counterparty_id, slug: str, items: list[tuple[dict, list[str]]],
+                    behaviour: dict | None) -> asyncio.Task | None:
+    """Start the order-event delivery as a detached task (webhooks on only) and return immediately."""
+    if not (behaviour or {}).get("webhooks_enabled") or not items:
+        return None
+    task = asyncio.get_running_loop().create_task(_deliver_orders(
+        {"counterparty_id": counterparty_id, "slug": slug, "items": items, "behaviour": behaviour}))
+    _PENDING.add(task)
+    task.add_done_callback(_PENDING.discard)
+    return task
+
+
+async def drain(timeout: float = 120.0) -> list:
+    """Await every scheduled order delivery still in flight; returns their results (one list per task)."""
+    tasks = list(_PENDING)
+    if not tasks:
+        return []
+    done, _late = await asyncio.wait(tasks, timeout=timeout)
+    return [t.result() for t in done if not t.cancelled()]

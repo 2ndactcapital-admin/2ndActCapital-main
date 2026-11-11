@@ -9,9 +9,12 @@
  * maker of the instruction. Labels are the envelope's vocabularies.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
-import { amountText, decimalString, instructionControls, labelOf, priceText, securityText, vocab } from "@/lib/execution.mjs";
+import {
+  amountText, custodianModel, decimalString, instructionControls, labelOf, manualChannels, orderExecutions, priceText,
+  reconcilePicker, securityText, vocab,
+} from "@/lib/execution.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -169,7 +172,7 @@ export function Fills({ envelope, onDone }) {
         <table className="mt-3 w-full text-sm">
           <thead className="text-left text-text-muted"><tr><th className="py-1">Time</th><th>Quantity</th><th>Price</th><th>Entered by</th></tr></thead>
           <tbody>{fills.map((x) => (
-            <tr key={x.id}><td className="py-1">{String(x.filled_at).slice(0, 16).replace("T", " ")}</td><td>{x.quantity}</td><td>{x.price}</td><td>{x.entered_by_name}</td></tr>
+            <tr key={x.id}><td className="py-1">{String(x.filled_at).slice(0, 16).replace("T", " ")}</td><td>{x.quantity}</td><td>{x.price}</td><td>{x.entered_by_name}{x.custodian_exec_id ? <SimulatedBadge /> : null}</td></tr>
           ))}</tbody>
         </table>
       ) : <p className="mt-2 text-sm text-text-muted">No fills entered.</p>}
@@ -178,11 +181,83 @@ export function Fills({ envelope, onDone }) {
   );
 }
 
-export function ActionBar({ envelope, onDone }) {
+/** CPSIM03 — shown wherever an order of a SIMULATED custodian appears. */
+export function SimulatedBadge() {
+  return (
+    <span data-testid="simulated-badge" className="ml-2 rounded border border-[#C5A880] bg-[#F5F1EB] px-2 py-0.5 text-xs font-semibold tracking-wide text-navy">
+      SIMULATED
+    </span>
+  );
+}
+
+/**
+ * CPSIM03 — the custodian-API route: "Send to custodian (simulated)" only when the server lists it (D2 holds), else
+ * the reason the instruction is manual; the custodian order's status and executions (read live), "Import fills".
+ * A person presses each button — nothing here runs on its own.
+ */
+export function CustodianOrderPanel({ envelope, orderView, setOrderView, onDone }) {
+  const d = envelope?.instruction || {};
+  const c = instructionControls(envelope);
+  const m = custodianModel(envelope);
+  const [msg, setMsg] = useState(null);
+  const action = useBusy(); // CATCHALL1 busy — Send to custodian / Import fills
+  useEffect(() => {
+    if (!m.orderId || orderView || !setOrderView) return;
+    fetch(`/api/execution/instructions/${d.id}/custodian-order`).then((r) => r.json().then((j) => (r.ok ? j : null)))
+      .then((j) => j && setOrderView(j)).catch(() => {});
+  }, [m.orderId, d.id, orderView, setOrderView]);
+  if (!m.simulated && !m.sendRefused) return null;
+  const run = (path) => action.run(async () => {
+    setMsg(null);
+    const out = await call(`instructions/${d.id}/${path}`, {});
+    if (out.outcome === "rejected") setMsg(`Refused by the custodian: ${out.reason}`);
+    if (setOrderView) setOrderView(null);
+    onDone?.();
+  });
+  const execs = orderExecutions(orderView);
+  const order = orderView?.order || null;
+  return (
+    <div className={`${card} p-6 text-sm`} data-testid="custodian-panel">
+      <h2 className="text-lg font-semibold text-navy">Custodian order{m.simulated ? <SimulatedBadge /> : null}</h2>
+      {m.simulated ? (
+        <p className="mt-1 text-text-muted">Routed to the simulated custodian {m.counterparty || ""}. A person sends it after approval and imports the fills; nothing is sent or booked on its own.</p>
+      ) : (
+        <p className="mt-1 text-text-muted" data-testid="custodian-manual-reason">Manual: {m.sendRefused}</p>
+      )}
+      {m.simulated && m.sendRefused && !c.sendToCustodian ? (
+        <p className="mt-1" data-testid="custodian-send-refused">Send to custodian is not available: {m.sendRefused}</p>
+      ) : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {c.sendToCustodian ? <BusyButton busy={action.busy} busyLabel="Sending…" className={primary} onClick={() => run("send-to-custodian")}>Send to custodian (simulated)</BusyButton> : null}
+        {c.importFills ? <BusyButton busy={action.busy} busyLabel="Importing…" className={primary} onClick={() => run("import-fills")}>Import fills</BusyButton> : null}
+      </div>
+      <BusyError error={action.error} className="mt-2 block text-[#9B2335]" />
+      {order ? (
+        <div className="mt-3" data-testid="custodian-order">
+          <p>Order {order.order_id} — <span className="font-medium text-navy">{order.status}</span>{order.reject_reason ? ` (${order.reject_reason})` : ""} · filled {order.filled_quantity}</p>
+          {execs.length ? (
+            <table className="mt-2 w-full text-left">
+              <thead className="text-text-muted"><tr><th className="py-1">Execution</th><th>Quantity</th><th>Price</th><th>Trade date</th><th>Settles</th><th>Booked</th></tr></thead>
+              <tbody>{execs.map((e) => (
+                <tr key={e.exec_id}><td className="py-1">{e.exec_id}</td><td>{e.quantity}</td><td>{e.price}</td><td>{e.trade_date}</td><td>{e.settle_date}</td><td>{e.booked ? "Booked" : "Not yet imported"}</td></tr>
+              ))}</tbody>
+            </table>
+          ) : <p className="mt-1 text-text-muted">No executions yet.</p>}
+        </div>
+      ) : m.orderId ? <p className="mt-2 text-text-muted">Order {m.orderId}</p> : null}
+      {msg ? <p className="mt-2 text-[#9B2335]">{msg}</p> : null}
+    </div>
+  );
+}
+
+export function ActionBar({ envelope, onDone, orderView = null }) {
   const d = envelope?.instruction || {};
   const v = vocab(envelope);
   const c = instructionControls(envelope);
-  const [form, setForm] = useState({ channel: v.sent_channels?.[0]?.key || "", reason: "", method: "custodian_data", reference: "", note: "" });
+  const channels = manualChannels(v);
+  const picker = reconcilePicker(orderView);
+  const [form, setForm] = useState({ channel: channels[0]?.key || "", reason: "", method: "custodian_data", reference: picker.reference, note: "" });
+  const [picked, setPicked] = useState(() => new Set(picker.rows.filter((r) => r.checked).map((r) => r.id)));
   const [mode, setMode] = useState(null);
   const [msg, setMsg] = useState(null);
   async function run(path, body) {
@@ -203,7 +278,7 @@ export function ActionBar({ envelope, onDone }) {
       {mode === "sent" ? (
         <div className="mt-3 flex flex-wrap items-end gap-2">
           <select className={input} value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })}>
-            {(v.sent_channels || []).map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+            {channels.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
           </select>
           <input className={input} placeholder="Note" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
           <button type="button" className={primary} onClick={() => run("sent", { channel: form.channel, note: form.note || undefined })}>Confirm sent</button>
@@ -216,8 +291,11 @@ export function ActionBar({ envelope, onDone }) {
           </select>
           <input className={input} placeholder="Custodian reference" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} />
           <input className={input} placeholder="Note" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
-          <button type="button" className={primary} onClick={() => run("reconcile", { method: form.method, reference: form.reference || undefined, note: form.note || undefined })}>Confirm reconciled</button>
+          <button type="button" className={primary} onClick={() => run("reconcile", { method: form.method, reference: form.reference || undefined, note: form.note || undefined, transaction_ids: form.method === "custodian_data" ? [...picked] : undefined })}>Confirm reconciled</button>
         </div>
+      ) : null}
+      {mode === "reconcile" && picker.rows.length ? (
+        <ReconcilePicker rows={picker.rows} picked={picked} setPicked={setPicked} />
       ) : null}
       {mode === "cancel" ? (
         <div className="mt-3 flex flex-wrap items-end gap-2">
@@ -227,6 +305,22 @@ export function ActionBar({ envelope, onDone }) {
       ) : null}
       {msg ? <p className="mt-2 text-[#9B2335]">{msg}</p> : null}
     </div>
+  );
+}
+
+/** CPSIM03 — the synced custodian transactions of this order (preselected by the server's same-security rule). */
+export function ReconcilePicker({ rows, picked, setPicked }) {
+  return (
+    <fieldset className="mt-3" data-testid="reconcile-picker">
+      <legend className="text-text-muted">Synced custodian transactions<SimulatedBadge /></legend>
+      {rows.map((r) => (
+        <label key={r.id} className="mt-1 flex items-center gap-2">
+          <input type="checkbox" checked={picked.has(r.id)} data-txn={r.id}
+            onChange={(e) => { const n = new Set(picked); if (e.target.checked) n.add(r.id); else n.delete(r.id); setPicked(n); }} />
+          {r.external_ref} · {r.trade_date} · {r.quantity} @ {r.price}
+        </label>
+      ))}
+    </fieldset>
   );
 }
 
@@ -332,8 +426,9 @@ export function OrderSheetPanel({ envelope }) {
   );
 }
 
-export default function InstructionDetail({ initialEnvelope }) {
+export default function InstructionDetail({ initialEnvelope, initialOrderView = null }) {
   const [env, setEnv] = useState(initialEnvelope);
+  const [orderView, setOrderView] = useState(initialOrderView);
   const id = env?.instruction?.id;
   async function reload() {
     const res = await fetch(`/api/execution/instructions/${id}`);
@@ -343,7 +438,8 @@ export default function InstructionDetail({ initialEnvelope }) {
   return (
     <div className="space-y-5">
       <Summary envelope={env} />
-      <ActionBar envelope={env} onDone={reload} />
+      <CustodianOrderPanel envelope={env} orderView={orderView} setOrderView={setOrderView} onDone={reload} />
+      <ActionBar key={`${env?.instruction?.status}-${orderView ? "o" : "n"}`} envelope={env} onDone={reload} orderView={orderView} />
       <EditDraft envelope={env} onDone={reload} />
       <TaskPanel envelope={env} onDone={reload} />
       <Fills envelope={env} onDone={reload} />

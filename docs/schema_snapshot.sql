@@ -2232,6 +2232,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   custodian_exec_id                        text
 --   PRIMARY KEY execution_fills_pkey: (id)
 
 -- ===== execution_instruction_events =====
@@ -2320,6 +2321,7 @@
 --   system_to                                timestamp with time zone
 --   option_terms                             jsonb
 --   short_terms                              jsonb
+--   custodian_order_id                       text
 --   PRIMARY KEY execution_instructions_pkey: (id)
 
 -- ===== external_access_grants =====
@@ -5249,6 +5251,47 @@
 --   revoked_at                               timestamp with time zone
 --   replaced_by                              uuid
 --   PRIMARY KEY oauth_tokens_pkey: (id)
+
+-- ===== cpsim.order_executions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   order_row_id                             uuid NOT NULL
+--   exec_id                                  text NOT NULL
+--   quantity                                 numeric NOT NULL
+--   price                                    numeric NOT NULL
+--   executed_at                              timestamp with time zone NOT NULL
+--   trade_date                               date NOT NULL
+--   settle_date                              date NOT NULL
+--   book_transaction_id                      text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY order_executions_pkey: (id)
+
+-- ===== cpsim.orders =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   order_id                                 text NOT NULL
+--   client_order_id                          text NOT NULL
+--   account_external_id                      text NOT NULL
+--   security_id                              uuid NOT NULL
+--   symbol                                   text
+--   cusip                                    text
+--   side                                     text NOT NULL
+--   quantity                                 numeric
+--   notional                                 numeric
+--   order_type                               text NOT NULL
+--   limit_price                              numeric
+--   time_in_force                            text NOT NULL DEFAULT 'gtc'::text
+--   outcome                                  text NOT NULL
+--   partial_pct                              numeric
+--   status                                   text NOT NULL
+--   reject_reason                            text
+--   trade_date                               date NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   archived_from_id                         uuid
+--   PRIMARY KEY orders_pkey: (id)
 
 -- ===== cpsim.real_bic_examples =====
 --   bic                                      text NOT NULL

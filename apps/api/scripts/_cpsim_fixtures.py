@@ -31,11 +31,26 @@ for _site in sorted(API_DIR.glob("venv/lib/python3*/site-packages")):
 import httpx  # noqa: E402
 
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
-#: every cpsim table that carries counterparty_id, children first (FK order for the teardown)
-CP_TABLES = ("cpsim.oauth_tokens", "cpsim.oauth_codes", "cpsim.book_transactions", "cpsim.book_positions",
+#: every cpsim table that carries counterparty_id, children first (FK order for the teardown); cpsim03 + orders
+CP_TABLES = ("cpsim.order_executions", "cpsim.orders", "cpsim.oauth_tokens", "cpsim.oauth_codes", "cpsim.book_transactions", "cpsim.book_positions",
              "cpsim.book_accounts", "cpsim.book_households", "cpsim.book_uploads", "cpsim.conformance_runs",
              "cpsim.request_log", "cpsim.counterparty_fix_sessions", "cpsim.counterparty_bank_details",
              "cpsim.counterparty_behaviour", "cpsim.counterparty_clock", "cpsim.counterparty_credentials")
+
+
+#: cpsim03 fix 1 — the ONE place both verify_cpsim02 and verify_cpsim03 read cpsim_app's documented, deliberately
+#: NARROWER grants from. Every other cpsim table: exactly SELECT / INSERT / UPDATE / DELETE. Each entry names its source.
+CPSIM_APP_FULL = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
+CPSIM_APP_WITHHELD = {
+    "book_uploads": frozenset({"UPDATE", "DELETE"}),       # cpsim02: the upload log is append-only (SELECT + INSERT)
+    "order_executions": frozenset({"UPDATE", "DELETE"}),   # docs/cpsim03_part1.sql: executions append-only
+    "orders": frozenset({"DELETE"}),                       # docs/cpsim03_part1.sql: system-axis, never deleted
+}
+
+
+def cpsim_app_privileges(table: str) -> frozenset:
+    """The EXACT relation privileges cpsim_app must hold on ``cpsim.<table>`` (no wildcard, nothing looser)."""
+    return CPSIM_APP_FULL - CPSIM_APP_WITHHELD.get(table, frozenset())
 
 
 class TimeoutASGITransport(httpx.ASGITransport):

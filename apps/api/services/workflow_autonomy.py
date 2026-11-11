@@ -94,6 +94,14 @@ VERB_AUTONOMY: dict[str, dict] = {
     # reconcile stay never (above, unregistered). Capped: the rule's own per-firing $ and per-day count (≤ the org
     # ceiling — services.cash_rules) inside the run; here the quantity is the most instructions one firing can draft
     # (its destinations, ≤ 5) against the org's cap_per_run. Engine-only: never offered to the assistant.
+    # CPSIM03 — the custodian-API route's two PERSON actions (services.custodian_execution). Declared NEVER (trades) and
+    # deliberately NOT registered as actions: no workflow, no agent and no trigger can send an order or import fills.
+    "execution.custodian_send": {"class": NEVER, "trades": True,
+                                 "writes": "sends an APPROVED execution instruction to a (simulated) custodian's orders "
+                                           "API — a person only"},
+    "execution.custodian_import": {"class": NEVER, "trades": True,
+                                   "writes": "books a custodian's executions as fills (execution_fills) — a person "
+                                             "only"},
     "cash.rule_fire": {"class": ELIGIBLE_WITH_CAP, "draft_only": True, "submits_for_approval": True,
                        "quantity": lambda _ctx: 5,
                        "writes": "payment instruction DRAFTS submitted for approval (payment_instructions, status "

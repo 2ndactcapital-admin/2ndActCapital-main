@@ -48,6 +48,9 @@ seeding, no checks, no regression, no npm. Exits 0 when clean.
 For rep2, LEFTOVERS is the larger of leftovers() (rep2's fixed table list) and
 _verify_cleanup.leftover_count (every org_id table under the REP2 orgs, the
 orgs, the users) — killed runs left rows outside rep2's plan.
+--only=<human_tasks|capabilities|routing|instructions|letter|isolation|gates|new_org|csv>[,...]
+(cpsim03 fix 2): seed + constraints + the named sections + the full teardown checks; no task 1,
+routes, front end or regression.
 """
 
 from __future__ import annotations
@@ -839,9 +842,22 @@ async def y_capabilities(conn):
         find("Altruist capabilities recorded since rep2 (no longer all 'unknown')", f"{recorded}")
     check(man.get("equity_trading_api", {}).get("value") == "no" and man.get("model_api", {}).get("value") == "no",
           "manual: trade APIs 'no'")
-    check(all((c.get("evidence") or "").strip() and c.get("as_of") and c.get("evidence_kind") in
-              ("document", "url", "assumed") for c in list(alt.values()) + list(man.values())),
-          "every seeded capability carries evidence, its kind and an as-of date")
+    # cpsim03 fix 1 (VHK2 scoping): "seeded" = a RECORDED row. A key added after the seed with no row for a custodian
+    # (cash07's payment_sheet for Altruist) is served as a synthesized cell (recorded: false, as_of None) — not a
+    # seeded capability. Those cells must still be 'unknown' and NOT available; each is listed as a [FIND].
+    cells = list(alt.values()) + list(man.values())
+    seeded = [c for c in cells if c.get("recorded") is not False]
+    unrec = [c for c in cells if c.get("recorded") is False]
+    check(bool(seeded) and all((c.get("evidence") or "").strip() and c.get("as_of") and c.get("evidence_kind") in
+                               ("document", "url", "assumed") for c in seeded),
+          "every seeded capability carries evidence, its kind and an as-of date",
+          f"{len(seeded)} recorded; bad {[(c['custodian_code'], c['capability_key']) for c in seeded if not c.get('as_of')]}")
+    check(all(c.get("value") == "unknown" and c.get("available") is False and c.get("version_no") is None
+              for c in unrec), "a key with no recorded row is served as 'unknown', NOT available, version-less",
+          f"{[(c['custodian_code'], c['capability_key'], c.get('value')) for c in unrec]}")
+    if unrec:
+        find("capability keys with no recorded row (served as 'unknown')",
+             f"{sorted((c['custodian_code'], c['capability_key']) for c in unrec)}")
     check(out.get("permissions", {}).get("can_write") is False and out.get("vocabularies", {}).get("editable") == [],
           "staff envelope: read-only (can_write false, editable [])")
     code_m, out_m = await api(U_MEMBER, "GET", "/api/v1/custodians/capabilities")
@@ -1527,6 +1543,23 @@ async def cleanup_only(conn) -> int:
     return 0 if _n_fail == 0 else 1
 
 
+REP2_SECTIONS = (("human tasks", y_human_tasks), ("capabilities", y_capabilities), ("routing", y_routing),
+                 ("instructions", y_instructions), ("letter", y_letter), ("isolation", y_isolation),
+                 ("gates", y_gates), ("new org", y_new_org), ("csv", y_csv))
+
+
+def only_sections() -> set[str] | None:
+    """--only=<name,...> (names as in REP2_SECTIONS, '_' for a space). None → the full run."""
+    arg = next((a for a in sys.argv[1:] if a.startswith("--only=")), None)
+    if arg is None:
+        return None
+    want = {x.strip().replace("_", " ") for x in arg.split("=", 1)[1].split(",") if x.strip()}
+    known = {n for n, _f in REP2_SECTIONS}
+    if want - known:
+        raise SystemExit(f"--only: unknown section(s) {sorted(want - known)}; known: {sorted(known)}")
+    return want
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1540,6 +1573,9 @@ async def main_async() -> int:
     if "--cleanup-only" in sys.argv:
         return await cleanup_only(conn)
     pre = real = None
+    only = only_sections()   # cpsim03 fix 2: a seeded one-off (seed + constraints + the named sections + teardown)
+    if only is not None:
+        print(f"[INFO] --only: seed + constraints + {sorted(only)}")
     try:
         if not await guard_prefix(conn):
             print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
@@ -1547,23 +1583,19 @@ async def main_async() -> int:
         await run("pre-teardown", teardown, conn)
         pre = await counts(conn)
         real = await real_fingerprints(conn)
-        await run("task 1", y_task1, conn)
+        if only is None:
+            await run("task 1", y_task1, conn)
         await run("seed", seed, conn)
         await run("constraints", y_constraints, conn)
         if S.get("sec_ZZRQA"):
-            await run("human tasks", y_human_tasks, conn)
-            await run("capabilities", y_capabilities, conn)
-            await run("routing", y_routing, conn)
-            await run("instructions", y_instructions, conn)
-            await run("letter", y_letter, conn)
-            await run("isolation", y_isolation, conn)
-            await run("gates", y_gates, conn)
-            await run("new org", y_new_org, conn)
-            await run("csv", y_csv, conn)
+            for name, fn in REP2_SECTIONS:
+                if only is None or name in only:
+                    await run(name, fn, conn)
         else:
             check(False, "seed created the fixture securities", "every fixture-scoped section skipped")
-        await run("routes", y_routes, conn)
-        await run("front end", y_front_end, conn)
+        if only is None:
+            await run("routes", y_routes, conn)
+            await run("front end", y_front_end, conn)
         check(NETWORK_CALLS == [], "no network call was attempted during the whole run", f"{NETWORK_CALLS[:3]}")
     finally:
         section("[Y] Teardown — zero fixture rows; every touched table at its pre-test count; real rows unchanged")
@@ -1607,7 +1639,9 @@ async def main_async() -> int:
             await conn.close()
         except Exception:  # noqa: BLE001
             pass
-    if os.environ.get("VERIFY_NESTED") == "1":
+    if only is not None:
+        print("[SKIP] regression — --only one-off run")
+    elif os.environ.get("VERIFY_NESTED") == "1":
         print("[SKIP] nested run")
     else:
         try:

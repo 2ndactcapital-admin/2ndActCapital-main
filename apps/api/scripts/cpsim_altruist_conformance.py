@@ -93,12 +93,18 @@ def fixture_book(security: dict | None, as_of: date) -> dict:
             "positions": pos, "transactions": txn}
 
 
-async def _pick_security(conn) -> dict | None:
-    """One live security with a CUSIP that resolves uniquely (read at run time, never frozen)."""
+async def _pick_security(conn, as_of: date) -> dict | None:
+    """One live security with a CUSIP that resolves uniquely (read at run time, never frozen). cpsim03: an equity / fund
+    with a platform close on or before the clock date, so the orders group can trade it (§8.5)."""
     r = await conn.fetchrow(
         "SELECT i.id_type, i.id_value FROM portfolio.securities_global_identifiers i JOIN portfolio.securities_global s "
         "ON s.id = i.global_security_id WHERE i.id_type = 'cusip' AND i.valid_to IS NULL AND i.system_to IS NULL AND "
-        "s.valid_to IS NULL AND s.system_to IS NULL AND s.merged_into_id IS NULL LIMIT 1")
+        "s.valid_to IS NULL AND s.system_to IS NULL AND s.merged_into_id IS NULL AND s.security_type IN ('equity', "
+        "'fund') AND (SELECT count(*) FROM portfolio.securities_global_identifiers j WHERE j.id_type = 'cusip' AND "
+        "upper(j.id_value) = upper(i.id_value) AND j.valid_to IS NULL AND j.system_to IS NULL) = 1 AND EXISTS ("
+        "SELECT 1 FROM portfolio.securities_global_prices p WHERE p.global_security_id = s.id AND p.org_id IS NULL "
+        "AND p.price_type = 'close' AND p.price_date <= $1 AND p.valid_to IS NULL AND p.system_to IS NULL) LIMIT 1",
+        as_of)
     return dict(r) if r else None
 
 
@@ -132,6 +138,36 @@ def webhook_signing_check() -> dict:
             "environment}", "passed": ok, "detail": detail}
 
 
+def order_webhook_check() -> dict:
+    """cpsim03 §8.4 — an ORDER event is signed the same way and names the order (D9)."""
+    from cpsim import webhooks as W
+    from services import altruist_webhook as AW
+
+    key = "cpsim_whsec_" + secrets.token_hex(20)
+    saved = {k: os.environ.get(k) for k in (AW.SIMULATOR_SECRET_ENV_VAR, AW.SECRET_ENV_VAR)}
+    try:
+        os.environ[AW.SIMULATOR_SECRET_ENV_VAR] = key
+        os.environ[AW.SECRET_ENV_VAR] = "real-" + secrets.token_hex(16)
+        body = W.event_body("order.filled", "conf-acct-1", order={"order_id": "sim-o-" + "0" * 16,
+                                                                  "client_order_id": "conf-order"})
+        doc = json.loads(body)
+        ok = (AW.verify_signature_source(body, W.sign(key, body)) == AW.SIGNED_SIMULATOR
+              and list(doc) == ["event_id", "event_type", "order_id", "client_order_id", "account_id", "environment",
+                                "occurred_at"] and doc["environment"] == "simulator")
+        detail = "" if ok else f"keys {list(doc)}"
+    except Exception as exc:  # noqa: BLE001
+        ok, detail = False, f"{type(exc).__name__}"
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    return {"id": "O14", "contract": "§8.4", "label": "order webhook: {event_id, event_type, order_id, client_order_id, "
+            "account_id, environment, occurred_at}, signed and verified as §6.7 (forces the simulator)", "passed": ok,
+            "detail": detail}
+
+
 def report(out: dict, path: pathlib.Path) -> None:
     print(f"{'ID':4} {'RESULT':6} {'CONTRACT':28} CHECK")
     for r in out["results"]:
@@ -162,7 +198,7 @@ async def run_in_process(json_out: pathlib.Path, *, transform=None) -> dict:
             cp = await FX.create_counterparty(conn, name="CPSIM CONFORMANCE FIXTURE", slug=slug)
             clock = await conn.fetchval("SELECT business_date FROM cpsim.counterparty_clock WHERE counterparty_id = "
                                         "$1::uuid AND valid_to IS NULL", cp["id"])
-            sec = await _pick_security(conn)
+            sec = await _pick_security(conn, clock)
             planted = await FX.plant_book(conn, cp["id"], fixture_book(sec, clock))
         rejected = {k: v["counts"]["rejected"] for k, v in planted.items()}
         transport = FX.TimeoutASGITransport(app=FX.mounted_app())
@@ -173,9 +209,15 @@ async def run_in_process(json_out: pathlib.Path, *, transform=None) -> dict:
         allow = {db_host} | {ai[4][0] for ai in socket.getaddrinfo(db_host, None)} if db_host else set()
         with _NoNetwork(allow_hosts=allow) as guard:
             # the DB pool is already open (the fixture used it); every simulator call is in-process
+            fx = {"account_id": "conf-acct-1", "cusip": sec["id_value"], "held": "10"} if sec else None
             out = await AC.run(environment=AO.SIMULATOR, hosts=hosts, credentials=(cp["client_id"], cp["key"]),
-                               transport=transport)
+                               transport=transport, orders=fx)
+        if not sec:      # cpsim03 — the orders group needs a priced equity / fund: its absence is a failure, not a skip
+            out["results"].append({"id": "O00", "contract": "§8 (orders)", "label": "orders group: a priced equity / "
+                                   "fund security with a CUSIP exists for the fixture book", "passed": False,
+                                   "detail": "none found in the security master"})
         out["results"].append(webhook_signing_check())
+        out["results"].append(order_webhook_check())
         out["results"].append({"id": "C20", "contract": "(harness)", "label": "no network: the run opened no socket "
                                "outside the database", "passed": not guard.attempts,
                                "detail": f"{guard.attempts[:3]}"})
@@ -217,6 +259,9 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     out_path = pathlib.Path(a.json_out) if a.json_out else REPO / "logs" / f"cpsim_conformance_{date.today():%Y%m%d}.json"
     if a.target == "sandbox":
+        from services import altruist_conformance as AC
+
+        print(f"orders group: skipped — {AC.orders_group_skip('sandbox', None)}")
         if not a.i_have_sandbox_access:
             return _refuse("--target sandbox needs --i-have-sandbox-access (it calls Altruist's real sandbox)")
         if not (os.environ.get("ALTRUIST_SANDBOX_CLIENT_ID") and os.environ.get("ALTRUIST_SANDBOX_CLIENT_SECRET")):

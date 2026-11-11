@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 1053 · guarded 248 · sql-scope 53 · body-check 15 · legacy-rule 3
+Routes: 1057 · guarded 251 · sql-scope 53 · body-check 15 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -65,6 +65,7 @@ Routes: 1053 · guarded 248 · sql-scope 53 · body-check 15 · legacy-rule 3
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/key/generate` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/key/revoke` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/key/rotate` | admin_counterparties | scrub |
+| GET | `/api/v1/admin/counterparties/{counterparty_id}/orders` | admin_counterparties | scrub |
 | GET | `/api/v1/admin/counterparties/{counterparty_id}/requests` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/test-message` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/webhooks/test` | admin_counterparties | scrub |
@@ -575,11 +576,14 @@ Routes: 1053 · guarded 248 · sql-scope 53 · body-check 15 · legacy-rule 3
 | POST | `/api/v1/execution/instructions/{instruction_id}/approve` | execution | guard:instruction_id, scrub |
 | POST | `/api/v1/execution/instructions/{instruction_id}/cancel` | execution | guard:instruction_id, scrub |
 | POST | `/api/v1/execution/instructions/{instruction_id}/close` | execution | guard:instruction_id, scrub |
+| GET | `/api/v1/execution/instructions/{instruction_id}/custodian-order` | execution | guard:instruction_id, scrub |
 | POST | `/api/v1/execution/instructions/{instruction_id}/fills` | execution | guard:instruction_id, scrub |
+| POST | `/api/v1/execution/instructions/{instruction_id}/import-fills` | execution | guard:instruction_id, scrub |
 | POST | `/api/v1/execution/instructions/{instruction_id}/letter` | execution | guard:instruction_id, scrub |
 | POST | `/api/v1/execution/instructions/{instruction_id}/reconcile` | execution | guard:instruction_id, scrub |
 | POST | `/api/v1/execution/instructions/{instruction_id}/reconcile-held-away` | execution | guard:instruction_id, scrub |
 | POST | `/api/v1/execution/instructions/{instruction_id}/reject` | execution | guard:instruction_id, scrub |
+| POST | `/api/v1/execution/instructions/{instruction_id}/send-to-custodian` | execution | guard:instruction_id, scrub |
 | POST | `/api/v1/execution/instructions/{instruction_id}/sent` | execution | guard:instruction_id, scrub |
 | POST | `/api/v1/execution/instructions/{instruction_id}/settlement` | execution | guard:instruction_id, scrub |
 | POST | `/api/v1/execution/instructions/{instruction_id}/submit` | execution | guard:instruction_id, scrub |

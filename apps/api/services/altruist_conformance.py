@@ -9,6 +9,12 @@ uses) — so client and server are proven to agree. It ALSO reads each raw respo
 
 No database, no simulator import: the target is a base URL + credentials (+ an optional transport). The runner
 (scripts/cpsim_altruist_conformance.py) and the admin page (routers/admin_counterparties.py) supply them.
+
+cpsim03 D10 — the ``orders`` group (O01–O13 + O15, contract §8 — every field ASSUMED), driven through the orders client
+(services/altruist_trading.py ``post_order`` / ``get_order`` / ``delete_order``) and raw requests. Simulator ONLY: any
+other target skips it with "no published Altruist orders contract". It PLACES ORDERS and so moves the target's book
+(§8.5), so it runs only when the caller passes a fixture book (``orders=``): the in-process fixture run does; the admin
+page's run against a live counterparty does not (it reports the group as not run, with that reason).
 """
 
 from __future__ import annotations
@@ -65,7 +71,7 @@ def _num_ok(v) -> bool:
 
 async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], transport: Any = None,
               redirect_uri: str = DEFAULT_REDIRECT, scope: str = "accounts:read", timeout: float = 15.0,
-              expect_simulated_header: bool | None = None, max_accounts: int = 25) -> dict:
+              expect_simulated_header: bool | None = None, max_accounts: int = 25, orders: dict | None = None) -> dict:
     """Run every check. Returns ``{"target", "passed", "failed", "results": [...]}``. Never raises for a server
     defect — a defect is a failed check; a client-side refusal (D1) is a failed check too."""
     S = Suite()
@@ -283,6 +289,13 @@ async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], tr
     except Exception as exc:  # noqa: BLE001
         S.check(False, "C17", "§6.3 (Bearer check)", "Bearer check", f"{type(exc).__name__}")
 
+    skip = orders_group_skip(environment, orders)
+    if skip:
+        S.na("O00", "§8 (orders)", "orders group", skip)
+    else:
+        await _orders_group(S, raw=raw, api=api, access=access, credentials=credentials, transport=transport,
+                            timeout=timeout, fx=orders)
+
     if sim:
         missing = [u for u, v in seen_headers if v != "true"]
         S.check(seen_headers and not missing, "C18", "§6 (SIMULATED header)",
@@ -290,3 +303,183 @@ async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], tr
     else:
         S.na("C18", "§6 (SIMULATED header)", "SIMULATED header", "not applicable to a real counterparty")
     return {"environment": environment, "passed": S.passed, "failed": S.failed, "results": S.results}
+
+
+NO_ORDERS_CONTRACT = "no published Altruist orders contract"
+NOT_A_FIXTURE = ("not run: the orders group places orders and moves the book, so it runs only against a fixture book "
+                 "(the in-process run)")
+
+
+def orders_group_skip(environment: str, orders: dict | None) -> str | None:
+    """Why the orders group does not run against this target (None → it runs). A real target: there is no published
+    Altruist orders contract to conform to."""
+    if environment != AO.SIMULATOR:
+        return NO_ORDERS_CONTRACT
+    if orders is None:
+        return NOT_A_FIXTURE
+    return None
+ORDER_FIELDS = ("order_id", "client_order_id", "account_id", "symbol", "cusip", "side", "quantity", "notional",
+                "order_type", "limit_price", "time_in_force", "status", "reject_reason", "filled_quantity",
+                "average_price", "executions", "trade_date", "created_at", "updated_at")
+EXEC_FIELDS = ("exec_id", "quantity", "price", "executed_at", "trade_date", "settle_date")
+ORDER_STATUSES = ("accepted", "working", "partially_filled", "filled", "rejected", "cancelled")
+TS_RX = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+
+
+async def _orders_group(S: Suite, *, raw, api: str, access: str, credentials, transport, timeout: float, fx: dict):
+    """O01–O13 + O15 (contract §8). ``fx`` = {account_id, cusip, held} — a fixture account holding ``held`` shares of a
+    priced equity / fund security named by ``cusip``."""
+    from decimal import Decimal
+
+    from services import altruist_trading as AT
+    from services.us_business_days import is_business_day
+
+    acct, cusip, held = fx["account_id"], fx["cusip"], Decimal(str(fx["held"]))
+    tag = secrets.token_hex(4)
+    hdr = {"Authorization": f"Bearer {access}", "Accept": "application/json"}
+    kw = {"api_base": api, "access_token": access, "timeout": timeout, "transport": transport}
+    buy = {"client_order_id": f"conf-{tag}-buy", "account_id": acct, "cusip": cusip, "side": "buy", "quantity": "2",
+           "order_type": "market", "time_in_force": "gtc"}
+    first = {}
+    try:
+        status, first = await AT.post_order(order=buy, **kw)
+        S.check(status == 201 and all(k in first for k in ORDER_FIELDS) and first.get("status") in ORDER_STATUSES
+                and first.get("client_order_id") == buy["client_order_id"]
+                and str(first.get("order_id", "")).startswith("sim-o-"), "O01", "§8.1 O-1 / §8.3",
+                "POST /v2/orders (the client's post_order): 201, the order with every §8.3 field",
+                f"status {status}, missing {[k for k in ORDER_FIELDS if k not in first]}")
+        ex = first.get("executions") or []
+        good = first.get("status") == "filled" and len(ex) == 1 and all(k in ex[0] for k in EXEC_FIELDS) and all(
+            isinstance(ex[0].get(k), str) and NUM_RX.match(ex[0][k]) for k in ("quantity", "price")) \
+            and Decimal(ex[0]["quantity"]) == Decimal("2") and first.get("filled_quantity") == "2"
+        sd = ex[0].get("settle_date") if ex else None
+        td = ex[0].get("trade_date") if ex else None
+        dates = bool(td and sd and ISO_RX.match(td) and ISO_RX.match(sd) and date.fromisoformat(sd) >
+                     date.fromisoformat(td) and is_business_day(date.fromisoformat(sd))
+                     and TS_RX.match(str(ex[0].get("executed_at") or "")))
+        S.check(good and dates, "O02", "§8.3 executions / §8.5",
+                "a market buy (accept) fills in full: one execution {exec_id, quantity, price, executed_at, "
+                "trade_date, settle_date}, decimals as strings, settle a later US business day, ISO UTC time",
+                f"status {first.get('status')}, executions {ex}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O01", "§8.1 O-1 / §8.3", "POST /v2/orders", f"{type(exc).__name__}: {exc}")
+    try:
+        status, again = await AT.post_order(order={**buy, "quantity": "3"}, **kw)
+        r = await raw("GET", f"{api}/v2/orders", params={"account_id": acct}, headers=hdr)
+        same = [o for o in (r.json().get("orders") or []) if o.get("client_order_id") == buy["client_order_id"]]
+        S.check(status == 200 and again.get("order_id") == first.get("order_id") and again.get("filled_quantity") == "2"
+                and len(same) == 1, "O03", "§8.1 O-1 (idempotent)",
+                "a repeat POST with the same client_order_id returns the SAME order (200) — never a second one",
+                f"status {status}, same id {again.get('order_id') == first.get('order_id')}, orders {len(same)}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O03", "§8.1 O-1 (idempotent)", "idempotent POST", f"{type(exc).__name__}: {exc}")
+    try:
+        # cpsim03 fix 2 — the repeat rule pinned on a body that differs in EVERY order field: a repeat POST with the same
+        # client_order_id returns the ORIGINAL order unchanged, 200, whatever the body — and still exactly one order
+        other = {"client_order_id": buy["client_order_id"], "account_id": acct, "cusip": cusip, "side": "sell",
+                 "quantity": "1", "order_type": "limit", "limit_price": "0.01", "time_in_force": "day"}
+        status, again = await AT.post_order(order=other, **kw)
+        got = await AT.get_order(order_id=first.get("order_id", "x"), **kw)
+        r = await raw("GET", f"{api}/v2/orders", params={"account_id": acct}, headers=hdr)
+        same = [o for o in (r.json().get("orders") or []) if o.get("client_order_id") == buy["client_order_id"]]
+        orig = {k: first.get(k) for k in ORDER_FIELDS}
+        diff = [k for k in ORDER_FIELDS if again.get(k) != orig[k] or got.get(k) != orig[k]]
+        S.check(bool(first) and status == 200 and not diff and len(same) == 1, "O15", "§8.1 O-1 (repeat rule)",
+                "a repeat POST with the same client_order_id but a DIFFERENT body (sell / limit / day / qty 1) returns "
+                "the original order unchanged (every §8.3 field), 200 — and there is still exactly one order",
+                f"status {status}, changed {diff}, orders {len(same)}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O15", "§8.1 O-1 (repeat rule)", "different-body repeat POST", f"{type(exc).__name__}: {exc}")
+    try:
+        got = await AT.get_order(order_id=first.get("order_id", "x"), **kw)
+        S.check(got.get("order_id") == first.get("order_id") and got.get("status") == first.get("status"), "O04",
+                "§8.1 O-2", "GET /v2/orders/{order_id} (the client's get_order) returns the order", f"{got}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O04", "§8.1 O-2", "GET one order", f"{type(exc).__name__}: {exc}")
+    try:
+        r = await raw("GET", f"{api}/v2/orders", params={"account_id": acct}, headers=hdr)
+        body = r.json()
+        r400 = await raw("GET", f"{api}/v2/orders", headers=hdr)
+        S.check(r.status_code == 200 and isinstance(body.get("orders"), list) and body["orders"]
+                and not any(k in body for k in PAGINATION_KEYS) and r400.status_code == 400, "O05", "§8.1 O-3",
+                'GET /v2/orders?account_id= → {"orders": [...]} in one response; without account_id → 400',
+                f"{r.status_code}/{r400.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O05", "§8.1 O-3", "list orders", f"{type(exc).__name__}: {exc}")
+    try:
+        bad = {**buy, "client_order_id": f"conf-{tag}-float", "quantity": 2.5}
+        r = await raw("POST", f"{api}/v2/orders", json=bad, headers=hdr)
+        body = r.json()
+        r2 = await raw("GET", f"{api}/v2/orders", params={"account_id": acct}, headers=hdr)
+        made = [o for o in (r2.json().get("orders") or []) if o.get("client_order_id") == bad["client_order_id"]]
+        S.check(r.status_code == 422 and any(e.get("field") == "quantity" for e in body.get("errors") or [])
+                and not made, "O06", "§8.2 (decimal strings)",
+                "a JSON-float quantity is refused 422 naming the field; no order is created",
+                f"status {r.status_code}, errors {body.get('errors')}, created {len(made)}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O06", "§8.2 (decimal strings)", "float refused", f"{type(exc).__name__}: {exc}")
+    try:
+        lim = {**buy, "client_order_id": f"conf-{tag}-limit", "order_type": "limit", "limit_price": "0.01"}
+        _s, working = await AT.post_order(order=lim, **kw)
+        cancelled = await AT.delete_order(order_id=working.get("order_id", "x"), **kw)
+        try:
+            await AT.delete_order(order_id=working.get("order_id", "x"), **kw)
+            twice = None
+        except AT.AltruistOrderRefused as e:
+            twice = e.status
+        S.check(working.get("status") == "working" and not working.get("executions") and cancelled.get("status")
+                == "cancelled" and twice == 409, "O07", "§8.1 O-4 / §8.5 (limit)",
+                "an unmarketable limit buy is working; DELETE (the client's delete_order) cancels it; a second "
+                "DELETE is 409", f"{working.get('status')} → {cancelled.get('status')}, second {twice}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O07", "§8.1 O-4 / §8.5 (limit)", "cancel a working order", f"{type(exc).__name__}: {exc}")
+    try:
+        await AT.delete_order(order_id=first.get("order_id", "x"), **kw)
+        S.check(False, "O08", "§8.1 O-4 (filled)", "DELETE a filled order is refused 409", "accepted")
+    except AT.AltruistOrderRefused as e:
+        S.check(e.status == 409 and "filled" in (e.detail or ""), "O08", "§8.1 O-4 (filled)",
+                "DELETE a filled order is refused 409, the reason naming its status", f"{e.status} {e.detail}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O08", "§8.1 O-4 (filled)", "DELETE filled", f"{type(exc).__name__}: {exc}")
+    try:
+        sell = {**buy, "client_order_id": f"conf-{tag}-sell", "side": "sell", "quantity": str(held + 1000)}
+        _s, rej = await AT.post_order(order=sell, **kw)
+        S.check(rej.get("status") == "rejected" and rej.get("reject_reason") == "insufficient position"
+                and not rej.get("executions"), "O09", "§8.5 (insufficient position)",
+                "a sell above the position is rejected 'insufficient position' (never below zero)", f"{rej}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O09", "§8.5 (insufficient position)", "oversell", f"{type(exc).__name__}: {exc}")
+    try:
+        r = await raw("POST", f"{api}/v2/orders", json={**buy, "client_order_id": f"conf-{tag}-noauth"},
+                      headers={"Accept": "application/json"})
+        r2 = await raw("POST", f"{api}/v2/orders", json={**buy, "client_order_id": f"conf-{tag}-key"},
+                       headers={"Authorization": f"Bearer {credentials[1]}", "Accept": "application/json"})
+        S.check(r.status_code == 401 and r2.status_code == 401, "O10", "§8.1 O-5",
+                "orders need an ACCESS token: none → 401, the cpsim_ client key itself → 401",
+                f"{r.status_code}/{r2.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O10", "§8.1 O-5", "orders auth", f"{type(exc).__name__}")
+    try:
+        r = await raw("GET", f"{api}/v2/orders/sim-o-0000000000000000", headers=hdr)
+        S.check(r.status_code == 404, "O11", "§8.1 O-2 (404)", "an unknown order id is 404", f"{r.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O11", "§8.1 O-2 (404)", "unknown order", f"{type(exc).__name__}")
+    try:
+        ex = (first.get("executions") or [{}])[0]
+        rp = await raw("GET", f"{api}/v2/positions", params={"account_id": acct}, headers=hdr)
+        rt = await raw("GET", f"{api}/v2/transactions", params={"account_id": acct}, headers=hdr)
+        qty = sum((Decimal(p["quantity"]) for p in rp.json().get("positions") or [] if p.get("cusip") == cusip),
+                  Decimal(0))
+        txn = [t for t in rt.json().get("transactions") or [] if t.get("id") == f"sim-x-{ex.get('exec_id')}"]
+        S.check(qty == held + Decimal("2") and len(txn) == 1 and txn[0].get("type") == "buy"
+                and txn[0].get("quantity") == "2", "O12", "§8.5 (book moves for fills)",
+                "the fill moved the book: the position is held + 2 and the buy transaction sim-x-<exec_id> is served",
+                f"position {qty} (held {held}), transactions {txn}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O12", "§8.5 (book moves for fills)", "book moved", f"{type(exc).__name__}: {exc}")
+    try:
+        r = await raw("GET", f"{api}/v2/orders/{first.get('order_id', 'x')}", headers=hdr)
+        S.check(r.headers.get(SIM_HEADER) == "true", "O13", "§8.1 O-6", "order responses carry "
+                "X-Counterparty-Simulated: true", f"{r.headers.get(SIM_HEADER)}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "O13", "§8.1 O-6", "SIMULATED header", f"{type(exc).__name__}")

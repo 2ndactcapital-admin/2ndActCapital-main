@@ -9,6 +9,13 @@ cpsim02 — the Altruist-compatible read API at the client's EXACT paths (contra
     GET  …/v2/accounts?household_id=   {"accounts": [{id, name, …}]}
     GET  …/v2/positions?account_id=    {"positions": [T6 primary fields]} — the latest snapshot on or before the clock
     GET  …/v2/transactions?account_id= {"transactions": [T7 primary fields]} — trade_date ≤ the clock
+
+cpsim03 — the orders API (contract §8, every field ASSUMED), same access-token auth:
+    POST   …/v2/orders                201 a new order / 200 the SAME order on a repeat client_order_id; 422 malformed
+    GET    …/v2/orders?account_id=    {"orders": [...]}
+    GET    …/v2/orders/{order_id}     {"order": {...}}
+    DELETE …/v2/orders/{order_id}     cancel while working; 409 once filled / rejected / cancelled
+  The outcome comes from the behaviour row (cpsim/orders.py, D6); fills move the book (D7); order webhooks (D9).
   Resources take an ACCESS token (``Bearer cpsim_at_…``); the cpsim_ key authenticates only the token endpoint. One
   response per resource (no pagination), explicit ids, ISO dates. Behaviour (D9): reject → 503 with the reason;
   delay → sleep min(delay_seconds, MAX_DELAY_S) before answering; partial / ACH do not apply to reads.
@@ -38,6 +45,7 @@ from cpsim import db as DB
 from cpsim import book as B
 from cpsim import mirror as M
 from cpsim import oauth as O
+from cpsim import orders as SO
 from cpsim import registry as R
 
 LOG_KEY = "cpsim.log"
@@ -253,6 +261,79 @@ def create_app() -> FastAPI:
 
     sub.add_api_route("/c/{slug}/v2/positions", _account_route("positions", B.positions), methods=["GET"])
     sub.add_api_route("/c/{slug}/v2/transactions", _account_route("transactions", B.transactions), methods=["GET"])
+
+    # ── cpsim03: the orders API (contract §8 — every field ASSUMED) ─────────────────────────────────────────────
+    async def _orders(slug: str, request: Request, tail: str, message_type: str, work):
+        """Access-token auth as the read API; then ``work(conn, cp, clock, behaviour)`` in ONE transaction. Behaviour
+        decides an order's OUTCOME (D6) — it never turns an orders call into a 503, and delay_seconds stays a
+        read-API setting. Webhooks (D9) are scheduled after the transaction commits and delivered outside the
+        request (fix 1: never inline)."""
+        log = _log(request, slug, tail, message_type)
+        try:
+            async with DB.tx() as conn:
+                cp = await R.live_by_slug(conn, slug)
+                if cp is None:
+                    log["auth_outcome"] = "unknown_counterparty"
+                    return _out(404, {"detail": "no such simulated counterparty"})
+                log["counterparty_id"] = cp["id"]
+                outcome = await O.check_access(conn, cp, A.bearer(request.headers.get("authorization")))
+                log["auth_outcome"] = outcome
+                if outcome != "ok":
+                    return _out(401, {"detail": REFUSALS.get(outcome, "not authorised")},
+                                {"WWW-Authenticate": 'Bearer realm="cpsim", error="invalid_token"'})
+                beh = await R.behaviour(conn, cp["id"]) or {}
+                clock = await R.business_date(conn, cp["id"]) or R.today()
+                status, body, events = await work(conn, cp, clock, beh)
+        except SO.OrderError as exc:
+            log["shape_valid"] = exc.status != 422
+            log["error_count"] = len(exc.errors)
+            return _out(exc.status, {"detail": str(exc), **({"errors": exc.errors} if exc.errors else {})})
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return _out(500, {"detail": "simulator error"})
+        log["shape_valid"] = True
+        if events:
+            from cpsim import webhooks as W
+
+            # fix 1: delivered AFTER the transaction committed and OUTSIDE this request — the response never waits
+            W.schedule_orders(counterparty_id=cp["id"], slug=cp["slug"], items=events, behaviour=beh)
+        return _out(status, body)
+
+    @sub.post("/c/{slug}/v2/orders")
+    async def order_create(slug: str, request: Request):
+        raw = await request.body()
+        try:
+            doc = json.loads(raw.decode("utf-8")) if raw else None
+        except (ValueError, UnicodeDecodeError):
+            doc = None
+
+        async def work(conn, cp, clock, beh):
+            order, created, events = await SO.submit(conn, cp, doc, clock=clock, behaviour=beh)
+            return (201 if created else 200), {"order": order}, ([(order, events)] if events else [])
+        return await _orders(slug, request, "/v2/orders", "altruist.orders.create", work)
+
+    @sub.get("/c/{slug}/v2/orders")
+    async def order_list(slug: str, request: Request, account_id: str | None = None):
+        async def work(conn, cp, clock, beh):
+            if not account_id:
+                return 400, {"detail": "account_id is required"}, []
+            if not await B.account_exists(conn, cp["id"], account_id):
+                return 404, {"detail": "no such account in this simulated custodian's book"}, []
+            return 200, {"orders": await SO.list_for_account(conn, cp["id"], account_id)}, []
+        return await _orders(slug, request, "/v2/orders", "altruist.orders.list", work)
+
+    @sub.get("/c/{slug}/v2/orders/{order_id}")
+    async def order_get(slug: str, order_id: str, request: Request):
+        async def work(conn, cp, clock, beh):
+            return 200, {"order": await SO.get(conn, cp["id"], order_id[:80])}, []
+        return await _orders(slug, request, "/v2/orders/{order_id}", "altruist.orders.get", work)
+
+    @sub.delete("/c/{slug}/v2/orders/{order_id}")
+    async def order_cancel(slug: str, order_id: str, request: Request):
+        async def work(conn, cp, clock, beh):
+            order = await SO.cancel(conn, cp, order_id[:80])
+            return 200, {"order": order}, [(order, ["order.updated"])]
+        return await _orders(slug, request, "/v2/orders/{order_id}", "altruist.orders.cancel", work)
 
     return SimulatedMarker(sub)
 
