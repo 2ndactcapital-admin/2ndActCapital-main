@@ -40,12 +40,22 @@ import json
 import os
 from typing import Any
 
-from services.altruist_identity import RECORD_TYPE_ACCOUNT, SOURCE_SYSTEM_ALTRUIST, resolve_identity
+from services.altruist_identity import RECORD_TYPE_ACCOUNT, SOURCE_SYSTEM_ALTRUIST, crosswalk_source, resolve_identity
 from services.altruist_positions_sync import sync_resolved_accounts
 
 SIGNATURE_HEADER = "X-Altruist-Signature"
 SECRET_ENV_VAR = "ALTRUIST_WEBHOOK_SECRET"
 DEFAULT_ENVIRONMENT = "sandbox"
+
+# cpsim02 D6 — a SECOND secret for the simulated custodian. The real secret is tried first (unchanged path); only if it
+# fails AND the simulator secret is configured (with its cpsim_whsec_ prefix) is the simulator secret tried — and a
+# match FORCES environment = simulator, whatever the payload says. A REAL-secret payload that claims "simulator" is
+# logged and never dispatched (real traffic can never drive a simulator sync).
+SIMULATOR_SECRET_ENV_VAR = "ALTRUIST_SIMULATOR_WEBHOOK_SECRET"
+SIMULATOR_SECRET_PREFIX = "cpsim_whsec_"
+SIMULATOR_ENVIRONMENT = "simulator"
+SIGNED_REAL = "real"
+SIGNED_SIMULATOR = "simulator"
 
 TABLE_WEBHOOK_EVENTS = "public.altruist_webhook_events"
 TABLE_EXTERNAL_REFERENCES = "portfolio.external_references"
@@ -83,6 +93,28 @@ def verify_signature(raw_body: bytes, signature_header: str | None) -> None:
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature_header.strip()):
         raise InvalidSignature("signature does not match")
+
+
+def _matches(secret: str, raw_body: bytes, presented: str) -> bool:
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, presented)
+
+
+def verify_signature_source(raw_body: bytes, signature_header: str | None) -> str:
+    """cpsim02 D6 — which secret signed this body: SIGNED_REAL (ALTRUIST_WEBHOOK_SECRET, tried first, exactly as
+    ``verify_signature``) or SIGNED_SIMULATOR (ALTRUIST_SIMULATOR_WEBHOOK_SECRET, tried only after the real one fails
+    and only when it is configured with its cpsim_whsec_ prefix). Raises InvalidSignature otherwise — the router still
+    answers the one generic 401."""
+    if not signature_header:
+        raise InvalidSignature("missing signature header or unconfigured secret")
+    presented = signature_header.strip()
+    real = os.environ.get(SECRET_ENV_VAR)
+    if real and _matches(real, raw_body, presented):
+        return SIGNED_REAL
+    sim = os.environ.get(SIMULATOR_SECRET_ENV_VAR) or ""
+    if sim.startswith(SIMULATOR_SECRET_PREFIX) and _matches(sim, raw_body, presented):
+        return SIGNED_SIMULATOR
+    raise InvalidSignature("signature does not match")
 
 
 def _first_present(payload: dict, fields: tuple[str, ...]) -> Any:
@@ -154,7 +186,7 @@ async def record_event(
     return existing_id, False
 
 
-async def _lookup_org_for_identifier(conn, identifier: str) -> str | None:
+async def _lookup_org_for_identifier(conn, identifier: str, source: str = SOURCE_SYSTEM_ALTRUIST) -> str | None:
     """Reverse crosswalk lookup: given an Altruist external account id, find
     which org it belongs to. Deliberately NOT scoped by org_id (unknown at
     this point) — relies on the caller's connection carrying
@@ -168,7 +200,7 @@ async def _lookup_org_for_identifier(conn, identifier: str) -> str | None:
         WHERE source_system = $1 AND external_id = $2 AND record_type = $3
         LIMIT 1
         """,
-        SOURCE_SYSTEM_ALTRUIST, identifier, RECORD_TYPE_ACCOUNT,
+        source, identifier, RECORD_TYPE_ACCOUNT,
     )
 
 
@@ -183,7 +215,8 @@ async def _mark_resolved(conn, event_row_id: str, org_id: str) -> None:
     )
 
 
-async def process_event(conn, *, payload: dict, collect: list | None = None) -> dict:
+async def process_event(conn, *, payload: dict, collect: list | None = None,
+                        signed_by: str = SIGNED_REAL) -> dict:
     """The dedup -> lookup -> dispatch pipeline for one already-signature-
     verified webhook payload. Must run on a connection already carrying
     ``is_super_admin=true`` RLS context (see ``routers/altruist_webhook.py``).
@@ -205,6 +238,19 @@ async def process_event(conn, *, payload: dict, collect: list | None = None) -> 
     if not inserted:
         return {"status": "duplicate", "event_id": event_id}
 
+    # cpsim02 D6 — the environment is FORCED by the simulator secret; a real-secret payload claiming the simulator is
+    # logged (above) and refused here, before any lookup or dispatch.
+    if signed_by == SIGNED_SIMULATOR:
+        environment = SIMULATOR_ENVIRONMENT
+    else:
+        environment = extract_environment(payload)
+        if environment == SIMULATOR_ENVIRONMENT:
+            return {
+                "status": "refused_environment",
+                "event_id": event_id,
+                "reason": "a payload signed with the real secret may not claim the simulator environment",
+            }
+
     identifier = extract_identifier(payload)
     if not identifier:
         return {
@@ -213,7 +259,7 @@ async def process_event(conn, *, payload: dict, collect: list | None = None) -> 
             "reason": "no plausible account/household identifier field in payload",
         }
 
-    org_id = await _lookup_org_for_identifier(conn, identifier)
+    org_id = await _lookup_org_for_identifier(conn, identifier, crosswalk_source(environment))
     if not org_id:
         return {
             "status": "logged_unrecognized",
@@ -223,7 +269,6 @@ async def process_event(conn, *, payload: dict, collect: list | None = None) -> 
 
     await _mark_resolved(conn, row_id, org_id)
 
-    environment = extract_environment(payload)
     sync_summary: dict = {}
     try:
         await resolve_identity(conn, org_id=org_id, environment=environment)
@@ -251,4 +296,8 @@ __all__ = [
     "process_event",
     "record_event",
     "verify_signature",
+    "verify_signature_source",
+    "SIGNED_REAL",
+    "SIGNED_SIMULATOR",
+    "SIMULATOR_SECRET_ENV_VAR",
 ]

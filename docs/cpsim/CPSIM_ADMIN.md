@@ -39,7 +39,10 @@ tab), with `Authorization: Bearer <key>`.
 | Behaviour | Default outcome (accept · reject with reason · partial % · delay seconds), ACH return (code + after N business days), webhooks on / off | **Stored now; drives outcomes from cpsim03 (orders) and cpsim04 (payments).** |
 | Clock | Business date; **Advance one business day** | The counterparty's own date (US federal holidays and weekends skipped — `services/us_business_days.py`). The mirror stamps `received_at` from it. Every advance is audited. |
 | Activity | Request log | Every simulator request: path, status, auth outcome, shape valid, message type. Never a body, never a key. |
-| Import / Export | — | Placeholder: arrives with the Altruist API (cpsim02). |
+| Import / Export | — | The counterparty's BOOK (cpsim02, §7 below) — REST + OAuth custodian types only. |
+| Connections | — | The allowed orgs that point at this counterparty; Connect / Sync now (cpsim02, §8). |
+| Webhooks | Webhooks on / off, override URL | Outbound events after an accepted upload; "Send test event"; the delivery log (§9). |
+| Conformance | — | Run the conformance suite against this counterparty; the last result (§10). |
 
 ## 3. The mirror (v1 — stateless)
 
@@ -96,3 +99,85 @@ tables). Fake numbers live in `cpsim` only.
   new secret, no new login.
 - Schema: `docs/cpsim01_part1.sql` (applied 2026-11-10).
 - Verify: `apps/api/scripts/verify_cpsim01.py` (written, not yet run); in `scripts/regression_set.txt`.
+
+
+## 7. Upload a book (cpsim02)
+
+The book is the simulated custodian's data — what its Altruist-compatible API serves. Admin → Counterparties → the
+counterparty → **Import / Export**.
+
+1. **Templates** — one per kind, CSV or JSON: households (`household_id`, `name`), accounts (`account_id`,
+   `household_id`, `name`, `account_type`), positions (`position_id`, `account_id`, `as_of`, `row_type`, `cusip`, `isin`,
+   `ticker`, `name`, `asset_type`, `quantity`, `market_value`, `cost_basis`, `currency_code`), transactions
+   (`transaction_id`, `account_id`, `type`, `trade_date`, `settle_date`, `row_type`, `cusip`, `isin`, `ticker`, `name`,
+   `quantity`, `price`, `gross_amount`, `fees`, `taxes`, `net_amount`, `currency_code`). Upload in that order (an
+   account needs its household; a position its account; a transaction a position for its security).
+2. **Upload → Preview.** Nothing is written. Each row is accepted or rejected with its reason: unknown / ambiguous
+   identifier, identifiers that disagree, no price (blank market value and no platform close on or before the as-of
+   date), bad type (not one of buy, sell, dividend, interest, fee, fee_expense, adjustment), no position for the
+   transacted security in the same account, bad date (ISO `YYYY-MM-DD` only), bad number, bad currency, unknown
+   household / account, a duplicate id. A cash line is `row_type = cash` with a market value and no identifier.
+3. **Accept** re-validates and writes in one transaction: the rows of every account (households file: every household)
+   with at least one accepted row are REPLACED (the old rows are closed, kept as history). The upload is logged
+   (append-only: who, when, file, sha256, counts, every rejection). Blank ids become stable `sim-…` ids.
+4. **Export** — each kind as CSV in the import columns (re-importing it reproduces the book exactly), or the whole book
+   as JSON in the API's own response shapes, as served on the counterparty's clock date.
+
+Limits: 2 MB and 5,000 rows per file. What is served: positions = the latest snapshot on or before the counterparty's
+business date; transactions = trade date on or before it. Advance the clock to serve the next day.
+
+## 8. Connect an org
+
+1. **Org access** — switch `counterparty_sim.allowed` on for the org (a test org, or 2nd Act for its demo households
+   only: a real org's account is synced only when its household's members are all tagged demo; any other account
+   becomes a `not_a_demo_household` exception and nothing is written for it).
+2. **Connections** tab → **Point here** (the org setting `counterparty_sim.altruist_counterparty` = this slug; Super
+   Admin only — the generic settings screen and the database refuse it otherwise).
+3. **Connect** — the existing Altruist-compatible integration runs its authorize step server-to-server (the simulator
+   needs no browser), exchanges the code, stores the connection under environment `simulator`, and syncs: identity
+   resolution (crosswalk `ALTRUIST_SIMULATOR`; unlinked accounts become exceptions to link by hand), then positions and
+   transactions (tagged `altruist_simulator`). **Sync now** repeats the sync; it is idempotent.
+   An org's own staff can do the same with `POST /api/v1/altruist/connect {"environment": "simulator"}` and
+   `POST /api/v1/altruist/sync` (permission `manage_custody_connections`).
+4. A simulator-fed account shows a **SIMULATED CUSTODIAN** badge on its account page.
+
+Simulator data never touches an account crosswalked to real Altruist, and a real Altruist sync never touches a
+simulator-crosswalked one.
+
+## 9. Webhooks
+
+On / off and the optional https override URL live on the behaviour row (Webhooks tab). When on, every accepted
+positions / transactions upload sends one `account.positions_updated` / `account.transactions_updated` event per
+affected account to `CPSIM_BASE_URL` + `/api/v1/altruist/webhook` (or the override), signed `X-Altruist-Signature`
+= HMAC-SHA256 with `ALTRUIST_SIMULATOR_WEBHOOK_SECRET`; one attempt + 2 retries. The receiver forces environment
+`simulator` for that secret and re-syncs the crosswalked account. **Send test event** sends one for an account in the
+book (only when webhooks are on). Every delivery is in the Activity / Webhooks delivery log (never the secret).
+Without the secret configured the simulator sends nothing and records `unsigned`.
+
+## 10. Conformance
+
+The suite that will run against Altruist's real sandbox the day access arrives (any difference then is a simulator
+defect). **Run conformance** (paste the key; never stored) runs it in-process against this counterparty; the last 50
+runs are kept and the latest shown with every failed check and the contract row it cites. From a shell:
+
+    python3 apps/api/scripts/cpsim_altruist_conformance.py --target simulator          # in-process fixture run
+    python3 apps/api/scripts/cpsim_altruist_conformance.py --target simulator --base-url --slug <slug>
+    python3 apps/api/scripts/cpsim_altruist_conformance.py --target sandbox --i-have-sandbox-access   # not before access
+
+## 11. Operator steps (cpsim02), in order
+
+1. Admin → Counterparties: create (or pick) an Altruist-compatible counterparty, **generate its key** (shown once) and
+   activate it. Note the key's public id (Connection tab, the live credential).
+2. In Doppler (`hollisworks` / `prd`): `ALTRUIST_SIMULATOR_CLIENT_ID` = that public id;
+   `ALTRUIST_SIMULATOR_CLIENT_SECRET` = the `cpsim_live_…` key; `ALTRUIST_SIMULATOR_WEBHOOK_SECRET` = a new random
+   value starting `cpsim_whsec_`; `CPSIM_BASE_URL` = the API's own https base (non-secret). Check the Render service's
+   Doppler sync actually delivers them.
+3. Redeploy the API.
+4. Org access: turn `counterparty_sim.allowed` on for the chosen org (a test / demo tenant, or 2nd Act for the demo
+   households only).
+5. Import / Export: upload a book (households → accounts → positions → transactions).
+6. Connections: Point here → Connect (→ Sync now when you change the book with webhooks off).
+7. Conformance: run it; expect 0 failed.
+
+Schema: `docs/cpsim02_part1.sql` (applied 2026-11-10). Verify: `apps/api/scripts/verify_cpsim02.py` (written, not yet
+run); in `scripts/regression_set.txt`.

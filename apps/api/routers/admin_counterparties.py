@@ -20,25 +20,43 @@ the cpsim work runs AS role ``cpsim_app`` (cpsim.db.as_simulator) and the audit 
     POST /admin/counterparties/{id}/test-message            posts a sample envelope to the mirror IN-PROCESS with the
                                                              key the admin pastes (never stored) — no network
 
+cpsim02 — the BOOK (the counterparty's custodian data), audited ``counterparty.book_*``:
+    GET  /admin/counterparties/{id}/book                    live counts + the upload history + vocabularies
+    GET  /admin/counterparties/{id}/book/template?kind=&format=csv|json   the template (columns, one example row)
+    POST /admin/counterparties/{id}/book/preview            multipart file + kind → the validation report (writes
+                                                             nothing but its audit row)
+    POST /admin/counterparties/{id}/book/accept             the SAME file re-posted → replace the named accounts' rows,
+                                                             log the upload, fire the D10 webhooks
+    GET  /admin/counterparties/{id}/book/export?kind=&format=csv | ?format=json   the import columns (a round trip) /
+                                                             the API's own response shapes
+  Files are parsed HERE (CSV utf-8 with a header row, or JSON: a list of objects or {"rows": [...]}) and handed to the
+  package as plain rows (the package parses no file format). Limit: MAX_BOOK_BYTES, refused 413 before decoding.
+
 ``target_org_id`` names the org a Super Admin is switching, a platform action (like /orgs/{org_id}/settings) — never the
 caller's own tenant scope, which still comes only from the verified session. Every response says ``simulated: true``.
 """
 
 from __future__ import annotations
 
+import csv
+import hashlib
+import io
 import json
 from typing import Literal
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from cpsim import book as SB
 from cpsim import db as SDB
 from cpsim import mirror as SM
 from cpsim import registry as R
 from services.authz import require_super_admin
+from services.custody.base import parse_text
 from services.database import get_pool
 
 router = APIRouter(tags=["admin-counterparties"])
@@ -49,8 +67,16 @@ OUTCOME_LABELS = {"accept": "Accept", "reject": "Reject with reason", "partial":
 GROUP_LABELS = {"connection": "Connection", "fix": "FIX session", "bank_domestic": "Bank details (domestic)",
                 "bank_international": "Bank details (international)", "behaviour": "Behaviour", "clock": "Clock"}
 TABS = [("connection", "Connection"), ("fix", "FIX"), ("bank", "Bank details"), ("behaviour", "Behaviour"),
-        ("clock", "Clock"), ("activity", "Activity"), ("import_export", "Import / Export")]
-EDITABLE = ["name", "notes", "status", "key", "bank_details", "fix_session", "behaviour", "clock", "org_access"]
+        ("clock", "Clock"), ("activity", "Activity"), ("import_export", "Import / Export"),
+        ("connections", "Connections"), ("webhooks", "Webhooks"), ("conformance", "Conformance")]
+#: cpsim02 — the tabs that need a BOOK (a REST + OAuth custodian type); the page enables them per type from this list
+BOOK_TABS = ["import_export", "connections", "webhooks", "conformance"]
+EDITABLE = ["name", "notes", "status", "key", "bank_details", "fix_session", "behaviour", "clock", "org_access",
+            "book", "connections", "webhooks", "conformance"]
+#: a BOOK file, not a custodian export: refused before decoding (routers/custody_import.py's _read_upload shape)
+MAX_BOOK_BYTES = 2 * 1024 * 1024
+BOOK_KIND_LABELS = {"households": "Households", "accounts": "Accounts", "positions": "Positions (holdings and values)",
+                    "transactions": "Transactions"}
 
 
 class _Body(BaseModel):
@@ -88,6 +114,7 @@ class BehaviourIn(_Body):
     ach_return_code: str | None = Field(default=None, pattern=r"^R[0-9]{2}$")
     ach_return_after_days: int | None = Field(default=None, ge=0, le=60)
     webhooks_enabled: bool | None = None
+    webhook_url: str | None = Field(default=None, max_length=500, pattern=r"^https://[^\s#?]+$")
 
 
 class OrgAccessIn(_Body):
@@ -111,6 +138,8 @@ def _envelope(principal, body: dict, types: list[dict] | None = None) -> dict:
         "outcomes": [{"key": k, "label": v} for k, v in OUTCOME_LABELS.items()] if su else [],
         "begin_strings": list(R.BEGIN_STRINGS) if su else [],
         "tabs": [{"key": k, "label": v} for k, v in TABS],
+        "book_tabs": list(BOOK_TABS),
+        "book_institution_types": [t["key"] for t in (types or []) if t.get("protocol") == "rest_oauth"],
         "editable": list(EDITABLE) if su else [], "inline_editable": [],
     }
     return jsonable_encoder({**body, "simulated": True, "permissions": perms, "vocabularies": vocab})
@@ -336,3 +365,404 @@ async def test_message(request: Request, counterparty_id: UUID, body: TestMessag
                      {"status": res.status_code, "message_id": envelope["message_id"], "simulated": True})
     return _envelope(principal, {"sent": envelope, "status": res.status_code, "reply": reply,
                                  "simulated_header": res.headers.get("x-counterparty-simulated")}, types)
+
+
+# ── cpsim02: the book ───────────────────────────────────────────────────────────────────────────────────────────
+def _book_vocab() -> dict:
+    return {"kinds": [{"key": k, "label": BOOK_KIND_LABELS[k], "columns": list(SB.COLUMNS[k]),
+                       "required": list(SB.REQUIRED[k])} for k in SB.KINDS],
+            "reasons": [{"key": k, "label": v} for k, v in SB.REASONS.items()],
+            "formats": ["csv", "json"], "mode": "replace", "max_bytes": MAX_BOOK_BYTES, "max_rows": SB.MAX_ROWS}
+
+
+def _kind(kind: str) -> str:
+    if kind not in SB.KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(SB.KINDS)}")
+    return kind
+
+
+async def _read_book(file: UploadFile, fmt: str | None) -> tuple[list[dict], str, str, str]:
+    """(rows, format, sha256, file name). Parsed in the ROUTER — the package receives plain rows."""
+    raw = await file.read(MAX_BOOK_BYTES + 1)
+    if not raw:
+        raise HTTPException(status_code=400, detail="the uploaded file is empty")
+    if len(raw) > MAX_BOOK_BYTES:
+        raise HTTPException(status_code=413, detail=f"a book file is limited to {MAX_BOOK_BYTES // 1024} KB")
+    name = (file.filename or "upload").strip()[:255] or "upload"
+    f = (fmt or ("json" if name.lower().endswith(".json") else "csv")).lower()
+    if f not in ("csv", "json"):
+        raise HTTPException(status_code=400, detail="format must be csv or json")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="the file is not UTF-8 text") from exc
+    if f == "json":
+        try:
+            doc = json.loads(text)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="the file is not valid JSON") from exc
+        rows = doc.get("rows") if isinstance(doc, dict) else doc
+        if not isinstance(rows, list):
+            raise HTTPException(status_code=400, detail='JSON must be a list of rows or {"rows": [...]}')
+    else:
+        reader = csv.DictReader(io.StringIO(text))
+        if not reader.fieldnames:
+            raise HTTPException(status_code=400, detail="the CSV has no header row")
+        rows = [{(k or "").strip(): ("" if v is None else (parse_text(v) or "")) for k, v in r.items()
+                 if (k or "").strip()} for r in reader]
+    if len(rows) > SB.MAX_ROWS:
+        raise HTTPException(status_code=413, detail=f"at most {SB.MAX_ROWS} rows per upload")
+    return rows, f, hashlib.sha256(raw).hexdigest(), name
+
+
+def _book_err(fn):
+    async def wrapped(conn):
+        try:
+            return await fn(conn)
+        except SB.BookError as exc:
+            raise R.RegistryError(str(exc)) from exc
+    return wrapped
+
+
+@router.get(f"{_P}/{{counterparty_id}}/book")
+async def book_summary(request: Request, counterparty_id: UUID):
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        return {"counts": await SB.counts(c, counterparty_id), "uploads": await SB.uploads(c, counterparty_id, 50),
+                "business_date": await R.business_date(c, counterparty_id)}
+    principal, out, types = await _sim(request, fn)
+    env = _envelope(principal, out, types)
+    env["vocabularies"]["book"] = _book_vocab()
+    return env
+
+
+@router.get(f"{_P}/{{counterparty_id}}/book/template")
+async def book_template(request: Request, counterparty_id: UUID, kind: str, format: str = "csv"):  # noqa: A002
+    _kind(kind)
+    if format not in ("csv", "json"):
+        raise HTTPException(status_code=400, detail="format must be csv or json")
+    principal, _cp, _types = await _sim(request, lambda c: R._require(c, counterparty_id),
+                                        action="counterparty.book_template_downloaded", resource=counterparty_id,
+                                        audit_payload={"kind": kind, "format": format})
+    t = SB.template(kind)
+    if format == "json":
+        return Response(json.dumps({"kind": kind, "rows": [t["example"]], "columns": t["columns"],
+                                    "required": t["required"], "simulated": True}, indent=2),
+                        media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="cpsim_{kind}_template.json"'})
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=t["columns"], lineterminator="\n")
+    w.writeheader()
+    w.writerow(t["example"])
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="cpsim_{kind}_template.csv"'})
+
+
+@router.post(f"{_P}/{{counterparty_id}}/book/preview")
+async def book_preview(request: Request, counterparty_id: UUID, kind: str = Form(...), file: UploadFile = File(...),
+                       format: str | None = Form(default=None)):  # noqa: A002
+    require_super_admin(request)
+    _kind(kind)
+    rows, fmt_, sha, name = await _read_book(file, format)
+
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        return await SB.validate(c, counterparty_id, kind, rows)
+    principal, out, types = await _sim(
+        request, _book_err(fn), action="counterparty.book_previewed", resource=counterparty_id,
+        audit_payload=lambda o: {"kind": kind, "file_name": name, "sha256": sha, "format": fmt_, **o["counts"]})
+    out = {**out, "file_name": name, "sha256": sha, "format": fmt_}
+    env = _envelope(principal, out, types)
+    env["vocabularies"]["book"] = _book_vocab()
+    return env
+
+
+@router.post(f"{_P}/{{counterparty_id}}/book/accept")
+async def book_accept(request: Request, counterparty_id: UUID, kind: str = Form(...), file: UploadFile = File(...),
+                      format: str | None = Form(default=None)):  # noqa: A002
+    require_super_admin(request)
+    _kind(kind)
+    rows, fmt_, sha, name = await _read_book(file, format)
+
+    async def fn(c):
+        cp = await R._require(c, counterparty_id)
+        res = await SB.accept(c, counterparty_id, kind, rows, file_name=name, sha256=sha, fmt_=fmt_,
+                              actor=request.state.principal.user_id)
+        return {**res, "slug": cp["slug"], "behaviour": await R.behaviour(c, counterparty_id)}
+    principal, out, types = await _sim(
+        request, _book_err(fn), action="counterparty.book_accepted", resource=counterparty_id,
+        audit_payload=lambda o: {"kind": kind, "file_name": name, "sha256": sha, "format": fmt_,
+                                 "upload_id": o["upload_id"], **o["counts"],
+                                 "accounts_affected": o["accounts_affected"]})
+    # D10 — AFTER the book committed: one signed event per affected account (only when webhooks are on)
+    from cpsim import webhooks as SW
+
+    beh = out.pop("behaviour") or {}
+    deliveries = await SW.after_upload(counterparty_id=counterparty_id, slug=out["slug"], kind=kind,
+                                       accounts=out["accounts_affected"], behaviour=beh)
+    out["webhooks"] = deliveries
+    return _envelope(principal, out, types)
+
+
+@router.get(f"{_P}/{{counterparty_id}}/book/export")
+async def book_export(request: Request, counterparty_id: UUID, format: str = "csv",  # noqa: A002
+                      kind: str | None = None):
+    if format not in ("csv", "json"):
+        raise HTTPException(status_code=400, detail="format must be csv or json")
+    if format == "csv":
+        _kind(kind or "")
+
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        if format == "csv":
+            return await SB.export_rows(c, counterparty_id, kind)
+        clock = await R.business_date(c, counterparty_id) or R.today()
+        return await SB.export_api(c, counterparty_id, clock)
+    principal, out, _types = await _sim(request, _book_err(fn), action="counterparty.book_exported",
+                                        resource=counterparty_id, audit_payload={"kind": kind, "format": format})
+    if format == "json":
+        return Response(json.dumps(jsonable_encoder({**out, "simulated": True}), indent=2),
+                        media_type="application/json",
+                        headers={"Content-Disposition": 'attachment; filename="cpsim_book.json"'})
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=list(SB.COLUMNS[kind]), lineterminator="\n")
+    w.writeheader()
+    for r in out:
+        w.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in SB.COLUMNS[kind]})
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="cpsim_{kind}.csv"'})
+
+
+# ── cpsim02 D10: webhooks — "Send test event" (the flag and the override URL live on PUT /behaviour) ───────────────
+class WebhookTestIn(_Body):
+    account_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
+    event_type: Literal["account.positions_updated", "account.transactions_updated"] = "account.positions_updated"
+
+
+@router.post(f"{_P}/{{counterparty_id}}/webhooks/test")
+async def webhook_test(request: Request, counterparty_id: UUID, body: WebhookTestIn):
+    """One signed event for an account in the book, through the same sender an accepted upload uses. Honours the
+    webhooks flag (off → 409, nothing sent). Every attempt is in the request log (direction out)."""
+    async def fn(c):
+        cp = await R._require(c, counterparty_id)
+        known = await SB.account_exists(c, counterparty_id, body.account_id)
+        return {"slug": cp["slug"], "known": known, "behaviour": await R.behaviour(c, counterparty_id) or {}}
+    principal, out, types = await _sim(request, fn)
+    if not out["known"]:
+        raise HTTPException(status_code=404, detail="no such account in this counterparty's book")
+    if not out["behaviour"].get("webhooks_enabled"):
+        raise HTTPException(status_code=409, detail="webhooks are off for this counterparty (Behaviour tab)")
+    from cpsim import webhooks as SW
+
+    delivery = await SW.send_event(counterparty_id=counterparty_id, slug=out["slug"], account_id=body.account_id,
+                                   event_type=body.event_type, behaviour=out["behaviour"])
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _audit(conn, principal, "counterparty.webhook_test_sent", "counterparty", counterparty_id,
+                     {k: delivery.get(k) for k in ("event_id", "event_type", "account_id", "status", "attempts",
+                                                   "outcome")} | {"simulated": True})
+    return _envelope(principal, {"delivery": delivery}, types)
+
+
+# ── cpsim02: Connections — which allowed orgs point at this counterparty; connect (D4) / sync through the SAME
+#    functions the /altruist routes run (routers.altruist_connection), in the TARGET org's RLS context ─────────────
+SETTING_COUNTERPARTY = R.SETTING_COUNTERPARTY
+
+
+class PointIn(_Body):
+    point: bool
+
+
+@router.get(f"{_P}/{{counterparty_id}}/connections")
+async def connections(request: Request, counterparty_id: UUID):
+    principal, cp, types = await _sim(request, lambda c: R._require(c, counterparty_id))
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = [dict(r) for r in await conn.fetch(
+            "SELECT o.id, o.name, o.is_test, (c.setting_value #>> '{}') AS counterparty_slug, "
+            "ac.status AS connection_status, ac.last_refreshed_at, ac.token_expires_at, ac.created_at AS connected_at "
+            "FROM organizations o JOIN org_settings a ON a.org_id = o.id AND a.setting_key = $1 "
+            "AND a.setting_value = 'true'::jsonb LEFT JOIN org_settings c ON c.org_id = o.id AND c.setting_key = $2 "
+            "LEFT JOIN altruist_connections ac ON ac.org_id = o.id AND ac.environment = 'simulator' "
+            "AND ac.system_to IS NULL ORDER BY o.is_test DESC, o.name", SETTING, SETTING_COUNTERPARTY)]
+        for r in rows:
+            r["points_here"] = r["counterparty_slug"] == cp["slug"]
+            last = await conn.fetchrow(
+                "SELECT payload, created_at FROM audit_log WHERE action = 'counterparty.connection_synced' AND "
+                "resource_type = 'counterparty' AND resource_id = $1::uuid AND payload->>'target_org_id' = $2 "
+                "ORDER BY created_at DESC LIMIT 1", str(counterparty_id), str(r["id"]))
+            r["last_sync"] = ({**(json.loads(last["payload"]) if isinstance(last["payload"], str) else last["payload"]),
+                               "at": last["created_at"]} if last else None)
+    return _envelope(principal, {"rows": rows, "slug": cp["slug"], "setting_key": SETTING_COUNTERPARTY}, types)
+
+
+async def _allowed_org(conn, target_org_id: UUID) -> None:
+    if not await conn.fetchval("SELECT EXISTS (SELECT 1 FROM organizations WHERE id = $1::uuid)", str(target_org_id)):
+        raise HTTPException(status_code=404, detail="no such organization")
+    if not await conn.fetchval("SELECT EXISTS (SELECT 1 FROM org_settings WHERE org_id = $1::uuid AND setting_key = "
+                               "$2 AND setting_value = 'true'::jsonb)", str(target_org_id), SETTING):
+        raise HTTPException(status_code=409, detail="counterparty_sim.allowed is off for this organization — switch it "
+                                                    "on first (Org access)")
+
+
+@router.put(f"{_P}/{{counterparty_id}}/connections/{{target_org_id}}")
+async def point_org(request: Request, counterparty_id: UUID, target_org_id: UUID, body: PointIn):
+    """Point (or un-point) an ALLOWED org's "simulator" environment at this counterparty (the org setting
+    counterparty_sim.altruist_counterparty — Super Admin only; the database refuses it otherwise)."""
+    principal, cp, types = await _sim(request, lambda c: R._require(c, counterparty_id))
+    if cp["status"] != "active" and body.point:
+        raise HTTPException(status_code=409, detail="activate the counterparty before pointing an org at it")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _allowed_org(conn, target_org_id)
+        before = await conn.fetchval("SELECT setting_value #>> '{}' FROM org_settings WHERE org_id = $1::uuid AND "
+                                     "setting_key = $2", str(target_org_id), SETTING_COUNTERPARTY)
+        value = json.dumps(cp["slug"] if body.point else None)
+        await conn.execute(
+            "INSERT INTO org_settings (org_id, setting_key, setting_value, category, is_public, updated_by, updated_at) "
+            "VALUES ($1::uuid, $2, $3::jsonb, 'counterparty_sim', false, $4::uuid, now()) ON CONFLICT (org_id, "
+            "setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_by = EXCLUDED.updated_by, "
+            "updated_at = now()", str(target_org_id), SETTING_COUNTERPARTY, value, str(principal.user_id))
+        await _audit(conn, principal, "counterparty.connection_pointed", "counterparty", counterparty_id,
+                     {"target_org_id": str(target_org_id), "setting_key": SETTING_COUNTERPARTY, "before": before,
+                      "after": cp["slug"] if body.point else None, "simulated": True})
+    return _envelope(principal, {"org_id": str(target_org_id), "counterparty_slug": cp["slug"] if body.point else None,
+                                 "before": before}, types)
+
+
+async def _as_target(target_org_id: UUID, fn):
+    """Run ``fn()`` in the TARGET org's RLS context (Super Admin carve-out kept) — the same functions the /altruist
+    routes call, never a direct write to a portfolio table from here."""
+    from services.database import reset_rls_context, set_rls_context
+
+    tokens = set_rls_context(str(target_org_id), True)
+    try:
+        return await fn()
+    finally:
+        reset_rls_context(tokens)
+
+
+@router.post(f"{_P}/{{counterparty_id}}/connections/{{target_org_id}}/connect")
+async def connect_org(request: Request, counterparty_id: UUID, target_org_id: UUID):
+    """D4 for the chosen org: server-to-server authorize → the shared callback handling → then one sync inline."""
+    from fastapi import BackgroundTasks
+
+    import routers.altruist_connection as AC
+
+    principal, cp, types = await _sim(request, lambda c: R._require(c, counterparty_id))
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _allowed_org(conn, target_org_id)
+    deferred = BackgroundTasks()       # the auto-sync is run inline below (in the target's context), not deferred
+
+    async def go():
+        out = await AC._connect_simulator(org_id=str(target_org_id), user_id=str(principal.user_id),
+                                          background_tasks=deferred)
+        new_txns: list = []
+        async with pool.acquire() as c2:
+            out["sync"] = await AC._run_sync(c2, org_id=str(target_org_id), environment="simulator",
+                                             collect=new_txns)
+        await AC._publish_credits(str(target_org_id), new_txns)
+        return out
+    out = await _as_target(target_org_id, go)
+    async with pool.acquire() as conn:
+        await _audit(conn, principal, "counterparty.connection_connected", "counterparty", counterparty_id,
+                     {"target_org_id": str(target_org_id), "connection_id": out.get("connection_id"),
+                      "authorized": out.get("authorized"), "simulated": True})
+        await _audit(conn, principal, "counterparty.connection_synced", "counterparty", counterparty_id,
+                     {"target_org_id": str(target_org_id), **(out.get("sync") or {}), "simulated": True})
+    return _envelope(principal, out, types)
+
+
+@router.post(f"{_P}/{{counterparty_id}}/connections/{{target_org_id}}/sync")
+async def sync_org(request: Request, counterparty_id: UUID, target_org_id: UUID):
+    import routers.altruist_connection as AC
+    from services.altruist_oauth import AltruistNotConnected, AltruistSimulatorRefused
+
+    principal, cp, types = await _sim(request, lambda c: R._require(c, counterparty_id))
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _allowed_org(conn, target_org_id)
+
+    async def go():
+        await AC._require_simulator(str(target_org_id))
+        new_txns: list = []
+        async with pool.acquire() as c2:
+            try:
+                summary = await AC._run_sync(c2, org_id=str(target_org_id), environment="simulator",
+                                             collect=new_txns)
+            except (AltruistNotConnected, AltruistSimulatorRefused) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        await AC._publish_credits(str(target_org_id), new_txns)
+        return summary
+    summary = await _as_target(target_org_id, go)
+    async with pool.acquire() as conn:
+        await _audit(conn, principal, "counterparty.connection_synced", "counterparty", counterparty_id,
+                     {"target_org_id": str(target_org_id), **summary, "simulated": True})
+    return _envelope(principal, {"sync": summary}, types)
+
+
+# ── cpsim02 D11: Conformance — run the suite against THIS counterparty, in-process; the last runs ─────────────────
+CONFORMANCE_KEEP = 50
+
+
+class ConformanceIn(_Body):
+    key: str = Field(min_length=1, max_length=200)
+
+
+@router.get(f"{_P}/{{counterparty_id}}/conformance")
+async def conformance_runs(request: Request, counterparty_id: UUID):
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        return [dict(r) for r in await c.fetch(
+            "SELECT id, target, run_by, started_at, finished_at, passed, failed, results FROM cpsim.conformance_runs "
+            "WHERE counterparty_id = $1::uuid ORDER BY started_at DESC LIMIT 20", str(counterparty_id))]
+    principal, rows, types = await _sim(request, fn)
+    for r in rows:
+        if isinstance(r.get("results"), str):
+            r["results"] = json.loads(r["results"])
+    return _envelope(principal, {"rows": rows, "last": rows[0] if rows else None}, types)
+
+
+@router.post(f"{_P}/{{counterparty_id}}/conformance")
+async def run_conformance(request: Request, counterparty_id: UUID, body: ConformanceIn):
+    """The suite (services/altruist_conformance.py) against this counterparty through the mounted sub-app IN-PROCESS
+    (no network), with the key the admin pastes (never stored) as client_secret and the live credential's public id as
+    client_id. The run is stored (the last CONFORMANCE_KEEP) and audited."""
+    from datetime import datetime, timezone
+
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    from cpsim.app import app as cpsim_app
+    from services import altruist_conformance as ACF
+
+    async def fn(c):
+        cp = await R._require(c, counterparty_id)
+        cid = await c.fetchval("SELECT id::text FROM cpsim.counterparty_credentials WHERE counterparty_id = $1::uuid "
+                               "AND kind = 'api_key' AND rotated_at IS NULL AND revoked_at IS NULL", str(counterparty_id))
+        return {"slug": cp["slug"], "status": cp["status"], "client_id": cid}
+    principal, cp, types = await _sim(request, fn)
+    if not cp["client_id"] or cp["status"] != "active":
+        raise HTTPException(status_code=409, detail="the counterparty needs a live key and to be active")
+    started = datetime.now(timezone.utc)
+    root = "https://cpsim.internal/cpsim/c/" + cp["slug"]
+    transport = httpx.ASGITransport(app=Starlette(routes=[Mount("/cpsim", app=cpsim_app)]))
+    out = await ACF.run(environment="simulator", hosts={"api_base": root, "login_base": root},
+                        credentials=(cp["client_id"], body.key), transport=transport)
+
+    async def store(c):
+        rid = await c.fetchval(
+            "INSERT INTO cpsim.conformance_runs (counterparty_id, target, run_by, started_at, finished_at, passed, "
+            "failed, results) VALUES ($1::uuid, 'simulator', $2::uuid, $3, now(), $4, $5, $6::jsonb) RETURNING id",
+            str(counterparty_id), str(principal.user_id), started, out["passed"], out["failed"],
+            json.dumps(out["results"], default=str))
+        await c.execute("DELETE FROM cpsim.conformance_runs WHERE counterparty_id = $1::uuid AND id NOT IN (SELECT id "
+                        "FROM cpsim.conformance_runs WHERE counterparty_id = $1::uuid ORDER BY started_at DESC "
+                        "LIMIT $2)", str(counterparty_id), CONFORMANCE_KEEP)
+        return str(rid)
+    principal, run_id, types = await _sim(request, store, action="counterparty.conformance_run",
+                                          resource=counterparty_id,
+                                          audit_payload=lambda rid: {"run_id": rid, "passed": out["passed"],
+                                                                     "failed": out["failed"]})
+    return _envelope(principal, {"run_id": run_id, **out}, types)

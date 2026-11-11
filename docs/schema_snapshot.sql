@@ -5015,6 +5015,105 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY xray_runs_pkey: (id)
 
+-- ===== cpsim.book_accounts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   external_id                              text NOT NULL
+--   household_external_id                    text NOT NULL
+--   name                                     text NOT NULL
+--   account_type                             text
+--   upload_id                                uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY book_accounts_pkey: (id)
+
+-- ===== cpsim.book_households =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   external_id                              text NOT NULL
+--   name                                     text NOT NULL
+--   upload_id                                uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY book_households_pkey: (id)
+
+-- ===== cpsim.book_positions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   account_external_id                      text NOT NULL
+--   external_id                              text NOT NULL
+--   as_of                                    date NOT NULL
+--   row_type                                 text NOT NULL DEFAULT 'security'::text
+--   security_id                              uuid
+--   cusip                                    text
+--   isin                                     text
+--   ticker                                   text
+--   name                                     text NOT NULL
+--   asset_type                               text
+--   quantity                                 numeric
+--   market_value                             numeric NOT NULL
+--   cost_basis                               numeric
+--   currency_code                            text NOT NULL
+--   price_source                             text NOT NULL
+--   upload_id                                uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY book_positions_pkey: (id)
+
+-- ===== cpsim.book_transactions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   account_external_id                      text NOT NULL
+--   external_id                              text NOT NULL
+--   type                                     text NOT NULL
+--   trade_date                               date NOT NULL
+--   settle_date                              date
+--   row_type                                 text NOT NULL DEFAULT 'security'::text
+--   security_id                              uuid
+--   cusip                                    text
+--   isin                                     text
+--   ticker                                   text
+--   name                                     text
+--   quantity                                 numeric
+--   price                                    numeric
+--   gross_amount                             numeric
+--   fees                                     numeric
+--   taxes                                    numeric
+--   net_amount                               numeric
+--   currency_code                            text NOT NULL
+--   upload_id                                uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY book_transactions_pkey: (id)
+
+-- ===== cpsim.book_uploads =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   uploaded_by                              uuid
+--   uploaded_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   file_name                                text NOT NULL
+--   sha256                                   text NOT NULL
+--   kind                                     text NOT NULL
+--   format                                   text NOT NULL
+--   mode                                     text NOT NULL DEFAULT 'replace'::text
+--   rows_accepted                            integer NOT NULL
+--   rows_rejected                            integer NOT NULL
+--   rejections                               jsonb NOT NULL DEFAULT '[]'::jsonb
+--   accounts_named                           ARRAY NOT NULL DEFAULT '{}'::text[]
+--   PRIMARY KEY book_uploads_pkey: (id)
+
+-- ===== cpsim.conformance_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid
+--   target                                   text NOT NULL
+--   run_by                                   uuid
+--   started_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   finished_at                              timestamp with time zone
+--   passed                                   integer NOT NULL DEFAULT 0
+--   failed                                   integer NOT NULL DEFAULT 0
+--   results                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   PRIMARY KEY conformance_runs_pkey: (id)
+
 -- ===== cpsim.counterparties =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   slug                                     text NOT NULL
@@ -5065,6 +5164,7 @@
 --   created_by                               uuid
 --   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
 --   valid_to                                 timestamp with time zone
+--   webhook_url                              text
 --   PRIMARY KEY counterparty_behaviour_pkey: (id)
 
 -- ===== cpsim.counterparty_clock =====
@@ -5121,6 +5221,35 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY institution_types_pkey: (key)
 
+-- ===== cpsim.oauth_codes =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   credential_id                            uuid NOT NULL
+--   code_hash                                text NOT NULL
+--   redirect_uri                             text NOT NULL
+--   scope                                    text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   expires_at                               timestamp with time zone NOT NULL
+--   used_at                                  timestamp with time zone
+--   PRIMARY KEY oauth_codes_pkey: (id)
+
+-- ===== cpsim.oauth_tokens =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   credential_id                            uuid NOT NULL
+--   grant_id                                 uuid NOT NULL
+--   kind                                     text NOT NULL
+--   token_prefix                             text NOT NULL
+--   token_hash                               text NOT NULL
+--   last4                                    text NOT NULL
+--   scope                                    text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   expires_at                               timestamp with time zone NOT NULL
+--   rotated_at                               timestamp with time zone
+--   revoked_at                               timestamp with time zone
+--   replaced_by                              uuid
+--   PRIMARY KEY oauth_tokens_pkey: (id)
+
 -- ===== cpsim.real_bic_examples =====
 --   bic                                      text NOT NULL
 --   note                                     text NOT NULL
@@ -5138,6 +5267,8 @@
 --   error_count                              integer NOT NULL DEFAULT 0
 --   message_type                             text
 --   at                                       timestamp with time zone NOT NULL DEFAULT now()
+--   direction                                text NOT NULL DEFAULT 'in'::text
+--   latency_ms                               integer
 --   PRIMARY KEY request_log_pkey: (id)
 
 -- ===== litellm.LiteLLM_AccessGroupTable =====

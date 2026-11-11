@@ -31,14 +31,23 @@ connections``.
 from __future__ import annotations
 
 import traceback
+from urllib.parse import parse_qs, urlsplit
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
 import services.altruist_oauth as altruist_oauth
 from routers.entities import get_org_id
 from services.altruist_identity import resolve_identity
-from services.altruist_oauth import ENVIRONMENTS, AltruistConfigError, AltruistNotConnected, AltruistOAuthError
+from services.altruist_oauth import (
+    ENVIRONMENTS,
+    SIMULATOR,
+    AltruistConfigError,
+    AltruistNotConnected,
+    AltruistOAuthError,
+    AltruistSimulatorRefused,
+)
 from services.altruist_positions_sync import sync_resolved_accounts
 from services.database import get_pool
 from services.permissions import get_user_id
@@ -63,6 +72,19 @@ class DisconnectRequest(BaseModel):
 class SyncRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     environment: str = "sandbox"
+
+
+async def _require_simulator(org_id: str) -> dict:
+    """cpsim02 D2 — the simulator environment only with counterparty_sim.allowed on AND a configured counterparty;
+    otherwise 409 with the reason, before any call. Returns the resolved hosts."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            return await altruist_oauth.resolve_hosts(conn, org_id=org_id, environment=SIMULATOR)
+        except AltruistSimulatorRefused as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except AltruistConfigError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _validate_environment(environment: str) -> str:
@@ -118,7 +140,7 @@ def _sync_summary(environment: str, identity_result: dict, sync_result) -> dict:
     ``altruist_positions_sync.SyncResult`` dataclass; per-account counters
     are summed across every account it synced this run.
     """
-    return {
+    out = {
         "environment": environment,
         "households_seen": identity_result["households_seen"],
         "accounts_resolved": len(identity_result["resolved"]),
@@ -129,6 +151,9 @@ def _sync_summary(environment: str, identity_result: dict, sync_result) -> dict:
         "transactions_created": sum(a.transactions_created for a in sync_result.accounts),
         "transactions_skipped_duplicate": sum(a.transactions_skipped_duplicate for a in sync_result.accounts),
     }
+    if "refused" in identity_result:     # cpsim02 — simulator only: the demo-household refusals
+        out["accounts_refused_not_demo"] = len(identity_result["refused"])
+    return out
 
 
 async def _run_sync(conn, *, org_id: str, environment: str, collect: list | None = None) -> dict:
@@ -177,14 +202,20 @@ async def _run_auto_sync(org_id: str, environment: str) -> None:
 
 
 @router.post("/altruist/connect")
-async def altruist_connect(request: Request, body: ConnectRequest):
+async def altruist_connect(request: Request, body: ConnectRequest, background_tasks: BackgroundTasks):
     """Start the OAuth flow: create a state row, return the authorize URL.
 
     The frontend redirects the user's browser to ``authorize_url`` — Altruist
     redirects back to the callback route below with ``code``/``state``.
+
+    cpsim02 D4 — for environment ``simulator`` ONLY, the authorize step runs server-to-server (GET authorize, no
+    redirect following, ``code`` + ``state`` read from the Location) and then the SAME callback handling
+    (``complete_callback``). Same route, same gate, plus counterparty_sim.allowed and a configured counterparty.
     """
     environment = _validate_environment(body.environment)
     user_id, org_id = await _require(request, WRITE_PERMISSION)
+    if environment == SIMULATOR:
+        return await _connect_simulator(org_id=org_id, user_id=user_id, background_tasks=background_tasks)
 
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -196,6 +227,38 @@ async def altruist_connect(request: Request, body: ConnectRequest):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return {"authorize_url": authorize_url, "environment": environment}
+
+
+async def _connect_simulator(*, org_id: str, user_id, background_tasks) -> dict:
+    hosts = await _require_simulator(org_id)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        state = await altruist_oauth.create_oauth_state(conn, org_id=org_id, environment=SIMULATOR, user_id=user_id)
+    try:
+        authorize_url = altruist_oauth.build_authorize_url(environment=SIMULATOR, state=state, hosts=hosts)
+        redirect_uri = altruist_oauth._redirect_uri()
+    except AltruistConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False,
+                                     transport=altruist_oauth._transport_for(SIMULATOR, None)) as client:
+            res = await client.get(authorize_url, headers={"Accept": "application/json"})
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"the simulator's authorize step failed at the transport "
+                                                    f"layer: {type(exc).__name__}") from exc
+    location = res.headers.get("location") or ""
+    if res.status_code != 302 or not location.startswith(redirect_uri):
+        raise HTTPException(status_code=502, detail=f"the simulator's authorize step was refused: HTTP "
+                                                    f"{res.status_code}")
+    query = parse_qs(urlsplit(location).query)
+    code = (query.get("code") or [""])[0]
+    echoed = (query.get("state") or [""])[0]
+    if not code or echoed != state:
+        raise HTTPException(status_code=502, detail="the simulator's authorize redirect carried no code or a "
+                                                    "different state")
+    out = await complete_callback(org_id=org_id, user_id=user_id, code=code, state=echoed,
+                                  background_tasks=background_tasks)
+    return {**out, "authorized": "server_to_server"}
 
 
 @router.get("/altruist/callback")
@@ -220,7 +283,13 @@ async def altruist_callback(
     regardless of how the sync goes.
     """
     user_id, org_id = await _require(request, WRITE_PERMISSION)
+    return await complete_callback(org_id=org_id, user_id=user_id, code=code, state=state,
+                                   background_tasks=background_tasks)
 
+
+async def complete_callback(*, org_id: str, user_id, code: str, state: str, background_tasks) -> dict:
+    """The callback handling — state check, token exchange, persist, auto-sync — shared by the browser callback and
+    the simulator's server-to-server connect (cpsim02 D4), so both run the identical path."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         try:
@@ -229,9 +298,21 @@ async def altruist_callback(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         environment = consumed["environment"]
+        hosts = None
+        if environment == SIMULATOR:
+            try:
+                hosts = await altruist_oauth.resolve_hosts(conn, org_id=org_id, environment=environment)
+            except AltruistSimulatorRefused as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except AltruistConfigError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
 
         try:
-            tokens = await altruist_oauth.exchange_code_for_tokens(environment=environment, code=code)
+            if hosts is None:
+                tokens = await altruist_oauth.exchange_code_for_tokens(environment=environment, code=code)
+            else:
+                tokens = await altruist_oauth.exchange_code_for_tokens(environment=environment, code=code,
+                                                                       hosts=hosts)
         except AltruistConfigError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except AltruistOAuthError as exc:
@@ -313,13 +394,15 @@ async def altruist_sync(request: Request, body: SyncRequest):
     """
     environment = _validate_environment(body.environment)
     _user_id, org_id = await _require(request, WRITE_PERMISSION)
+    if environment == SIMULATOR:
+        await _require_simulator(org_id)
 
     pool = await get_pool()
     new_txns: list = []
     async with pool.acquire() as conn:
         try:
             summary = await _run_sync(conn, org_id=org_id, environment=environment, collect=new_txns)
-        except AltruistNotConnected as exc:
+        except (AltruistNotConnected, AltruistSimulatorRefused) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
     await _publish_credits(org_id, new_txns)
 

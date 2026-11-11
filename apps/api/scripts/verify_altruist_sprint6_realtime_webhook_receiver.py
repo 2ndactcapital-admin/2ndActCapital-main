@@ -76,7 +76,7 @@ for _path in (str(HERE), str(API_DIR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from _db_connect import admin_dsn, app_service_dsn, connect  # noqa: E402
+from _db_connect import app_service_dsn, bypasses_rls, connect, operator_dsn  # noqa: E402
 
 ORG = "00000000-0000-0000-0000-000000000001"
 OTHER_ORG = "bb347258-8f28-4f49-8cc9-e29ccad82884"
@@ -134,6 +134,10 @@ COUNTED = (
     "portfolio.asset_identifiers",
     "portfolio.assets",
     "public.position_account_exceptions",
+    # cpsim02 fix 1 (E): the sync's PORTENTRY1 family rollup (services/altruist_positions_sync.py, request_rollup +
+    # run_request) writes these for the fixture owners since 2026-11-04 — counted so the teardown check covers them
+    "public.entity_holdings",
+    "portfolio.rollup_requests",
 )
 
 
@@ -180,6 +184,8 @@ class Results:
         print(f"altruist_sprint6_realtime_webhook_receiver: {counts.get('PASS', 0)}/{total} PASS"
               + "".join(f"  {k}={v}" for k, v in sorted(counts.items()) if k != "PASS"))
         print("=" * 78)
+        # cpsim02 — the shared nested-run parser (scripts/_verify_total.py) reads a final TOTAL line
+        print(f"TOTAL: {counts.get('PASS', 0)} PASS, {counts.get('FAIL', 0)} FAIL")
 
 
 R = Results()
@@ -230,6 +236,10 @@ async def teardown(conn) -> None:
         "AND record_type IN ('position', 'transaction') AND external_id LIKE $2",
         [ORG, OTHER_ORG], f"%{TAG}%",
     )
+    # cpsim02 fix 1 (E): a fixture account's unmatched-exception row pins its batch (account_import_exceptions_batch_id_fkey);
+    # remove those first, keyed by this script's fixture account-id prefix only
+    await conn.execute(
+        "DELETE FROM public.account_import_exceptions WHERE raw_row ->> 'external_id' LIKE $1", f"{TAG}-%")
     await conn.execute(
         "DELETE FROM public.account_import_batches WHERE org_id = ANY($1::uuid[]) "
         "AND custodian_code = 'ALTRUIST'",
@@ -239,6 +249,13 @@ async def teardown(conn) -> None:
         "DELETE FROM public.account_owners WHERE account_id = ANY($1::uuid[])", ACCOUNTS)
     await conn.execute(
         "DELETE FROM public.accounts WHERE id = ANY($1::uuid[])", ACCOUNTS)
+    # cpsim02 fix 1 (E): the rollup's outputs for the fixture owners (by fixture entity id only) — they hold an FK
+    # to public.entities, so the entity delete below raised ForeignKeyViolationError and left fixture rows behind
+    await conn.execute(
+        "DELETE FROM public.entity_holdings WHERE entity_id = ANY($1::uuid[])", ENTITIES)
+    await conn.execute(
+        "DELETE FROM portfolio.rollup_requests WHERE org_id = ANY($1::uuid[]) AND entity_ids <@ $2::uuid[] "
+        "AND reason = 'altruist sync'", [ORG, OTHER_ORG], ENTITIES)
     await conn.execute(
         "DELETE FROM public.entities WHERE id = ANY($1::uuid[])", ENTITIES)
     await conn.execute(
@@ -456,9 +473,11 @@ async def run_known_account_and_dedup(client, admin_url: str) -> None:
         R.expect("6-2a", r1.status_code == 200, "a correctly-signed KNOWN-account payload returns 200",
                  detail=f"{r1.status_code} {r1.text}")
         body1 = r1.json() if r1.status_code == 200 else {}
-        R.expect("6-2b", body1.get("status") == "resolved" and body1.get("org_id") == ORG,
-                 "the response reports status=resolved with the CORRECT org_id, derived "
-                 "from the external_references lookup, not the (absent) payload claim",
+        # cpsim02 (ALTRUIST_CONTRACT §7.10): the response no longer returns the internal org_id to the caller;
+        # the org the lookup resolved is proven on the persisted row (6-2c)
+        R.expect("6-2b", body1.get("status") == "resolved" and "org_id" not in body1,
+                 "the response reports status=resolved and does NOT leak the internal org_id "
+                 "(the resolved org is re-read from the row in 6-2c)",
                  detail=str(body1))
 
         row = await conn.fetchrow(
@@ -587,9 +606,10 @@ async def run_org_forgery_is_ignored(client, admin_url: str) -> None:
         R.expect("6-5a", r.status_code == 200, "the forged-org payload is still accepted (valid signature)",
                  detail=f"{r.status_code} {r.text}")
         resp = r.json() if r.status_code == 200 else {}
-        R.expect("6-5b", resp.get("org_id") == OTHER_ORG,
-                 "org_id resolves to OTHER_ORG (the REAL crosswalk owner of the account), "
-                 "never the forged ORG claim embedded in the payload body",
+        # cpsim02 (§7.10): the org is no longer in the response; 6-5c proves it on the persisted row
+        R.expect("6-5b", resp.get("status") == "resolved" and "org_id" not in resp,
+                 "the forged-org payload resolves and the response carries no org_id at all "
+                 "(the real crosswalk owner, OTHER_ORG, is proven on the row in 6-5c)",
                  detail=str(resp))
 
         row = await conn.fetchrow(
@@ -729,7 +749,9 @@ def check_regression() -> None:
 
 # ═══════════════════════════════════════════════════════════════════════════
 async def main() -> int:
-    admin_url, admin_prov = await admin_dsn()
+    # cpsim02 fix 1 (E): fixtures go through the operator (postgres) DSN — DATABASE_URL is app_service since the
+    # RLS cutover, and fixture inserts through it are refused by RLS (the run aborted in build_fixtures)
+    admin_url, admin_prov = await operator_dsn()
     app_url, app_prov = await app_service_dsn()
     if admin_url is None:
         print(f"FATAL: cannot reach the database as postgres — {admin_prov}")
@@ -740,6 +762,10 @@ async def main() -> int:
     check_task3_credentials()
 
     admin = await connect(admin_url)
+    if not await bypasses_rls(admin):
+        print(f"FATAL: the fixture connection ({admin_prov}) does not bypass RLS — fixtures would be refused")
+        await admin.close()
+        return 2
 
     pre: dict[str, int] = {}
     try:

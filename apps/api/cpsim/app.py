@@ -1,6 +1,18 @@
 """cpsim01 Task 3 — the simulator's own FastAPI sub-app, mounted at /cpsim on the existing API (main.py).
 
     GET  /cpsim/health                 no auth; {"status": "ok", "simulated": true}
+
+cpsim02 — the Altruist-compatible read API at the client's EXACT paths (contract §6), under /cpsim/c/{slug}:
+    GET  …/oauth/authorize             302 → redirect_uri?code=…&state=… (cpsim/oauth.py)
+    POST …/oauth/token                 form body; authorization_code / refresh_token; the cpsim_ key in the BODY
+    GET  …/api/v2/households           {"households": [{id, name}]}
+    GET  …/v2/accounts?household_id=   {"accounts": [{id, name, …}]}
+    GET  …/v2/positions?account_id=    {"positions": [T6 primary fields]} — the latest snapshot on or before the clock
+    GET  …/v2/transactions?account_id= {"transactions": [T7 primary fields]} — trade_date ≤ the clock
+  Resources take an ACCESS token (``Bearer cpsim_at_…``); the cpsim_ key authenticates only the token endpoint. One
+  response per resource (no pagination), explicit ids, ISO dates. Behaviour (D9): reject → 503 with the reason;
+  delay → sleep min(delay_seconds, MAX_DELAY_S) before answering; partial / ACH do not apply to reads.
+
     POST /cpsim/c/{slug}/mirror        Authorization: Bearer cpsim_live_…  — a properly formatted envelope in, the
                                        mirrored message out (same message_id, mirrored: true, received_at from the
                                        counterparty's clock); malformed → 422 with the schema errors; unknown slug →
@@ -13,19 +25,26 @@ request is written to ``cpsim.request_log`` (no bodies, no keys) by the ASGI wra
 
 from __future__ import annotations
 
+import asyncio
 import json
 import traceback
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from cpsim import SIMULATED_HEADER, SIMULATED_VALUE
 from cpsim import auth as A
 from cpsim import db as DB
+from cpsim import book as B
 from cpsim import mirror as M
+from cpsim import oauth as O
 from cpsim import registry as R
 
 LOG_KEY = "cpsim.log"
+MAX_DELAY_S = 20            # D9: a delay over the client's 15 s timeout exercises it; never longer than this
+REFUSALS = {**A.REFUSALS,
+            "token_unknown": "unknown access token", "token_expired": "the access token has expired",
+            "token_revoked": "the access token has been revoked"}
 
 
 def _out(status: int, body: dict, headers: dict | None = None) -> JSONResponse:
@@ -117,7 +136,131 @@ def create_app() -> FastAPI:
             return _out(422, {"detail": "malformed message", "errors": errors})
         return _out(200, M.mirror(doc, cp["slug"], bdate))
 
+    # ── cpsim02: the Altruist-compatible OAuth + read API ───────────────────────────────────────────────────────
+    def _log(request: Request, slug: str, tail: str, message_type: str) -> dict:
+        log = request.scope.setdefault(LOG_KEY, {})
+        log.update({"slug": slug[:64], "path": f"/cpsim/c/{slug[:64]}{tail}", "message_type": message_type})
+        return log
+
+    @sub.get("/c/{slug}/oauth/authorize")
+    async def oauth_authorize(slug: str, request: Request):
+        log = _log(request, slug, "/oauth/authorize", "altruist.oauth.authorize")
+        try:
+            async with DB.tx() as conn:
+                cp = await R.live_by_slug(conn, slug)
+                if cp is None:
+                    log["auth_outcome"] = "unknown_counterparty"
+                    return _out(404, {"detail": "no such simulated counterparty"})
+                log["counterparty_id"] = cp["id"]
+                try:
+                    location = await O.authorize(conn, cp, dict(request.query_params))
+                except O.OAuthRefused as r:
+                    log["auth_outcome"] = r.outcome
+                    return _out(r.status, {"error": r.error, "error_description": r.description})
+                log["auth_outcome"] = "ok"
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return _out(500, {"detail": "simulator error"})
+        return Response(status_code=302, headers={"Location": location, "Cache-Control": "no-store"})
+
+    @sub.post("/c/{slug}/oauth/token")
+    async def oauth_token(slug: str, request: Request):
+        log = _log(request, slug, "/oauth/token", "altruist.oauth.token")
+        form = O.parse_form(await request.body())
+        log["message_type"] = f"altruist.oauth.token.{form.get('grant_type')}" if form.get("grant_type") in O.GRANTS \
+            else "altruist.oauth.token"
+        try:
+            async with DB.tx() as conn:
+                cp = await R.live_by_slug(conn, slug)
+                if cp is None:
+                    log["auth_outcome"] = "unknown_counterparty"
+                    return _out(404, {"detail": "no such simulated counterparty"})
+                log["counterparty_id"] = cp["id"]
+                try:
+                    body = await O.token(conn, cp, form)
+                except O.OAuthRefused as r:
+                    log["auth_outcome"] = r.outcome
+                    raise _Refusal(r) from r
+                log["auth_outcome"] = "ok"
+        except _Refusal as rr:       # the transaction rolled back: a refusal persists nothing
+            r = rr.r
+            return _out(r.status, {"error": r.error, "error_description": r.description}, {"Cache-Control": "no-store"})
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return _out(500, {"detail": "simulator error"})
+        return _out(200, body, {"Cache-Control": "no-store", "Pragma": "no-cache"})
+
+    async def _resource(slug: str, request: Request, tail: str, kind: str, fetch):
+        log = _log(request, slug, tail, f"altruist.{kind}")
+        delay = 0
+        try:
+            async with DB.tx() as conn:
+                cp = await R.live_by_slug(conn, slug)
+                if cp is None:
+                    log["auth_outcome"] = "unknown_counterparty"
+                    return _out(404, {"detail": "no such simulated counterparty"})
+                log["counterparty_id"] = cp["id"]
+                outcome = await O.check_access(conn, cp, A.bearer(request.headers.get("authorization")))
+                log["auth_outcome"] = outcome
+                if outcome != "ok":
+                    return _out(401, {"detail": REFUSALS.get(outcome, "not authorised")},
+                                {"WWW-Authenticate": 'Bearer realm="cpsim", error="invalid_token"'})
+                beh = await R.behaviour(conn, cp["id"]) or {}
+                if beh.get("default_outcome") == "reject":
+                    log["auth_outcome"] = "behaviour_reject"
+                    return _out(503, {"detail": beh.get("reject_reason") or "rejected by the simulated custodian",
+                                      "behaviour": "reject"})
+                if beh.get("default_outcome") == "delay":
+                    delay = min(int(beh.get("delay_seconds") or 0), MAX_DELAY_S)
+                clock = await R.business_date(conn, cp["id"]) or R.today()
+                result = await fetch(conn, cp, clock)
+        except B.BookError as exc:
+            return _out(exc.status, {"detail": str(exc)})
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return _out(500, {"detail": "simulator error"})
+        if isinstance(result, JSONResponse):
+            return result
+        if delay:
+            await asyncio.sleep(delay)
+        return _out(200, {kind: result, "as_of": clock.isoformat()})
+
+    @sub.get("/c/{slug}/api/v2/households")
+    async def households(slug: str, request: Request):
+        async def fetch(conn, cp, clock):
+            return await B.households(conn, cp["id"])
+        return await _resource(slug, request, "/api/v2/households", "households", fetch)
+
+    @sub.get("/c/{slug}/v2/accounts")
+    async def accounts(slug: str, request: Request, household_id: str | None = None):
+        async def fetch(conn, cp, clock):
+            if not household_id:
+                return _out(400, {"detail": "household_id is required"})
+            return await B.accounts(conn, cp["id"], household_id)
+        return await _resource(slug, request, "/v2/accounts", "accounts", fetch)
+
+    def _account_route(kind: str, serve):
+        async def handler(slug: str, request: Request, account_id: str | None = None):
+            async def fetch(conn, cp, clock):
+                if not account_id:
+                    return _out(400, {"detail": "account_id is required"})
+                if not await B.account_exists(conn, cp["id"], account_id):
+                    return _out(404, {"detail": "no such account in this simulated custodian's book"})
+                return await serve(conn, cp["id"], account_id, clock)
+            return await _resource(slug, request, f"/v2/{kind}", kind, fetch)
+        handler.__name__ = f"{kind}_endpoint"
+        return handler
+
+    sub.add_api_route("/c/{slug}/v2/positions", _account_route("positions", B.positions), methods=["GET"])
+    sub.add_api_route("/c/{slug}/v2/transactions", _account_route("transactions", B.transactions), methods=["GET"])
+
     return SimulatedMarker(sub)
+
+
+class _Refusal(Exception):
+    def __init__(self, r):
+        super().__init__(r.description)
+        self.r = r
 
 
 #: the ONE instance main.py mounts (and the admin router's "Send test message" calls in-process)

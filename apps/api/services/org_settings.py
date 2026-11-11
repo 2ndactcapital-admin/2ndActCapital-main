@@ -83,7 +83,8 @@ SECRET_SETTING_KEYS = frozenset({"custody.account_hash_salt"})
 # CPSIM01 — keys this generic writer must never set (an org admin may write any OTHER key of their own org here).
 # counterparty_sim.allowed is switched only from Admin → Counterparties (Super Admin, audited); the database refuses it
 # without app.is_super_admin too (docs/cpsim01_part1.sql cpsim_org_setting_guard_trg).
-ADMIN_ROUTER_ONLY_SETTING_KEYS = frozenset({"counterparty_sim.allowed"})
+# cpsim02: counterparty_sim.altruist_counterparty (the slug an org's "simulator" environment talks to) — same rule
+ADMIN_ROUTER_ONLY_SETTING_KEYS = frozenset({"counterparty_sim.allowed", "counterparty_sim.altruist_counterparty"})
 
 # ── Defaults ──────────────────────────────────────────────────────────────
 # Mirrors the values seeded for 2nd Act Capital. Any org that has not set a

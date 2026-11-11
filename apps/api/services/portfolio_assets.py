@@ -155,6 +155,8 @@ SOURCE_SYSTEMS = frozenset({
     "reporting_tool_bd", "reporting_tool_addepar", "reporting_tool_orion",
     "reporting_tool_apx", "reporting_tool_import", "altruist",
     "spv_subscriptions", "chancery", "manual",
+    # cpsim02 — a row fed by a SIMULATED Altruist-compatible custodian (docs/cpsim02_part1.sql positions_source_chk)
+    "altruist_simulator",
 })
 
 # valuations_basis_chk

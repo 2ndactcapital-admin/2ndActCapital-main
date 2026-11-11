@@ -96,7 +96,7 @@ for _path in (str(HERE), str(API_DIR)):
 
 import asyncpg  # noqa: E402
 
-from _db_connect import admin_dsn, app_service_dsn, connect  # noqa: E402
+from _db_connect import app_service_dsn, bypasses_rls, connect, operator_dsn  # noqa: E402
 
 ORG = "00000000-0000-0000-0000-000000000001"
 OTHER_ORG = "bb347258-8f28-4f49-8cc9-e29ccad82884"
@@ -174,6 +174,10 @@ COUNTED = (
     "portfolio.asset_identifiers",
     "portfolio.assets",
     "public.position_account_exceptions",
+    # cpsim02 fix 1 (E): the sync's PORTENTRY1 family rollup (services/altruist_positions_sync.py, request_rollup +
+    # run_request) writes these for the fixture owners since 2026-11-04 — counted so the teardown check covers them
+    "public.entity_holdings",
+    "portfolio.rollup_requests",
 )
 
 
@@ -220,6 +224,8 @@ class Results:
         print(f"altruist_sprint5_sync_orchestration: {counts.get('PASS', 0)}/{total} PASS"
               + "".join(f"  {k}={v}" for k, v in sorted(counts.items()) if k != "PASS"))
         print("=" * 78)
+        # cpsim02 — the shared nested-run parser (scripts/_verify_total.py) reads a final TOTAL line
+        print(f"TOTAL: {counts.get('PASS', 0)} PASS, {counts.get('FAIL', 0)} FAIL")
 
 
 R = Results()
@@ -273,9 +279,11 @@ async def teardown(conn) -> None:
         [ORG, OTHER_ORG], f"%{TAG}%",
     )
     await conn.execute(
-        "DELETE FROM public.account_import_exceptions WHERE raw_row ->> 'external_id' = ANY($1::text[])",
-        [ALTRUIST_ACCOUNT_A_UNMATCHED],
-    )
+        "DELETE FROM public.account_import_exceptions WHERE raw_row ->> 'external_id' = ANY($1::text[]) "
+        "OR raw_row ->> 'external_id' LIKE $2",
+        [ALTRUIST_ACCOUNT_A_UNMATCHED], f"{TAG}-%",
+    )   # cpsim02 fix 1 (E): also every exception for a fixture account id (acct-rt is recorded unmatched too); a
+        # left-behind one pinned its batch through account_import_exceptions_batch_id_fkey and aborted S5 AND S6
     await conn.execute(
         "DELETE FROM public.account_import_batches WHERE org_id = ANY($1::uuid[]) "
         "AND custodian_code = 'ALTRUIST'",
@@ -285,6 +293,13 @@ async def teardown(conn) -> None:
         "DELETE FROM public.account_owners WHERE account_id = ANY($1::uuid[])", ACCOUNTS)
     await conn.execute(
         "DELETE FROM public.accounts WHERE id = ANY($1::uuid[])", ACCOUNTS)
+    # cpsim02 fix 1 (E): the rollup's outputs for the fixture owners (by fixture entity id only) — they hold an FK
+    # to public.entities, so the entity delete below raised ForeignKeyViolationError and left fixture rows behind
+    await conn.execute(
+        "DELETE FROM public.entity_holdings WHERE entity_id = ANY($1::uuid[])", ENTITIES)
+    await conn.execute(
+        "DELETE FROM portfolio.rollup_requests WHERE org_id = ANY($1::uuid[]) AND entity_ids <@ $2::uuid[] "
+        "AND reason = 'altruist sync'", [ORG, OTHER_ORG], ENTITIES)
     await conn.execute(
         "DELETE FROM public.entities WHERE id = ANY($1::uuid[])", ENTITIES)
     conn_ids = FIXTURE_CONNECTIONS + RUNTIME_CONNECTIONS
@@ -296,6 +311,15 @@ async def teardown(conn) -> None:
             "DELETE FROM public.altruist_oauth_states WHERE state = ANY($1::text[])",
             RUNTIME_STATE_VALUES,
         )
+    # cpsim02 fix 1 (E): the round trip's runtime connection / state are known only in memory (RUNTIME_*), so a run
+    # whose teardown aborted left them behind — and the next run's 5-1 ("no production connection yet") then synced
+    # through the leftover. Also remove them by this script's own fixture keys: the connection's client_id is the
+    # fixture value the script sets (TAG-production-client-id), the state's initiated_by a fixture user.
+    await conn.execute(
+        "DELETE FROM public.altruist_connections WHERE org_id = ANY($1::uuid[]) AND client_id LIKE $2",
+        [ORG, OTHER_ORG], f"{TAG}-%")
+    await conn.execute(
+        "DELETE FROM public.altruist_oauth_states WHERE initiated_by = ANY($1::uuid[])", USERS)
     await conn.execute(
         "DELETE FROM public.user_roles WHERE user_id = ANY($1::uuid[])", USERS)
     await conn.execute(
@@ -957,7 +981,9 @@ def check_regression() -> None:
 
 # ═══════════════════════════════════════════════════════════════════════════
 async def main() -> int:
-    admin_url, admin_prov = await admin_dsn()
+    # cpsim02 fix 1 (E): fixtures go through the operator (postgres) DSN — DATABASE_URL is app_service since the
+    # RLS cutover, and fixture inserts through it are refused by RLS (the run aborted in build_fixtures)
+    admin_url, admin_prov = await operator_dsn()
     app_url, app_prov = await app_service_dsn()
     if admin_url is None:
         print(f"FATAL: cannot reach the database as postgres — {admin_prov}")
@@ -971,6 +997,10 @@ async def main() -> int:
     check_task3_credentials()
 
     admin = await connect(admin_url)
+    if not await bypasses_rls(admin):
+        print(f"FATAL: the fixture connection ({admin_prov}) does not bypass RLS — fixtures would be refused")
+        await admin.close()
+        return 2
 
     pre: dict[str, int] = {}
     try:

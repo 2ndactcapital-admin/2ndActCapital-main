@@ -9,6 +9,7 @@ import AuthorityPanel from "@/components/authority/AuthorityPanel";
 import LotMethodPanel from "@/components/lotmethod/LotMethodPanel";
 import OneOffForm from "@/components/authority/OneOffForm";
 import { RecordDisclosures } from "@/components/disclosures/Disclosures";
+import SimulatedCustodianBadge from "@/components/counterparties/SimulatedCustodianBadge";
 
 // REP5 — one account: its model, settings, a change awaiting approval, the
 // transition plan and its proposals. The envelope (flags, actions, registry
@@ -76,7 +77,7 @@ export default async function AccountPage({ params }) {
     <AppShell user={session.user}>
       <p className="text-sm"><a className="text-navy underline" href="/portfolio/accounts">Accounts</a>
         {" · "}<a className="text-navy underline" href={`/portfolio/accounts/${id}/long-short`}>Long/short</a></p>
-      <h1 className="mt-1 text-3xl font-semibold text-navy">Account</h1>
+      <h1 className="mt-1 text-3xl font-semibold text-navy">Account<SimulatedCustodianBadge envelope={envelope} /></h1>
       <div className="mt-4">
         {error ? (
           <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">{error}</div>

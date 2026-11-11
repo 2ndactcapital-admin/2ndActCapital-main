@@ -40,7 +40,11 @@ ALLOWED_SERVICE_IMPORTS = {"services.us_business_days", "services.bitemporal"}
 
 # repo-relative paths (or prefixes ending '/') allowed to name cpsim.* objects / import the package
 B1_ALLOWED = ("apps/api/cpsim/", "apps/api/routers/admin_counterparties.py", "apps/api/scripts/cpsim_boundary_check.py")
-B1_ALLOWED_RX = re.compile(r"^apps/api/scripts/verify_cpsim\d+\w*\.py$")
+# cpsim02: the migration applier (_apply_cpsim02.py) reads the catalog for its own objects
+# cpsim02: the migration applier, and the conformance runner + its in-process fixture helpers (they create / tear down
+# a fixture simulated counterparty and mount the sub-app in-process — scripts, never services)
+B1_ALLOWED_RX = re.compile(r"^apps/api/scripts/(verify_cpsim\d+\w*|_apply_cpsim\d+|_cpsim_fixtures|"
+                           r"cpsim_altruist_conformance)\.py$")
 B2_ALLOWED = ("apps/api/main.py", "apps/api/routers/admin_counterparties.py", "apps/api/scripts/cpsim_boundary_check.py")
 
 _OBJ_RX = re.compile(r"CREATE\s+(?:UNIQUE\s+)?(?:TABLE|(?:OR\s+REPLACE\s+)?FUNCTION|INDEX|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?"

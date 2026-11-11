@@ -41,6 +41,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from routers.entities import get_org_id
+from services.altruist_identity import simulator_fed
 from services import account_models as AM
 from services import authority as AU
 from services import human_tasks as HT
@@ -253,6 +254,7 @@ async def account_model(request: Request, account_id: str):
             engines = await AM.harvesting_options(conn, acct)
             plan = await RP.current_plan(conn, org_id, acct["id"])
             proposals = await RP.list_proposals(conn, org_id, account_id=acct["id"], limit=50)
+            simulated_feed = await simulator_fed(conn, org_id, str(acct["id"]))   # cpsim02 — the account badge
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
     pending = links["pending"]
@@ -278,6 +280,7 @@ async def account_model(request: Request, account_id: str):
                           "live_version_no": m["live_version_no"]} for m in offer],
             "harvesting_engines": engines, "transition_plan": plan, "proposals": proposals,
             "permissions": {**perms, "can_decide_change": can_decide}, "actions": actions,
+            "custodian_feed": {"simulated": simulated_feed},
             "vocabularies": _vocab(perms)}
 
 

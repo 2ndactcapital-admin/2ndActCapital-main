@@ -162,7 +162,9 @@ def self_static(check, find):
           and "INSERT INTO audit_log" in rt, "the admin router: Super Admin gate, cpsim work as cpsim_app, audit as the "
           "login role in the same transaction")
     os_ = _code_only(_src("apps/api/services/org_settings.py"))
-    check('ADMIN_ROUTER_ONLY_SETTING_KEYS = frozenset({"counterparty_sim.allowed"})' in os_
+    # cpsim02 widened the set (counterparty_sim.altruist_counterparty); match the key BY NAME inside the set's literal
+    _admin_keys = re.search(r"ADMIN_ROUTER_ONLY_SETTING_KEYS = frozenset\(\{([^}]*)\}\)", os_)
+    check(bool(_admin_keys and '"counterparty_sim.allowed"' in _admin_keys.group(1))
           and "if key in ADMIN_ROUTER_ONLY_SETTING_KEYS:" in os_,
           "the generic settings writer refuses counterparty_sim.allowed")
     mig = MIGRATION.read_text(encoding="utf-8") if MIGRATION.exists() else ""
@@ -715,7 +717,16 @@ async def y_schema(conn):
     tabs = {r["t"] for r in await platform(conn, "SELECT c.relname AS t FROM pg_class c JOIN pg_namespace n ON "
                                                  "n.oid = c.relnamespace WHERE n.nspname = 'cpsim' AND c.relkind = 'r'")}
     want = {t.split(".")[1] for t in CPSIM_TABLES} | {"institution_types", "real_bic_examples"}
-    check(tabs == want, f"the simulator's {len(want)} tables exist under schema cpsim", f"{sorted(tabs)}")
+    # later sprints add their own cpsim tables (cpsim02: the book, OAuth grants, conformance runs). cpsim01's own nine
+    # must all exist; any OTHER table must be declared by a later docs/cpsim*_part*.sql migration (never undeclared).
+    later = set()
+    for mig in sorted((REPO / "docs").glob("cpsim*_part*.sql")):
+        if mig.name != MIGRATION.name:
+            later |= set(re.findall(r"CREATE TABLE IF NOT EXISTS cpsim\.([a-z_][a-z0-9_]*)",
+                                    mig.read_text(encoding="utf-8")))
+    check(want <= tabs and not (tabs - want - later), f"the simulator's {len(want)} cpsim01 tables exist under schema "
+          f"cpsim; every other cpsim table is declared by a later cpsim migration ({len(later)})",
+          f"missing={sorted(want - tabs)} undeclared={sorted(tabs - want - later)}")
     pub = [r["t"] for r in await platform(conn, "SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN "
                                                 "pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'r' AND "
                                                 "c.relname = ANY($1::text[]) AND n.nspname <> 'cpsim'", sorted(want))]
@@ -738,6 +749,9 @@ async def y_schema(conn):
     expect = {(f"cpsim.{t}", p) for t in want for p in ("SELECT", "INSERT", "UPDATE", "DELETE")}
     expect |= {(f"portfolio.{t}", "SELECT") for t in ("securities_global", "securities_global_identifiers",
                                                        "securities_global_prices")}
+    # cpsim01's own tables + the reference grants are compared EXACTLY; a later migration's tables are that sprint's
+    # verify's business (but cpsim_app may hold nothing outside schema cpsim beyond the three reference tables)
+    privs = {(t, p) for t, p in privs if not (t.startswith("cpsim.") and t.split(".")[1] in later)}
     check(bool(privs) and privs == expect,
           "cpsim_app's relation privileges are EXACTLY the documented set: SELECT/INSERT/UPDATE/DELETE on the cpsim "
           "tables, SELECT on the three security-master / price tables — nothing on any public table (not even "

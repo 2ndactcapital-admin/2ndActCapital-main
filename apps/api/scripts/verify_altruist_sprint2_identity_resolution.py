@@ -79,7 +79,7 @@ for _path in (str(HERE), str(API_DIR)):
 import asyncpg  # noqa: E402
 import httpx  # noqa: E402
 
-from _db_connect import admin_dsn, app_service_dsn, connect  # noqa: E402
+from _db_connect import app_service_dsn, bypasses_rls, connect, operator_dsn  # noqa: E402
 
 ORG = "00000000-0000-0000-0000-000000000001"
 OTHER_ORG = "bb347258-8f28-4f49-8cc9-e29ccad82884"
@@ -153,6 +153,8 @@ class Results:
         print(f"altruist_sprint2_identity_resolution: {counts.get('PASS', 0)}/{total} PASS"
               + "".join(f"  {k}={v}" for k, v in sorted(counts.items()) if k != "PASS"))
         print("=" * 78)
+        # cpsim02 — the shared nested-run parser (scripts/_verify_total.py) reads a final TOTAL line
+        print(f"TOTAL: {counts.get('PASS', 0)} PASS, {counts.get('FAIL', 0)} FAIL")
 
 
 R = Results()
@@ -546,7 +548,9 @@ def check_task3_credentials() -> None:
 
 # ═══════════════════════════════════════════════════════════════════════════
 async def main() -> int:
-    admin_url, admin_prov = await admin_dsn()
+    # cpsim02 fix 1 (E): fixtures go through the operator (postgres) DSN — DATABASE_URL is app_service since the
+    # RLS cutover, and fixture inserts through it are refused by RLS (the run aborted in build_fixtures)
+    admin_url, admin_prov = await operator_dsn()
     app_url, app_prov = await app_service_dsn()
     if admin_url is None:
         print(f"FATAL: cannot reach the database as postgres — {admin_prov}")
@@ -561,6 +565,10 @@ async def main() -> int:
     check_task3_credentials()
 
     admin = await connect(admin_url)
+    if not await bypasses_rls(admin):
+        print(f"FATAL: the fixture connection ({admin_prov}) does not bypass RLS — fixtures would be refused")
+        await admin.close()
+        return 2
     app = await connect(app_url)
 
     import os

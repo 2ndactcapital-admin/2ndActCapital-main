@@ -98,5 +98,21 @@ async def admin_dsn() -> tuple[str | None, str]:
     return await resolve_dsn("DATABASE_URL")
 
 
+#: the postgres-role DSN preserved at the RLS cutover — DATABASE_URL itself is app_service since then
+OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
+
+
+async def operator_dsn() -> tuple[str | None, str]:
+    """cpsim02 fix 1 — the operator (postgres) DSN for fixture setup / teardown. Since the RLS cutover
+    ``DATABASE_URL`` (``admin_dsn``) connects as app_service, so fixture writes through it are refused by RLS."""
+    return await resolve_dsn(OPERATOR_DSN_VAR)
+
+
+async def bypasses_rls(conn: asyncpg.Connection) -> bool:
+    """True when the connection's role is superuser or rolbypassrls (a fixture connection must be one)."""
+    return bool(await conn.fetchval(
+        "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user"))
+
+
 async def connect(dsn: str) -> asyncpg.Connection:
     return await asyncpg.connect(dsn, **CONNECT_KWARGS)

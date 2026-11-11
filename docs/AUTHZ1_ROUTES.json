@@ -1,5 +1,5 @@
 {
- "app_route_count": 1048,
+ "app_route_count": 1060,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -20776,6 +20776,222 @@
    "write": true
   },
   {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "book_summary",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/book",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "book_template",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/book/template",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "book_preview",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/book/preview",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "book_accept",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/book/accept",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "book_export",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/book/export",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "webhook_test",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/webhooks/test",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "connections",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/connections",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "point_org",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/connections/{target_org_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "connect_org",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/connections/{target_org_id}/connect",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "sync_org",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/connections/{target_org_id}/sync",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "conformance_runs",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/conformance",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "run_conformance",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/conformance",
+   "public": false,
+   "write": true
+  },
+  {
    "after": "none beyond auth",
    "before": "\u2014",
    "before_effect": "new route",
@@ -21450,11 +21666,65 @@
   {
    "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
    "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "households",
+   "path": "/cpsim/c/{slug}/api/v2/households"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
     "POST"
    ],
    "module": "cpsim.app",
    "name": "mirror_endpoint",
    "path": "/cpsim/c/{slug}/mirror"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "oauth_authorize",
+   "path": "/cpsim/c/{slug}/oauth/authorize"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "POST"
+   ],
+   "module": "cpsim.app",
+   "name": "oauth_token",
+   "path": "/cpsim/c/{slug}/oauth/token"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "accounts",
+   "path": "/cpsim/c/{slug}/v2/accounts"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "positions_endpoint",
+   "path": "/cpsim/c/{slug}/v2/positions"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "transactions_endpoint",
+   "path": "/cpsim/c/{slug}/v2/transactions"
   },
   {
    "auth": "none (liveness only)",
