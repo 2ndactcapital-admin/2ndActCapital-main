@@ -11,13 +11,19 @@
  * cash.payments disclosure. Every decision comes from lib/cashPayments.mjs, which fails closed. Each read goes through
  * the Next.js proxy (/api/cash/households/{id}/payments…) — never FastAPI from the browser. Light / cream.
  *
- * ``initial`` ({list, options, detail, matches}) renders without fetching (render tests).
+ * CPSIM04: for a payment whose source is at a SIMULATED custodian, the custodian panel — "Send to custodian
+ * (simulated)" (only when the server lists it and its D4 route holds; otherwise the reason it is manual), the transfer's
+ * custodian events, "Refresh status from custodian", and the reconcile picker preselecting the transfer's matched feed
+ * rows — every one with a SIMULATED badge. The manual route (sheet + Confirm sent) stays offered beside it.
+ *
+ * ``initial`` ({list, options, detail, matches, transfer}) renders without fetching (render tests).
  */
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  accountText, actionRequest, canWrite, destinationChoices, detailOf, disclosureText, draftBody, filterOptions,
-  isMember, labelOf, linkChoices, newOffer, paymentRows, railChoices, readable, reconcileBody, sourceChoices, vocab,
+  accountText, actionRequest, canWrite, CUSTODIAN_PATHS, custodianPanel, destinationChoices, detailOf, disclosureText,
+  draftBody, filterOptions, isMember, labelOf, linkChoices, newOffer, paymentRows, preselected, railChoices, readable,
+  reconcileBody, sourceChoices, transferEvents, vocab,
 } from "@/lib/cashPayments.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-4";
@@ -140,9 +146,41 @@ export function NewPaymentForm({ options, onCreate, onCancel, busy = false }) {
   );
 }
 
-export function PaymentDetail({ data, matches = null, onAction, onSheet, onMatches, onClose, busy = false }) {
+export function SimulatedBadge() {
+  return <span data-testid="simulated-badge" className="ml-2 rounded border border-[#C5A880] bg-[#F5F1EB] px-1 text-[10px] font-semibold tracking-[0.08em] text-navy">SIMULATED</span>;
+}
+
+/** CPSIM04 — the custodian-API panel (only from the server's `payment.custodian`; fails closed). */
+export function CustodianPanel({ data, transferView = null, onCustodian, busy = false }) {
+  const c = custodianPanel(data);
+  if (!c) return null;
+  const events = transferEvents(transferView);
+  return (
+    <div className="rounded-[6px] border border-[#ece8dd] bg-[#FAF9F6] p-2 text-sm" data-testid="custodian-panel">
+      <p className="font-semibold text-navy">Custodian API<SimulatedBadge />{c.counterparty ? <span className="ml-2 font-normal text-text-muted">simulated custodian {c.counterparty}</span> : null}</p>
+      {c.transferId ? <p className="text-xs text-text-muted" data-testid="transfer-id">Transfer {c.transferId}</p> : null}
+      {c.manualReason ? <p className="text-xs text-text-muted" data-testid="manual-reason">{c.manualReason.charAt(0).toUpperCase() + c.manualReason.slice(1)}</p> : null}
+      {events.length ? (
+        <ol className="text-xs" aria-label="Custodian events">{events.map((e, i) => <li key={i} data-custodian-event={e.status}>{e.status}{e.on ? ` · ${e.on}` : ""}</li>)}</ol>) : null}
+      <div className="mt-1 flex flex-wrap gap-2">
+        {c.sendOffered ? <button type="button" className={btn} disabled={busy} onClick={() => onCustodian?.("send_to_custodian")}>Send to custodian (simulated)</button> : null}
+        {c.refreshOffered ? <button type="button" className={btn} disabled={busy} onClick={() => onCustodian?.("refresh_from_custodian")}>Refresh status from custodian</button> : null}
+      </div>
+      {c.manualOffered ? <p className="text-xs text-text-muted">The manual route stays available: download the payment sheet and confirm the channel.</p> : null}
+    </div>
+  );
+}
+
+const CUSTODIAN_KEYS = new Set(Object.keys(CUSTODIAN_PATHS));
+
+export function PaymentDetail({ data, matches = null, transferView = null, onAction, onCustodian, onSheet, onMatches,
+  onClose, busy = false }) {
   const [fields, setFields] = useState({});
-  const [chosen, setChosen] = useState([]);
+  const [chosen, setChosen] = useState(() => preselected(transferView, matches));
+  useEffect(() => {                       // the transfer's matched feed rows, preselected once both reads arrive
+    const pre = preselected(transferView, matches);
+    if (pre.length) setChosen(pre);
+  }, [transferView, matches]);
   const d = detailOf(data);
   if (!d) return null;
   const channels = vocab(data, "channels");
@@ -159,6 +197,7 @@ export function PaymentDetail({ data, matches = null, onAction, onSheet, onMatch
       <p className="text-sm text-text-muted">{d.purpose}{d.link ? ` · ${d.link}` : ""} · {d.status}
         {d.provisional ? ` · provisional until ${d.provisional} (ACH return window)` : ""}</p>
       {disclosureText(data) ? <p className="text-xs text-text-muted" data-label="cash.payments">{disclosureText(data)}</p> : null}
+      <CustodianPanel data={data} transferView={transferView} onCustodian={onCustodian} busy={busy} />
       <ol className="border-l border-[#ece8dd] pl-3 text-sm" aria-label="Timeline">
         {d.timeline.map((e) => (
           <li key={e.id} className="py-0.5" data-event={e.label}><span className="text-text-muted">{(e.at || "").slice(0, 16).replace("T", " ")}</span> — {e.label} ({e.to}) · {e.who}{e.note ? ` · ${e.note}` : ""}</li>))}
@@ -180,11 +219,12 @@ export function PaymentDetail({ data, matches = null, onAction, onSheet, onMatch
               {(matches?.matches || []).map((m) => (
                 <label key={m.id} className="block"><input type="checkbox" checked={chosen.includes(m.id)}
                   onChange={(e) => setChosen((c) => (e.target.checked ? [...c, m.id] : c.filter((x) => x !== m.id)))} />
-                  {" "}{m.date} {m.leg === "out" ? "out of" : "into"} the account · {m.amount} · {m.type}{m.external_ref ? ` · ${m.external_ref}` : ""}</label>))}
+                  {" "}{m.date} {m.leg === "out" ? "out of" : "into"} the account · {m.amount} · {m.type}{m.external_ref ? ` · ${m.external_ref}` : ""}
+                  {m.source_system === "altruist_simulator" ? <SimulatedBadge /> : null}</label>))}
             </div>) : null}
           <label className="block text-sm">Note <input className={`${input} ml-2 w-2/3`} aria-label="Note" value={fields.note || ""} onChange={set("note")} /></label>
           <div className="flex flex-wrap gap-2">
-            {d.actions.map((a) => (a.key === "sheet"
+            {d.actions.filter((a) => !CUSTODIAN_KEYS.has(a.key)).map((a) => (a.key === "sheet"
               ? <button key={a.key} type="button" className={btn} disabled={busy} onClick={onSheet}>{a.label}</button>
               : a.key === "reconcile"
                 ? <button key={a.key} type="button" className={btn} disabled={busy || !rec.ok} onClick={() => rec.ok && onAction?.("reconcile", rec.body)}>{a.label}</button>
@@ -220,6 +260,12 @@ export default function TreasuryPayments({ householdId, initial = null }) {
   const pid = data.detail?.payment?.id;
   const act = (key, body) => run(call(`${base}/${encodeURIComponent(pid)}/${key}`, { method: "POST", body })
     .then((d) => { setData((c) => ({ ...c, detail: { ...c.detail, payment: d.payment } })); loadList(); }));
+  // cpsim04 — Send / Refresh go to their own routes; the live transfer is re-read after either
+  const custodian = (key) => CUSTODIAN_PATHS[key] && run(call(`${base}/${encodeURIComponent(pid)}/${CUSTODIAN_PATHS[key]}`,
+    { method: "POST" }).then((d) => {
+    setData((c) => ({ ...c, detail: { ...c.detail, payment: d.payment }, transfer: d.transfer ? { transfer: d.transfer } : c.transfer }));
+    loadList();
+  }));
   return (
     <div className="space-y-3">
       <PaymentList data={data.list} filters={filters} onFilters={setFilters} onOpen={open}
@@ -229,10 +275,14 @@ export default function TreasuryPayments({ householdId, initial = null }) {
           onCreate={(body) => run(call(base, { method: "POST", body }).then((d) => {
             setData((c) => ({ ...c, options: null, detail: { ...c.list, payment: d.payment } })); loadList(); }))} />) : null}
       {data.detail ? (
-        <PaymentDetail data={data.detail} matches={data.matches} busy={busy} onAction={act}
+        <PaymentDetail data={data.detail} matches={data.matches} transferView={data.transfer} busy={busy} onAction={act}
+          onCustodian={custodian}
           onClose={() => setData((c) => ({ ...c, detail: null }))}
           onSheet={() => run(downloadSheet(`${base}/${encodeURIComponent(pid)}/sheet`).then(() => open(pid)))}
-          onMatches={() => call(`${base}/${encodeURIComponent(pid)}/matches`).then((m) => setData((c) => ({ ...c, matches: m })))
+          onMatches={() => Promise.all([call(`${base}/${encodeURIComponent(pid)}/matches`),
+            data.detail?.payment?.custodian?.transfer_id
+              ? call(`${base}/${encodeURIComponent(pid)}/custodian-transfer`).catch(() => null) : Promise.resolve(null)])
+            .then(([m, t]) => setData((c) => ({ ...c, matches: m, transfer: t || c.transfer })))
             .catch((e) => setErr(e.message))} />) : null}
       {err ? <p className="text-sm text-[#9B2335]" role="alert">{err}</p> : null}
       {isMember(data.list) ? null : <p className="text-xs text-text-muted">Approvals also appear in your task inbox. {labelOf(vocab(data.list, "statuses"), "pending_approval")} needs a second person — never the one who made it.</p>}

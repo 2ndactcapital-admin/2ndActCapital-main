@@ -24,6 +24,11 @@ export function tabsFor(env, typeKey) {
   const bookTabs = new Set(Array.isArray(env?.vocabularies?.book_tabs) ? env.vocabularies.book_tabs : []);
   const bookTypes = Array.isArray(env?.vocabularies?.book_institution_types) ? env.vocabularies.book_institution_types : [];
   const hasBook = bookTypes.includes(typeKey);
+  // cpsim04 — a simulated BANK keeps a book too (cash accounts) and has a Received tab (the server's bank_tabs, for its
+  // bank_institution_types only; a lost vocabulary leaves them disabled)
+  const bankTabs = new Set(Array.isArray(env?.vocabularies?.bank_tabs) ? env.vocabularies.bank_tabs : []);
+  const bankTypes = Array.isArray(env?.vocabularies?.bank_institution_types) ? env.vocabularies.bank_institution_types : [];
+  const hasBank = bankTypes.includes(typeKey);
   const needs = {
     connection: () => groups.has("connection"),
     fix: () => groups.has("fix"),
@@ -33,7 +38,9 @@ export function tabsFor(env, typeKey) {
     activity: () => true,
   };
   return vocab(env, "tabs").map((t) => ({
-    ...t, enabled: bookTabs.has(t.key) ? hasBook : Boolean((needs[t.key] || (() => false))()),
+    ...t, enabled: (bookTabs.has(t.key) || bankTabs.has(t.key))
+      ? ((bookTabs.has(t.key) && hasBook) || (bankTabs.has(t.key) && hasBank))
+      : Boolean((needs[t.key] || (() => false))()),
   }));
 }
 
@@ -83,4 +90,32 @@ export function liveKey(detail) {
 
 export function shortDate(v) {
   return typeof v === "string" ? v.slice(0, 10) : "";
+}
+
+
+// ── cpsim04: Transfers (a custodian) / Received (a bank) — pure helpers over the server's envelopes ────────────────────
+/** A bank reference as a screen shows it: the last four characters, never more ("····1234"). */
+export function lastFourRef(v) {
+  const s = String(v || "").replace(/[^A-Za-z0-9]/g, "");
+  return s ? `····${s.slice(-4)}` : "";
+}
+
+/** One transfer row: the destination by slug + account id + LAST-FOUR references only; events oldest first. */
+export function transferRow(t, statuses) {
+  const x = t && typeof t === "object" ? t : {};
+  const b = x.to_bank && typeof x.to_bank === "object" ? x.to_bank : null;
+  const refs = b ? [b.routing_last4 ? `routing ${lastFourRef(b.routing_last4)}` : null,
+    b.bic ? `BIC ${lastFourRef(b.bic)}` : null, b.iban_last4 ? `IBAN ${lastFourRef(b.iban_last4)}` : null].filter(Boolean) : [];
+  return {
+    id: x.transfer_id, client: x.client_transfer_id, from: x.from_account_id, rail: x.rail, amount: x.amount,
+    to: b ? `${b.institution_slug} · ${b.account_id}${refs.length ? ` (${refs.join(", ")})` : ""}` : x.to_account_id,
+    status: labelOf(statuses, x.status), statusKey: x.status, reason: x.reject_reason || null,
+    returnCode: x.return_code || null, valueDate: x.value_date, sender: x.sender || null,
+    events: (Array.isArray(x.events) ? x.events : []).map((e) => `${labelOf(statuses, e.status)} ${e.on || ""}`.trim()),
+  };
+}
+
+/** "Record member consent" — only for a transfer awaiting consent AND a caller who may write (exactly true). */
+export function consentOffered(env, t) {
+  return canWrite(env) && t?.status === "pending_consent";
 }

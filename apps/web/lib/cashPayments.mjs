@@ -177,3 +177,40 @@ export function reconcileBody(matches, chosenIds, note) {
   if (String(note || "").trim()) return { ok: true, body: { method: "manual", note: String(note).trim() } };
   return { ok: false, error: "choose the matching feed transaction(s), or confirm manually with a reason" };
 }
+
+
+// ── cpsim04: the custodian-API route (a SIMULATED custodian only) — fails closed ─────────────────────────────────────
+/** The request path of each custodian action (they have their own routes, not the generic action route). */
+export const CUSTODIAN_PATHS = { send_to_custodian: "send-to-custodian", refresh_from_custodian: "refresh-from-custodian" };
+
+/** The custodian panel, or null: only from the server's `payment.custodian` with simulated === true, never for a
+ *  member. Send / Refresh are offered only when the server lists the action on the row AND its panel allows it AND the
+ *  caller's envelope grants the gate (exactly true) — a lost piece shows nothing to click. */
+export function custodianPanel(data) {
+  if (!readable(data) || isMember(data)) return null;
+  const p = obj(obj(data).payment);
+  const c = obj(p.custodian);
+  if (c.simulated !== true) return null;
+  const acts = listOf(p.actions).map((a) => a && a.key);
+  const perms = obj(obj(data).permissions);
+  return {
+    simulated: true, transferId: c.transfer_id || null, counterparty: c.counterparty || null,
+    sendOffered: perms.can_write === true && c.send_available === true && acts.includes("send_to_custodian"),
+    refreshOffered: (perms.can_write === true || perms.can_approve === true) && c.refresh_available === true
+      && acts.includes("refresh_from_custodian"),
+    manualReason: typeof c.send_refused === "string" && c.send_refused ? c.send_refused : null,
+    manualOffered: c.manual_offered === true,
+  };
+}
+
+/** The live transfer's events as the panel lists them (the custodian's own statuses and business dates). */
+export function transferEvents(view) {
+  const t = obj(obj(view).transfer);
+  return listOf(t.events).map((e) => ({ status: e.status, on: e.on || null }));
+}
+
+/** The reconcile picker's preselection: the server's matched feed rows of THIS transfer that are also candidates. */
+export function preselected(view, matches) {
+  const pre = listOf(obj(view).preselect_transaction_ids);
+  return listOf(obj(matches).matches).filter((m) => pre.includes(m.id)).map((m) => m.id);
+}
