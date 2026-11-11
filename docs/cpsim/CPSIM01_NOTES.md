@@ -118,3 +118,38 @@ package can be lifted into its own service by copying those two files.
   CREATE, TRUNCATE, TRIGGER or REFERENCES (DDL stays with the migration owner).
 - `destination_path` is stored (`/cpsim/c/<slug>`, CHECKed); the URL shown is `<API base>` + path, the base taken from
   the admin request itself.
+
+## Fix 1 findings (2026-11-10)
+
+The first full run ended 109 PASS / 9 FAIL. Every FAIL below has a CODE or VERIFY verdict with its evidence.
+**No product code changed, no gate was loosened, and the app login role still has no USAGE on schema cpsim.**
+
+**Leftover fixtures (before the fix):** 0. Counted with `--cleanup-only` (every fixture scope, public and cpsim)
+and directly as cpsim_app: slug `cpsimverify-%` = 0, name `CPSIM01 VERIFY%` = 0, cpsim.counterparties total = 0,
+request_log `cpsimverify-%` = 0, orgs named `CPSIM01 VERIFY` = 0. The first run's teardown had already left nothing.
+
+| # | FAIL | Verdict | Evidence | Fix |
+|---|------|---------|----------|-----|
+| A | `schema raised — permission denied for schema cpsim` (and the 7 sections "not run" that followed) | VERIFY | `$1::regclass` resolves a name inside schema cpsim; the verify's login correctly has no USAGE on it. Two sites: `seed_rows_vs_checks` and `y_schema`. `'cpsim_app'::regrole` needs no schema access, and every other cpsim read already goes through `sim()` (SET LOCAL ROLE cpsim_app) | `REL_OID`: the relation found by `pg_class ⋈ pg_namespace` on namespace + relname, with no cast. Grep: no `::regclass` / `to_regclass` remains |
+| A1 | safety: "a NON-test org … only an all-demo household may connect": plain / mixed / empty → true | VERIFY | The result itself shows `is_test: True`: `ORG_R = _id(3)` sits in the reserved `99000000-` prefix, and REP6FIX2's `organizations_mark_test_fixture` trigger forces `is_test = true` there. So `may_connect` correctly answered as for a test org | `ORG_R` gets a fixed id outside the prefix (the insert still rolls back); `guard_prefix` asserts no real org has it |
+| A2 | admin: "a reject without a reason is refused (400)" → 200, and "audited exactly once" +1 `behaviour_updated` | VERIFY | `PUT /behaviour` is a sparse update (`model_dump(exclude_unset=True)`, then `{**live_row, **fields}` in `registry.set_behaviour`). The preceding PUT had stored `reject_reason='closed'`, so the merged row was valid. The audit FAIL is the same accepted write | Clear the reason explicitly (`reject_reason: null`). The check now also requires the named constraint `counterparty_behaviour_reject_chk` in the 400 (stronger) |
+| A3 | (not one of the 9) vhk2 frozen-state scan flags `verify_cpsim01.py`: `st_old == 401 … cpsim_live_`, `len(abas) == 1000` | VERIFY | HTTP status codes, and the generator sample size. Neither is live state | Renamed `code_old` / `code_new`; `N_GENERATED = 1000` |
+| B1 | authz1: `jpl991722@gmail.com` Principal 11 vs recompute 9, diff `manage_documents`, `view_marketplace` | VERIFY | Read-only query: role `support_staff` (internal, so not client-like), profile **'CSA / Ops'** carries both keys (own roles: 0; permission sets: none). PERMS1 (`ff54ef0`) made the Principal union profile + permission-set keys; `_authz1_common.granted` still read `user_roles ⋈ role_permissions` only. PERMS1's own notes record exactly this union for this user | `effective_report(…, profiles=True)` + `profile_granted` restate PERMS1's rule independently (catalog keys, own org, member-safe cut for a client by role standing). Asserted: the role-name copy equals the code's, and the source is exercised by at least one real user |
+| B2 | authz1 route matrix, member and other_org: 16 each | VERIFY (stale generator rule) | Full list (one-off with the pre-fix JSON). 12 GETs refused by `require_internal`: fee-chat/conversation, fee-schedules, fee-schedules/{id}, …/{id}/assignments, …/resolve/account/{id}, portfolio/position-account-exceptions, portfolio/precedence/households/{id}, profitability/pnl, profitability/households-by-margin, udf/records/{t}, udf/records/{t}/export, udf/values/{t}/{id}. Plus 4 writes whose 403 "does not name the permission" (PATCH fee-schedules/{id}, POST …/{id}/submit, …/{id}/retire, …/assignments/{id}/end): `require_internal` refuses first. Gates: BUGFIX3 `00e553b` (staff-only portfolio / UDF reads), PERMS1 `ff54ef0` (fee screens = internal + view_portfolio). A member is MEANT to be refused, so no CODE defect. `authz1_routes.expect()` had sent `require_internal` + `require_permission(X)` to rule `perm` | Generator: that shape is `internal_perm` with `all_of` = the permissions and `staff_bypass: false` (require_permission has no staff bypass). verify_authz1 `expectation()` and `navregroup_traced_gates.mjs` honour it. 24 rows regenerated (also POST /deals and the manage_billing writes) |
+| B3 | authz1 route matrix: staff `GET /admin/workflow-runs` → 200 (and org_admin: workflow-runs, workflows → 200; the nested summary showed only 3 of its 5 FAIL lines) | VERIFY | Gate `_require_workflow_permission(request, view_workflow_runs)`: Super Admin first, then the Principal (PERMS1). The staff persona holds `view_workflow_runs` (`INVESTMENT_STAFF_PERMS`, documented seeding); the org_admin persona holds it and `author_workflows` (PERMS1 baseline). The generator read the helper's `if not is_super_admin(` bypass as a super-only gate | `super_bypass_only`: such routes get the EXACT rule, `perm any_of [X]` (X = the helper's permission; `review_agent_proposals` for the step decision). Not the loose `workflow`, so deny assertions stay for non-holders. 11 rows |
+
+The regenerated `docs/AUTHZ1_ROUTES.json` changes 35 `expect` records and 0 `after` gate texts (`.md` unchanged;
+`--check` CURRENT for both route docs). Older sprints compare records through `_verify_self.gate_of`, which now maps
+exactly these two corrections (only when the `after` text has the named shape, the workflow ones by a hard-coded
+route → permission table). All 57 route self-check verifies pass `--self-checks-only`. `verify_authz1.py` now prints
+every matrix mismatch, not only the first six.
+
+**Proof (one-off, `timeout 600` each):** cleanup → 0 before and after; `--self-checks-only` 40/0; seed 73/0;
+registry 88/0, credentials 96/0, generators 100/0, subapp 99/0, clock 79/0, safety 81/0, admin 101/0 (totals include
+the seed + schema sections; teardown and real-row checksums PASS in each); isolation checks PASS in every run.
+authz1 `AUTHZ1_ONLY="real users"` 46/0, `AUTHZ1_ONLY="route matrix"` 28/0 (all 7 personas, 0 mismatches). vhk2 41/0,
+catchall1 34/0.
+
+**Open, not fixed here (pre-existing; reproduced with the pre-fix files):** `node menuvisibility_harness.mjs`
+crashes at line 172 (`i.gate.roles` undefined). It runs only in `verify_authz1`'s own `regression()` block, which is
+skipped when nested, so the cpsim01 run never reached it. A standalone `verify_authz1.py` will FAIL there.
