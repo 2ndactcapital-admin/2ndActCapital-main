@@ -62,6 +62,8 @@ CAPABILITY_KEYS = tuple(CAPABILITY_LABELS)
 CUSTODIAN_LABELS: dict[str, str] = {
     "altruist": "Altruist",
     "manual": "Manual — execution instruction",
+    # cpsim03 — the SIMULATED Altruist-compatible custodian (its rows come from scripts/cpsim03_capabilities.py)
+    "altruist_simulator": "Altruist-compatible custodian (SIMULATED)",
 }
 
 VALUE_LABELS: dict[str, str] = {

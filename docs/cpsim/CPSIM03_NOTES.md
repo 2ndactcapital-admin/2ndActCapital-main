@@ -103,3 +103,46 @@ clock tab shows what an advance filled.
 | D11 | `execution.cancel` → `custodian_execution.cancel_custodian_order` first when the instruction has a working order: 409 (filled) → refused with the reason; cancelled with executions not all booked → the instruction stays and a `custodian_cancel` event says so; else the existing cancel. | as named |
 
 (§3 reuse inventory, §4 differences, §5 the loader dry-run and §6 the diff review are filled in as each task lands.)
+
+## 5. The capability loader — `--dry-run` (Task 5, 2026-11-11, run once)
+
+`python3 apps/api/scripts/cpsim03_capabilities.py --dry-run` (the default; reads `public.custodian_capabilities`, writes
+nothing):
+
+```
+custodian code 'altruist_simulator' — evidence 'simulated counterparty — cpsim03' (assumed); mode DRY RUN
+  set   fractional_shares (no row) -> yes        set   equity_trading_api (no row) -> yes
+  set   model_api (no row) -> no                 set   trade_list_upload (no row) -> no
+  set   options_level (no row) -> 0              set   flex_options / index_options (no row) -> no
+  set   margin / short_selling / stock_borrow (no row) -> no
+  set   in_kind_transfers / custodian_tax_loss_harvesting / lot_level_cost_basis_feed / held_away_aggregation -> no
+  set   margin_initial_pct / margin_maintenance_pct (no row) -> unknown
+  set   ach / wire / journal / check / payment_status_feed / payment_sheet (no row) -> no   (payments: cpsim04)
+22 to set, 0 already as planned
+real altruist equity_trading_api = 'unknown' (never changed by this script)
+DRY RUN — nothing written
+```
+
+NOT applied (operator step, `--apply --actor-email <Super Admin>`). Until it is, D2 condition 7 refuses every account
+("altruist_simulator equity_trading_api is 'unknown' …") and the simulator route is never taken. The verify seeds its
+OWN fixture custodian code and substitutes it on a fixture adapter subclass (`simulator_capability_custodian`).
+
+## 6. Sandbox / production unchanged — diff review against main (Task 5)
+
+`git diff main -- services/altruist_oauth.py services/altruist_identity.py services/altruist_positions_sync.py
+routers/altruist_connection.py` is **empty**: the read client, identity, sync and the connect routes are unchanged by
+one byte. The orders client is a NEW module (`services/altruist_trading.py`) that refuses any environment but
+`simulator` before a request (`NO_CONTRACT`). Changed shared files, line group by line group:
+
+- `services/custody/trading.py` — `SubmissionResult.simulator` (default None; `as_dict` publishes it only when set:
+  every non-Altruist route's dict is byte-identical); `ManualTradeAdapter.submit(routed_via=None)` → the old
+  `self.custodian_key`; `AltruistTradeAdapter.submit`: when D2 is NOT met, the instructions, routing reason, adapter
+  and notes are exactly the old ones (the decision is added as `simulator: {route: false, condition, reason}`);
+  `status` adds the custodian order's status only when an instruction carries a custodian order id (none can for a
+  real account: the CHECK ties the id to `custodian_api`).
+- `services/execution.py` — `SENT_CHANNEL_LABELS` + `custodian_api` (refused by "Mark sent": `mark_sent` admits it
+  only with an order id, which only Send passes); `enter_fill(custodian_exec_id=None)` (NULL for a person's fill — the
+  old insert plus one NULL column); `cancel` calls the custodian hook only when `custodian_order_id` is set;
+  `detail` adds `custodian` (no network); `actions_for` adds two actions only when that panel allows them.
+- `services/custodian_capabilities.py` — one label (`altruist_simulator`); the matrix therefore lists that code
+  (every cell 'unknown', `recorded: false`) until the loader is applied.

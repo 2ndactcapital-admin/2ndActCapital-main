@@ -80,13 +80,18 @@ SOURCE_LABELS = {"manual": "Entered manually", "proposal": "From a proposal"}
 SENT_CHANNEL_LABELS = {
     "email": "Email", "phone": "Phone", "custodian_portal": "Custodian portal", "secure_message": "Secure message",
     "letter": "Letter of instruction", "in_person": "In person", "other": "Other",
+    # cpsim03 — recorded ONLY by "Send to custodian" (services.custodian_execution), with the custodian's order id
+    "custodian_api": "Custodian API (simulated)",
 }
+CUSTODIAN_CHANNEL = "custodian_api"
+MANUAL_SENT_CHANNELS = tuple(k for k in SENT_CHANNEL_LABELS if k != CUSTODIAN_CHANNEL)
 RECONCILE_METHOD_LABELS = {"custodian_data": "Matched to custodian data", "manual": "Confirmed manually"}
 ACTION_LABELS = {
     "create": "Created", "edit": "Edited", "submit": "Submitted for approval", "approve": "Approved",
     "reject": "Rejected", "mark_sent": "Marked sent", "fill": "Fill entered", "reconcile": "Reconciled",
     "close": "Closed", "cancel": "Cancelled", "expire": "Expired", "carry": "Carried to the next day",
     "ask": "Not filled — decision requested", "letter": "Letter of instruction generated",
+    "custodian_reject": "Refused by the custodian", "custodian_cancel": "Custodian order cancelled",   # cpsim03
 }
 DOCUMENT_LABELS = {"letter_of_instruction": "Letter of instruction",
                    "dvp_settlement_instruction": "DVP settlement instruction",
@@ -306,7 +311,8 @@ async def _archive(conn, instruction_id) -> str:
 _UPDATABLE = set(EDITABLE_FIELDS) | {
     "status", "maker_ids", "approval_task_id", "approved_by", "approved_at", "sent_by", "sent_at", "sent_channel",
     "sent_note", "reconciled_by", "reconciled_at", "reconcile_method", "reconcile_reference", "reconcile_note",
-    "closed_by", "closed_at", "cancelled_by", "cancelled_at", "cancel_reason", "expired_at", "expiry_reason"}
+    "closed_by", "closed_at", "cancelled_by", "cancelled_at", "cancel_reason", "expired_at", "expiry_reason",
+    "custodian_order_id"}
 
 
 async def _update(conn, instruction_id, fields: dict) -> dict:
@@ -739,21 +745,29 @@ async def _transition(pool, *, org_id, instruction_id, actor_id, allowed: tuple[
     return new, ref
 
 
-async def mark_sent(pool, *, org_id, instruction_id, actor_id, channel: str, note: str | None = None) -> dict:
+async def mark_sent(pool, *, org_id, instruction_id, actor_id, channel: str, note: str | None = None,
+                    custodian_order_id: str | None = None) -> dict:
+    """approved → sent. cpsim03: channel 'custodian_api' is recorded only with the custodian's order id — by
+    services.custodian_execution.send_to_custodian after the custodian accepted the order (a person's action); the
+    "Mark sent" route never passes an order id, so a person cannot claim a custodian API send by hand."""
     if channel not in SENT_CHANNEL_LABELS:
-        raise ExecutionError(f"channel must be one of {list(SENT_CHANNEL_LABELS)}")
+        raise ExecutionError(f"channel must be one of {list(MANUAL_SENT_CHANNELS)}")
+    if (channel == CUSTODIAN_CHANNEL) != bool(custodian_order_id):
+        raise ExecutionError("the custodian API channel is recorded only by Send to custodian, with the custodian's "
+                             f"order id — choose one of {list(MANUAL_SENT_CHANNELS)}")
     now = datetime.now(timezone.utc)
+    extra = {"custodian_order_id": custodian_order_id} if custodian_order_id else {}
     new, _ = await _transition(
         pool, org_id=org_id, instruction_id=instruction_id, actor_id=actor_id, allowed=("approved",),
         what="mark sent", action="mark_sent", to_status="sent",
-        fields=lambda a: {"sent_by": a["id"], "sent_at": now, "sent_channel": channel, "sent_note": note},
-        detail={"channel": channel, "note": note})
+        fields=lambda a: {"sent_by": a["id"], "sent_at": now, "sent_channel": channel, "sent_note": note, **extra},
+        detail={"channel": channel, "note": note, **extra})
     return new
 
 
 async def enter_fill(pool, *, org_id, instruction_id, actor_id, quantity: Decimal, price: Decimal,
                      filled_at: datetime, lots: list[tuple[str, Decimal]] | None = None, completes: bool = False,
-                     note: str | None = None) -> dict:
+                     note: str | None = None, custodian_exec_id: str | None = None) -> dict:
     """A fill a person reports. Only after the instruction is sent; never more
     than the instructed quantity; lots of THIS account and security, and the
     instructed lots when the instruction named any."""
@@ -788,19 +802,23 @@ async def enter_fill(pool, *, org_id, instruction_id, actor_id, quantity: Decima
                                      f"{row['quantity']} instructed")
             complete = completes or (row["quantity"] is not None and q_total == _dec(row["quantity"])) or (
                 row["notional"] is not None and n_total >= _dec(row["notional"]))
+            if custodian_exec_id and row["sent_channel"] != CUSTODIAN_CHANNEL:
+                raise ExecutionError("a custodian execution is booked only on an instruction sent to a custodian API")
             fill_id = await conn.fetchval(
                 f"INSERT INTO {T_FILL} (org_id, instruction_id, quantity, price, filled_at, lots, completes, note, "
-                "entered_by) VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::uuid) RETURNING id",
+                "entered_by, custodian_exec_id) VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::uuid, $10) "
+                "RETURNING id",
                 str(org_id), row["id"], quantity, price, filled_at,
                 _dumps([{"tax_lot_id": _uuid(lid, "tax lot"), "quantity": str(q)} for lid, q in lots]),
-                bool(completes), note, str(actor["id"]))
+                bool(completes), note, str(actor["id"]), custodian_exec_id)
             to_status = "filled" if complete else "partially_filled"
             new = row if to_status == row["status"] else await _update(conn, row["id"], {"status": to_status})
             ref = await _event(conn, org_id=org_id, instruction_id=row["id"], action="fill",
                                from_status=row["status"], to_status=to_status, actor_id=actor["id"],
                                detail={"fill_id": str(fill_id), "quantity": str(quantity), "price": str(price),
                                        "filled_at": filled_at.isoformat(), "lots": len(lots),
-                                       "total_quantity": str(q_total), "completes": bool(completes)})
+                                       "total_quantity": str(q_total), "completes": bool(completes),
+                                       **({"custodian_exec_id": custodian_exec_id} if custodian_exec_id else {})})
     await publish(pool, [ref])
     return new
 
@@ -848,13 +866,26 @@ async def close(pool, *, org_id, instruction_id, actor_id, note: str | None = No
 
 async def cancel(pool, *, org_id, instruction_id, actor_id, reason: str) -> tuple[dict, EventRef]:
     """Any open state → cancelled, with a reason. An open approval task is
-    withdrawn on the engine first."""
+    withdrawn on the engine first. cpsim03 (D11): an instruction with a working
+    custodian order cancels it at the custodian FIRST (services.custodian_execution
+    .before_cancel) — refused when the custodian says it is already filled; when
+    the cancelled order had executions the instruction stays partially filled
+    (a 'custodian_cancel' event says so) and the existing rules then apply."""
     if not (reason or "").strip():
         raise ExecutionError("a cancellation needs a reason")
     async with pool.acquire() as conn:
         actor = await _human(conn, actor_id, org_id)
         row = await load(conn, org_id, instruction_id)
     _need(row, OPEN_STATUSES, "cancel")
+    if row.get("custodian_order_id"):
+        async with pool.acquire() as conn:
+            await _refuse_in_block(conn, row["id"], "cancel")
+        from services import custodian_execution as CX
+
+        stay = await CX.before_cancel(pool, org_id=org_id, row=row, actor=actor)
+        if stay is not None:
+            await publish(pool, [stay[1]])
+            return stay
     if row["status"] == "pending_approval" and row["approval_task_id"]:
         try:
             await HT.cancel_task(pool, org_id=org_id, task_id=row["approval_task_id"], actor_id=actor["id"],
@@ -1029,6 +1060,7 @@ def instruction_out(r: dict, *, sec: dict | None = None, acct: dict | None = Non
         "approved_by": str(r["approved_by"]) if r["approved_by"] else None,
         "approved_at": r["approved_at"].isoformat() if r["approved_at"] else None,
         "sent_channel": r["sent_channel"], "sent_at": r["sent_at"].isoformat() if r["sent_at"] else None,
+        "custodian_order_id": r.get("custodian_order_id"),       # cpsim03 — the custodian's order (custodian API only)
         "reconcile_method": r["reconcile_method"], "reconcile_reference": r["reconcile_reference"],
         "reconcile_note": r["reconcile_note"], "cancel_reason": r["cancel_reason"],
         "expiry_reason": r["expiry_reason"], "created_at": r["created_at"].isoformat(),
@@ -1124,6 +1156,7 @@ async def detail(conn, org_id, instruction_id) -> dict:
     out["fills"] = [{"id": str(f["id"]), "quantity": str(f["quantity"]), "price": str(f["price"]),
                      "filled_at": f["filled_at"].isoformat(), "lots": _loads(f["lots"]) or [],
                      "completes": f["completes"], "note": f["note"], "entered_by": str(f["entered_by"]),
+                     "custodian_exec_id": f.get("custodian_exec_id"),
                      "entered_by_name": names.get(str(f["entered_by"]))} for f in fills]
     out["timeline"] = [{"id": str(e["id"]), "action": e["action"], "from_status": e["from_status"],
                         "to_status": e["to_status"], "actor_id": str(e["actor_id"]) if e["actor_id"] else None,
@@ -1144,6 +1177,9 @@ async def detail(conn, org_id, instruction_id) -> dict:
     from services import blocks as BK          # rep9 — the block this instruction is (or was) allocated in
 
     out["block"] = await BK.block_of_instruction(conn, org_id, row["id"])
+    from services import custodian_execution as CX   # cpsim03 — the custodian-API route (no network here)
+
+    out["custodian"] = await CX.panel(conn, org_id, row, acct)
     return out
 
 
@@ -1158,6 +1194,7 @@ def vocabularies() -> dict:
         "price_kinds": pairs(PRICE_KIND_LABELS),
         "if_not_filled": pairs(IF_NOT_FILLED_LABELS), "sources": pairs(SOURCE_LABELS),
         "sent_channels": pairs(SENT_CHANNEL_LABELS), "reconcile_methods": pairs(RECONCILE_METHOD_LABELS),
+        "manual_sent_channels": list(MANUAL_SENT_CHANNELS),     # cpsim03 — what "Mark sent" offers
         "actions": pairs(ACTION_LABELS), "documents": pairs(DOCUMENT_LABELS), "editable": [],
     }
 
@@ -1197,6 +1234,12 @@ def actions_for(row: dict, *, can_write: bool, can_approve: bool, user_id, task_
         acts.append("settlement_instruction")
     if can_write and s == "filled" and row.get("held_away"):
         acts.append("reconcile_from_held_away")
+    cx = row.get("custodian") or {}             # cpsim03 — the two person actions of the custodian-API route
+    if can_write and s == "approved" and cx.get("send_available") is True \
+            and not (row.get("block") or {}).get("open"):
+        acts.append("send_to_custodian")
+    if can_write and s in ("sent", "partially_filled") and cx.get("import_available") is True:
+        acts.append("import_fills")
     return acts
 
 
