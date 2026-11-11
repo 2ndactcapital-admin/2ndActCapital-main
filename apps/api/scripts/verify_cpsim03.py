@@ -33,7 +33,8 @@ Prices: the fixture equity closes 52.00 on D0 and 50.00 on D1 (a limit buy at 51
 FIXTURES (ids 99000000-0000-0000-0000-0000c953…; sign-in tag cpsim03verify): TEST orgs A and B inside the reserved
 prefix (is_test asserted); the NON-test org R (outside the prefix) exists ONLY inside one ROLLED-BACK transaction (the
 demo-household decision). Users with real user_roles grants, each decided by the app (asserted): U_SA Super Admin,
-U_MK maker (manage + view execution, custody connections), U_CK checker (approve + view execution), U_SD sender
+U_MK maker (manage + view execution, custody connections), U_CK checker (approve + view execution), U_MA maker who also
+holds approve (fix 2: the services.sod refusal), U_SD sender
 (manage + view execution), U_RD reader (view_execution only), U_MKB / U_CKB maker / checker of org B. Counterparties carry the reserved
 slug prefix ``cpsim3verify-``. Fixture securities 'CPSIM03 VERIFY …' with identifiers CPSIM03… / CP3V… and their
 platform prices (provider_key cpsim03verify) — asserted to match no real row; named in the cleanup plan by fixture id.
@@ -261,7 +262,8 @@ ORG_A, ORG_B = _id(1), _id(2)
 ORG_R = UUID("c5130000-0000-4000-8000-0000c9530003")    # NON-test, rolled back only (outside the reserved prefix)
 FIXTURE_ORGS = [ORG_A, ORG_B]
 U_SA, U_MK, U_CK, U_SD, U_RD, U_MKB, U_CKB = _id(10), _id(11), _id(12), _id(13), _id(14), _id(15), _id(16)
-ALL_USERS = [U_SA, U_MK, U_CK, U_SD, U_RD, U_MKB, U_CKB]
+U_MA = _id(17)   # fix 2: a maker who ALSO holds approve_execution — the only caller whose approve reaches services.sod
+ALL_USERS = [U_SA, U_MK, U_CK, U_SD, U_RD, U_MKB, U_CKB, U_MA]
 E_A, E_B = _id(40), _id(41)
 E_R_DEMO, E_R_PLAIN = _id(42), _id(43)
 H_A, H_B = _id(30), _id(31)
@@ -277,11 +279,13 @@ EXEC_PERMS = ("view_execution", "manage_execution", "approve_execution")
 CUSTODY_PERMS = ("manage_custody_connections", "view_custody_connections")
 ROLE_PERMS = {"cpsim03_maker": ("view_execution", "manage_execution") + CUSTODY_PERMS,
               "cpsim03_checker": ("view_execution", "approve_execution"),
-              "cpsim03_reader": ("view_execution",)}
+              "cpsim03_reader": ("view_execution",),
+              "cpsim03_maker_checker": ("view_execution", "manage_execution", "approve_execution") + CUSTODY_PERMS}
 USERS = {U_SA: (ORG_A, "super_admin", "sa", "super_admin"), U_MK: (ORG_A, "member", "mk", "cpsim03_maker"),
          U_CK: (ORG_A, "member", "ck", "cpsim03_checker"), U_SD: (ORG_A, "member", "sd", "cpsim03_maker"),
          U_RD: (ORG_A, "member", "rd", "cpsim03_reader"), U_MKB: (ORG_B, "member", "mkb", "cpsim03_maker"),
-         U_CKB: (ORG_B, "member", "ckb", "cpsim03_checker")}
+         U_CKB: (ORG_B, "member", "ckb", "cpsim03_checker"),
+         U_MA: (ORG_A, "member", "ma", "cpsim03_maker_checker")}
 ROLE_EXPECT = {U_SA: {"org": ORG_A, "roles": ["super_admin"]},
                U_MK: {"org": ORG_A, "roles": ["cpsim03_maker"], "has": ["manage_execution", "view_execution"],
                       "lacks": ["approve_execution"]},
@@ -292,7 +296,9 @@ ROLE_EXPECT = {U_SA: {"org": ORG_A, "roles": ["super_admin"]},
                U_RD: {"org": ORG_A, "roles": ["cpsim03_reader"], "has": ["view_execution"],
                       "lacks": ["manage_execution", "approve_execution"]},
                U_MKB: {"org": ORG_B, "roles": ["cpsim03_maker"], "has": ["manage_execution"]},
-               U_CKB: {"org": ORG_B, "roles": ["cpsim03_checker"], "has": ["approve_execution"]}}
+               U_CKB: {"org": ORG_B, "roles": ["cpsim03_checker"], "has": ["approve_execution"]},
+               U_MA: {"org": ORG_A, "roles": ["cpsim03_maker_checker"],
+                      "has": ["manage_execution", "approve_execution", "view_execution"]}}
 # the book's external ids (text, compared as text)
 A1, A4, A_BOTH = "cp3v-acct-1", "cp3v-acct-4", "cp3v-acct-both"
 HH1, HH4 = "cp3v-hh-1", "cp3v-hh-4"
@@ -1255,14 +1261,40 @@ async def y_governance(conn):
     c1s, o1s = await send(U_SD, iid)
     cm, om = await api(U_MK, "POST", f"{_X}/instructions/{iid}/approve", {})
     st_mk = (await instruction(conn, iid)).get("status")
+    # fix 2: U_MK holds no approve_execution, so its 403 is the PERMISSION gate (it never reaches services.sod — the
+    # old label said "services.sod" and the sod_decisions check below it found 0 rows). Labelled for what it is.
     check(c0 == HTTP_CONFLICT and c1 == HTTP_OK and c1s == HTTP_CONFLICT and cm == HTTP_FORBIDDEN and
-          st_mk == "pending_approval", "Send is refused on a draft and while awaiting approval (409); the maker "
-          "cannot approve (403, services.sod) — the instruction stays awaiting approval",
+          "approve_execution" in dumps(om) and st_mk == "pending_approval", "Send is refused on a draft and while "
+          "awaiting approval (409); a maker WITHOUT approve_execution cannot approve (403 naming approve_execution — "
+          "the permission gate) — the instruction stays awaiting approval",
           f"{c0} {c1} {c1s} {cm} {st_mk} {dumps(o0)[:120]} {dumps(om)[:120]}")
-    sod_refused = int(await platform(conn, "SELECT count(*) FROM sod_decisions WHERE org_id = $1::uuid AND item_id = "
-                                           "$2::text AND outcome = 'refused'", ORG_A, str(iid), fetch="fetchval"))
-    check(sod_refused >= 1, "the maker's refused approval is recorded by services.sod (sod_decisions)",
+    # the maker-checker rule itself: a maker who DOES hold approve_execution (U_MA) makes + submits its own instruction
+    # and tries to approve it → services.sod refuses (403, the maker-checker text), records the refusal, and the
+    # instruction stays pending. The checker then rejects it, so it ends terminal and sends nothing.
+    cma, oma = await route(U_MA, trade_list(ACC_SIM))
+    mids = (oma.get("routing") or {}).get("instruction_ids") or []
+    mid = mids[0] if cma == HTTP_CREATED and len(mids) == 1 else None
+    sod_refused, csm, cself, oself, st_self = 0, None, None, {}, None
+    if mid:
+        csm, _ = await api(U_MA, "POST", f"{_X}/instructions/{mid}/submit", {})
+        cself, oself = await api(U_MA, "POST", f"{_X}/instructions/{mid}/approve", {})
+        st_self = (await instruction(conn, mid)).get("status")
+        sod_refused = int(await platform(conn, "SELECT count(*) FROM sod_decisions WHERE org_id = $1::uuid AND item_id "
+                                               "= $2::text AND outcome = 'refused'", ORG_A, str(mid),
+                                         fetch="fetchval"))
+    check(mid is not None and csm == HTTP_OK and cself == HTTP_FORBIDDEN and "maker-checker" in dumps(oself) and
+          st_self == "pending_approval", "a maker WHO HOLDS approve_execution cannot approve its own instruction (403, "
+          "services.sod's maker-checker refusal) — it stays awaiting approval",
+          f"{cma} {mids} {csm} {cself} {st_self} {dumps(oself)[:200]}")
+    check(sod_refused >= 1, "that refused approval is recorded by services.sod (sod_decisions outcome 'refused')",
           f"{sod_refused}")
+    if mid:
+        crj, orj = await api(U_CK, "POST", f"{_X}/instructions/{mid}/reject",
+                             {"note": "cpsim03 verify: closing the maker-checker probe"})
+        st_rj = (await instruction(conn, mid)).get("status")
+        check(crj == HTTP_OK and st_rj not in ("pending_approval", "approved") and not await sim_order(conn, mid),
+              "the checker rejects the maker-checker's instruction → terminal, no order at the simulator",
+              f"{crj} {st_rj} {dumps(orj)[:200]}")
     ca, _ = await api(U_CK, "POST", f"{_X}/instructions/{iid}/approve", {})
     row = await instruction(conn, iid)
     orders1 = len(await sim_order(conn, iid))
