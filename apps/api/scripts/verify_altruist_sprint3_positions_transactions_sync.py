@@ -347,7 +347,9 @@ async def build_fixtures(conn) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 def make_mock_transport() -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
-        account_id = request.url.params.get("account_id")
+        # ALTREAD1 — the documented paths carry the account id in the PATH (/v2/accounts/{id}/positions/ …)
+        parts = request.url.path.rstrip("/").split("/")
+        account_id = parts[parts.index("accounts") + 1] if "accounts" in parts else request.url.params.get("account_id")
         assert account_id != ALTRUIST_ACCOUNT_UNRESOLVED_ID, (
             "the sync must NEVER call the Altruist API for an unresolved "
             "account — it enumerated one it should have skipped"
@@ -355,7 +357,9 @@ def make_mock_transport() -> httpx.MockTransport:
         assert account_id == ALTRUIST_ACCOUNT_RESOLVED_ID, (
             f"unexpected account_id in Altruist call: {account_id!r}"
         )
-        if request.url.path.endswith("/positions"):
+        if request.url.path.rstrip("/").endswith("/cost-basis"):
+            return httpx.Response(200, json={"cost_basis": []})
+        if request.url.path.rstrip("/").endswith("/positions"):
             return httpx.Response(200, json={
                 "positions": [
                     {
@@ -370,7 +374,7 @@ def make_mock_transport() -> httpx.MockTransport:
                     },
                 ],
             })
-        if request.url.path.endswith("/transactions"):
+        if request.url.path.rstrip("/").endswith("/transactions"):
             return httpx.Response(200, json={
                 "transactions": [
                     {
