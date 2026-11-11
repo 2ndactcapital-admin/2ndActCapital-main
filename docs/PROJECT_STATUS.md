@@ -382,6 +382,20 @@ inventory, 13 differences from the prompt). Admin / operator guide: `docs/cpsim/
 - **Operator.** CPSIM_ADMIN.md §11: key → Doppler (`ALTRUIST_SIMULATOR_CLIENT_ID` / `_CLIENT_SECRET`,
   `ALTRUIST_SIMULATOR_WEBHOOK_SECRET`, `CPSIM_BASE_URL`) → redeploy → allow an org → upload a book → connect →
   conformance. The real OAuth browser leg (§7.12) is still open.
+- **UPDATE 2026-11-11 — cpsim02 fix 1** (run was 106 PASS / 16 FAIL; CPSIM02_NOTES §7–8). No product code changed.
+  VERIFY: (A) the verify called the environment-blind `fetch_resource` without its `transport` → passes `APP_T`
+  (no host allow-listed); (B) the route check read `method` where AUTHZ1_ROUTES.json has `methods` — docs were current;
+  (C) teardown seeds the fixture securities' platform identifiers + prices by fixture id (marketdata1 pattern; refusal
+  unchanged); behaviour / clock set their own simulator credentials; isolation's sandbox-sync baseline moved after the
+  simulator sync (not a leak — `_touch_last_seen` is source-filtered); the webhooks one-off declares its clock dependency;
+  (E) altruist S2/S3/S5/S6 fixtures via the operator DSN (DATABASE_URL is app_service since the RLS cutover — pre-existing)
+  and teardowns that remove the PORTENTRY1 rollup rows, tag-keyed import exceptions and S5's runtime connection / state.
+  DOCS: (D) VISIBILITY1_ROUTES regenerated (+12 admin-counterparties rows, `scrub`). Proven: leftovers 288 → 0
+  (`--cleanup-only`); `--self-checks-only` 30/0; one-offs read_api 84/0, behaviour 73/0, book 81/0, clock 71/0, client
+  76/0, e2e 92/0, isolation 99/0, webhooks 102/0, conformance 74/0, admin 99/0, safety 73/0, harness 72/0 — each with
+  the no-network check PASS, zero fixture rows after and real rows unchanged; authz1_routes / visibility1_routes
+  `--check` CURRENT; S2 19/20, S3 21/22, S5 28/30, S6 27/28 one-off (0 FAIL; BLOCKED T3 only). The full run (+ npm
+  build + nested cpsim01 / authz1) is the operator's — not run here (WSL memory).
 
 ## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. CPSIM01 — the COUNTERPARTY SIMULATOR begins: a semi-independent module playing custodians and banks; the Altruist contract written down; schema `cpsim` + NOLOGIN role `cpsim_app`; the sub-app MOUNTED at /cpsim with its own key auth; the COUNTERPARTY REGISTRY + Admin → Counterparties (Super Admin); fake credentials and FAKE bank / FIX values the database refuses to make real; behaviour + clock stored; the SAFETY RULES (counterparty_sim.allowed default off, cpsim.may_connect, the boundary scan); one working mirror endpoint; schema APPLIED; verify WRITTEN, not yet run (2026-11-10)
 
