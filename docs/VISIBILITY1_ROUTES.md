@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 1067 · guarded 255 · sql-scope 54 · body-check 15 · legacy-rule 3
+Routes: 1073 · guarded 258 · sql-scope 54 · body-check 16 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -68,6 +68,9 @@ Routes: 1067 · guarded 255 · sql-scope 54 · body-check 15 · legacy-rule 3
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/key/rotate` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/links` | admin_counterparties | scrub |
 | GET | `/api/v1/admin/counterparties/{counterparty_id}/orders` | admin_counterparties | scrub |
+| GET | `/api/v1/admin/counterparties/{counterparty_id}/realtime` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/realtime/users` | admin_counterparties | scrub |
+| POST | `/api/v1/admin/counterparties/{counterparty_id}/realtime/users/{user_id}/revoke` | admin_counterparties | scrub |
 | GET | `/api/v1/admin/counterparties/{counterparty_id}/received` | admin_counterparties | scrub |
 | GET | `/api/v1/admin/counterparties/{counterparty_id}/requests` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/test-message` | admin_counterparties | scrub |
@@ -116,6 +119,9 @@ Routes: 1067 · guarded 255 · sql-scope 54 · body-check 15 · legacy-rule 3
 | PATCH | `/api/v1/admin/households/{household_id}` | households | guard:household_id, scrub |
 | POST | `/api/v1/admin/households/{household_id}/accounts` | households | guard:household_id, body-check, scrub |
 | PATCH | `/api/v1/admin/households/{household_id}/accounts/{account_id}` | households | guard:household_id, guard:account_id, scrub |
+| GET | `/api/v1/admin/households/{household_id}/custodian-account` | households | guard:household_id, body-check, scrub |
+| POST | `/api/v1/admin/households/{household_id}/custodian-account/check` | households | guard:household_id, scrub |
+| POST | `/api/v1/admin/households/{household_id}/custodian-account/open` | households | guard:household_id, scrub |
 | POST | `/api/v1/admin/households/{household_id}/members` | households | guard:household_id, body-check, scrub |
 | DELETE | `/api/v1/admin/households/{household_id}/members/{entity_id}` | households | guard:entity_id, guard:household_id, scrub |
 | GET | `/api/v1/admin/households/{household_id}/networth` | households | guard:household_id, scrub |

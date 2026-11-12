@@ -62,7 +62,7 @@ export function IssuedSecrets({ issued }) {
       <p className="font-semibold text-navy">Shown once — copy it now. It is stored only as a hash and can never be
         shown again.</p>
       {entries.map(([k, v]) => (
-        <p key={k} className="mt-2"><span className="text-[#64748B]">{k === "api_key" ? "Key" : "FIX password"}: </span>
+        <p key={k} className="mt-2"><span className="text-[#64748B]">{k === "api_key" ? "Key" : k === "realtime_password" ? "Realtime user password" : "FIX password"}: </span>
           <code className="break-all">{v}</code></p>
       ))}
     </div>
@@ -622,6 +622,99 @@ export function OrdersTab({ id, initialOrders }) {
   );
 }
 
+// ── cpsim06 D6: Realtime — simulator users (password shown once), contacts (tax ids last four only), drafts and
+// opened accounts, the validation log (every problem per request). Write controls only inside canWrite(env).
+export function RealtimeTab({ id, initialRealtime }) {
+  const [env, setEnv, loadError] = useLoaded(initialRealtime, initialRealtime ? null : `${id}/realtime`);
+  const [username, setUsername] = useState("");
+  const [issued, setIssued] = useState(null);
+  const [error, setError] = useState(null);
+  if (loadError) return <p className="text-sm text-[#9B2335]" data-testid="tab-realtime">{loadError}</p>;
+  if (!env) return <p className="text-sm text-[#64748B]" data-testid="tab-realtime">Loading…</p>;
+  const w = canWrite(env);
+  const users = Array.isArray(env.users) ? env.users : [];
+  const contacts = Array.isArray(env.contacts) ? env.contacts : [];
+  const drafts = Array.isArray(env.drafts) ? env.drafts : [];
+  const logRows = Array.isArray(env.validation_log) ? env.validation_log : [];
+  const notes = Array.isArray(env.notes) ? env.notes : [];
+  const types = Array.isArray(env.realtime?.account_types) ? env.realtime.account_types : [];
+  const last4 = (v) => (typeof v === "string" && /^[0-9]{4}$/.test(v) ? `•••• ${v}` : "—");
+  async function act(path, body) {
+    setError(null);
+    try {
+      const out = await call(`${id}/${path}`, "POST", body);
+      setIssued(out.issued && out.issued.realtime_password ? out.issued : null);
+      setEnv(await call(`${id}/realtime`));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+  return (
+    <div data-testid="tab-realtime" className="space-y-4">
+      {notes.length ? <ul className="text-xs text-[#64748B]" data-testid="realtime-notes">{notes.map((n) => <li key={n}>{n}</li>)}</ul> : null}
+      {error ? <p className="text-sm text-[#9B2335]">{error}</p> : null}
+      {issued ? <IssuedSecrets issued={issued} /> : null}
+      <div>
+        <h3 className="text-sm font-semibold text-navy">Simulator users (password grant)</h3>
+        <table className="w-full text-left text-xs" data-testid="realtime-users">
+          <thead className="text-[#64748B]"><tr><th>Username</th><th>Created</th><th>Status</th><th /></tr></thead>
+          <tbody>{users.map((u) => (
+            <tr key={u.id} className="border-t border-[#ece8dd]" data-user={u.id}><td>{u.username}</td><td>{shortDate(u.created_at)}</td>
+              <td>{u.revoked_at ? "Revoked" : "Active"}</td>
+              <td>{w && !u.revoked_at ? <button type="button" className={btn} onClick={() => act(`realtime/users/${u.id}/revoke`)}>Revoke</button> : null}</td>
+            </tr>))}</tbody>
+        </table>
+        {w ? (
+          <form className="mt-2 flex items-end gap-2" data-testid="realtime-user-create"
+            onSubmit={(e) => { e.preventDefault(); act("realtime/users", { username }); }}>
+            <label className="text-xs text-[#334155]">New username<input className={input} value={username} onChange={(e) => setUsername(e.target.value)} /></label>
+            <button type="submit" className={btn}>Create user (password shown once)</button>
+          </form>
+        ) : null}
+      </div>
+      <div>
+        <h3 className="text-sm font-semibold text-navy">Drafts and opened accounts</h3>
+        {drafts.length ? (
+          <table className="w-full text-left text-xs" data-testid="realtime-drafts">
+            <thead className="text-[#64748B]"><tr><th>Draft</th><th>Account type</th><th>Owners</th><th>Status</th><th>Account</th><th>Opened</th></tr></thead>
+            <tbody>{drafts.map((d) => (
+              <tr key={d.id} className="border-t border-[#ece8dd]" data-draft={d.id}><td>{d.id}</td>
+                <td>{labelOf(types, d.account_type)}</td>
+                <td>{(d.owners || []).map((o) => `${o.role}: ${o.contact_id || "—"}`).join(", ")}</td>
+                <td>{d.status === "opened" ? "Opened" : "Draft"}</td>
+                <td>{d.account_id ? <>{d.account_id} · {d.account_number ? `****${String(d.account_number).slice(-4)}` : ""}</> : "—"}</td>
+                <td>{d.date_open || "—"}</td></tr>))}</tbody>
+          </table>
+        ) : <p className="text-sm text-[#64748B]" data-testid="realtime-drafts-none">No drafts yet.</p>}
+      </div>
+      <div>
+        <h3 className="text-sm font-semibold text-navy">Contacts</h3>
+        {contacts.length ? (
+          <table className="w-full text-left text-xs" data-testid="realtime-contacts">
+            <thead className="text-[#64748B]"><tr><th>Contact</th><th>Name</th><th>Email</th><th>Tax ID</th><th>Age</th><th>Problems</th></tr></thead>
+            <tbody>{contacts.map((c) => (
+              <tr key={c.id} className="border-t border-[#ece8dd]" data-contact={c.id}><td>{c.id}</td><td>{c.legal_name || "—"}</td>
+                <td>{c.email || "—"}</td><td data-testid="contact-taxid">{last4(c.tax_id_last4)}</td><td>{c.age_years ?? "—"}</td>
+                <td>{(c.problems || []).length}</td></tr>))}</tbody>
+          </table>
+        ) : <p className="text-sm text-[#64748B]">No contacts yet.</p>}
+      </div>
+      <div>
+        <h3 className="text-sm font-semibold text-navy">Validation log</h3>
+        {logRows.length ? (
+          <table className="w-full text-left text-xs" data-testid="realtime-validation-log">
+            <thead className="text-[#64748B]"><tr><th>When</th><th>Draft</th><th>Action</th><th>Outcome</th><th>Problems</th></tr></thead>
+            <tbody>{logRows.map((r) => (
+              <tr key={r.id} className="border-t border-[#ece8dd] align-top" data-log={r.id}><td>{shortDate(r.created_at)}</td><td>{r.draft_id}</td>
+                <td>{r.action}</td><td>{r.outcome}</td>
+                <td>{(r.problems || []).map((p, i) => <div key={i} data-log-problem={p.field}>{p.field}: {p.message}</div>)}</td></tr>))}</tbody>
+          </table>
+        ) : <p className="text-sm text-[#64748B]">No validations yet.</p>}
+      </div>
+    </div>
+  );
+}
+
 // ── cpsim04: Transfers (a custodian) — what it received, events, consent, returns; its cash ledger ─────────────────
 function TransferTable({ rows, statuses, env, onConsent, showSender = false }) {
   return (
@@ -758,7 +851,8 @@ export function ConformanceTab({ id, initialConformance }) {
 }
 
 export function CounterpartyDetail({ envelope, requests, initialTab = "connection", book = null, connections = null,
-  conformance = null, orders = null, initialAdvance = null, transfers = null, received = null, fixMessages = null }) {
+  conformance = null, orders = null, initialAdvance = null, transfers = null, received = null, fixMessages = null,
+  realtime = null }) {
   const [env, setEnv] = useState(envelope);
   const [advance, setAdvance] = useState(initialAdvance);
   const [log, setLog] = useState(requests);
@@ -793,6 +887,7 @@ export function CounterpartyDetail({ envelope, requests, initialTab = "connectio
     orders: <OrdersTab id={id} initialOrders={orders} />,
     transfers: <TransfersTab id={id} initialTransfers={transfers} />,
     received: <ReceivedTab id={id} initialReceived={received} />,
+    realtime: <RealtimeTab id={id} initialRealtime={realtime} />,
   };
   return (
     <section className={card} data-testid="cp-detail">

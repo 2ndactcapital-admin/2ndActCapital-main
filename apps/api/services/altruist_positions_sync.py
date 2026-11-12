@@ -612,6 +612,7 @@ async def sync_resolved_accounts(
     environment: str,
     as_of_date: date | None = None,
     transport: Any = None,
+    only_account_ids: list | None = None,
 ) -> SyncResult:
     """The Sprint 3 entrypoint: sync positions + transactions for every
     RESOLVED Altruist account in this org.
@@ -631,6 +632,10 @@ async def sync_resolved_accounts(
     xwalk = crosswalk_source(environment)
     ledger = ledger_source(environment)
     accounts = await list_resolved_altruist_accounts(conn, org_id=org_id, source=xwalk)
+    if only_account_ids is not None:
+        # cpsim06 D4 — "an immediate sync of that account": the same path, narrowed to the named Hollisworks accounts
+        wanted = {str(a) for a in only_account_ids}
+        accounts = [a for a in accounts if a["hollisworks_account_id"] in wanted]
 
     result = SyncResult()
     for row in accounts:

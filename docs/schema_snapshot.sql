@@ -5043,6 +5043,8 @@
 --   upload_id                                uuid
 --   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
 --   valid_to                                 timestamp with time zone
+--   date_open                                date
+--   account_number                           text
 --   PRIMARY KEY book_accounts_pkey: (id)
 
 -- ===== cpsim.book_households =====
@@ -5385,6 +5387,103 @@
 --   bic                                      text NOT NULL
 --   note                                     text NOT NULL
 --   PRIMARY KEY real_bic_examples_pkey: (bic)
+
+-- ===== cpsim.realtime_beneficiaries =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   draft_row_id                             uuid NOT NULL
+--   position                                 integer NOT NULL
+--   tier                                     text
+--   name                                     text
+--   kind                                     text
+--   contact_id                               text
+--   relationship                             text
+--   percentage                               numeric
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY realtime_beneficiaries_pkey: (id)
+
+-- ===== cpsim.realtime_contacts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   contact_id                               text NOT NULL
+--   client_reference                         text
+--   kind                                     text NOT NULL
+--   legal_name                               text
+--   email                                    text
+--   phone                                    text
+--   residential_address                      jsonb
+--   mailing_address                          jsonb
+--   citizenship                              text
+--   visa_type                                text
+--   visa_expiration                          date
+--   employment                               jsonb
+--   age_years                                integer
+--   age_as_of                                date
+--   tax_id_kind                              text
+--   tax_id_last4                             text
+--   tax_id_salt                              bytea
+--   tax_id_digest                            bytea
+--   problems                                 jsonb NOT NULL DEFAULT '[]'::jsonb
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY realtime_contacts_pkey: (id)
+
+-- ===== cpsim.realtime_drafts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   draft_id                                 text NOT NULL
+--   client_reference                         text
+--   household_external_id                    text
+--   account_type                             text
+--   account_group                            text
+--   owners                                   jsonb NOT NULL DEFAULT '[]'::jsonb
+--   trusted_contact                          jsonb
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   account_external_id                      text
+--   account_number                           text
+--   date_open                                date
+--   opened_at                                timestamp with time zone
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY realtime_drafts_pkey: (id)
+
+-- ===== cpsim.realtime_tokens =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   session_id                               uuid NOT NULL
+--   kind                                     text NOT NULL
+--   token_hash                               text NOT NULL
+--   last4                                    text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL
+--   expires_at                               timestamp with time zone NOT NULL
+--   session_expires_at                       timestamp with time zone NOT NULL
+--   revoked_at                               timestamp with time zone
+--   PRIMARY KEY realtime_tokens_pkey: (id)
+
+-- ===== cpsim.realtime_users =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   username                                 text NOT NULL
+--   password_salt                            bytea NOT NULL
+--   password_hash                            bytea NOT NULL
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   revoked_at                               timestamp with time zone
+--   PRIMARY KEY realtime_users_pkey: (id)
+
+-- ===== cpsim.realtime_validation_log =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   draft_id                                 text NOT NULL
+--   action                                   text NOT NULL
+--   outcome                                  text NOT NULL
+--   problems                                 jsonb NOT NULL DEFAULT '[]'::jsonb
+--   problem_count                            integer NOT NULL DEFAULT 0
+--   clock_date                               date NOT NULL
+--   account_external_id                      text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY realtime_validation_log_pkey: (id)
 
 -- ===== cpsim.request_log =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()

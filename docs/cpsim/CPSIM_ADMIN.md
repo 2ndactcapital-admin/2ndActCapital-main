@@ -359,3 +359,48 @@ sends, a person imports. The real `fix` router is still not connected.
 Schema: `docs/cpsim05_part1.sql` (applied 2026-11-11). Conformance: the `fix` group F01–F20 (75 PASS, 0 FAIL
 in-process). Verify: `apps/api/scripts/verify_cpsim05.py` (written, not yet run).
 
+
+## 15. Realtime tab — account opening at the simulated custodian (cpsim06)
+
+Admin → Counterparties → a simulated custodian → **Realtime tab** (Super Admin). Everything here is SIMULATED. It has the
+SHAPE of Altruist's Realtime API, but every path and field is ASSUMED: the real paths are not published, and Hollisworks
+has no Realtime access. Details: `docs/cpsim/CPSIM06_NOTES.md`.
+
+**Simulator users.** The password grant signs in on behalf of a user. "Create user (password shown once)" makes a
+**simulator user** and shows its `cpsim_rtpw_…` password ONCE. Only a salted hash is stored, and the audit row carries
+the username only. Put the username and the password in Doppler as `ALTRUIST_SIMULATOR_REALTIME_USERNAME` /
+`ALTRUIST_SIMULATOR_REALTIME_PASSWORD`, next to the existing `ALTRUIST_SIMULATOR_CLIENT_ID` / `_CLIENT_SECRET` (the
+counterparty's key). "Revoke" closes the user and every token it holds. Tokens: access 5 minutes; refresh on a
+FIXED 10-hour window from the first sign-in (a refresh never extends it; the original refresh token stays valid).
+
+**What the tab shows.** The simulator users. The drafts and opened accounts (id, type, owners by contact, status,
+the account id and its number's last four, the opening date). The contacts (name, email, tax id as **last four
+only**, age at the counterparty clock, problem count; no date of birth is stored). The **validation log**: every
+Check (validate) and Open (submit), with every problem it found, field by field.
+
+**How opening works (Joe's rule).** In good order the account is opened at once: status ACTIVE, opened on the
+counterparty's clock date, a `CPSIM…` number, and it appears in the accounts feed (`/v2/accounts`) immediately. There is
+no invitation, no client portal and no approval step. Otherwise every problem is listed and nothing is opened. On the
+Hollisworks side, "Open account at custodian" on a CRM household (an internal role with `manage_members`, the
+permission "Add account" takes) records the opened account through the existing add_account (masked number + keyed
+hash). The crosswalk is written in the same transaction, and the account is synced at once. The action exists only when
+the org has `counterparty_sim.allowed` and a configured counterparty, and, for a real org, only on a demo household.
+For sandbox / production it is absent with "account opening needs Altruist Realtime API access (not granted)".
+
+**The validation rules** (the counterparty applies them all and lists every failure; sources in CPSIM06_NOTES §4):
+
+| Rule | What is refused |
+|---|---|
+| Account type | a NO-list type ("not supported by the custodian's API for account opening — open it through the custodian's own process"), or an unknown one |
+| Owners per type | Individual / IRAs / Solo 401(k): one owner; JTWROS: two; Trust: the trust + ≥ 1 trustee; UTMA / UGMA / Minor Roth IRA: a minor (under 18) + an adult custodian |
+| Residential address | not US, a PO Box, a state that is not a US state / DC, a ZIP that is not 5 or 9 digits |
+| Mailing address | not US (a PO Box is fine) |
+| Tax id | not 9 digits; an SSN with area 000 / 666 / 900–999, group 00 or serial 0000; an ITIN outside 9XX-(50–65, 70–88, 90–92, 94–99); an EIN with an unassigned prefix |
+| Residency | not a US citizen, permanent resident, or a visa in {E1, E2, E3, F1, G4, H1B, L1, O1, TN1} valid ≥ 90 days from the clock date |
+| Email | already used by another client of the custodian |
+| Dates of birth | in the future; a minor who is 18 or over; an adult role held by someone under 18 |
+| Beneficiaries | a tier whose percentages do not total exactly 100 (Decimal); a beneficiary with no name or kind |
+| Trusted contact | no name, no email or phone, or an owner of the account |
+
+Not simulated: flagged-account document requests (ID / SSN card), ACAT, bank link.
+

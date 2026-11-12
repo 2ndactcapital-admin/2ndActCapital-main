@@ -43,6 +43,20 @@ cpsim04 — the transfers API (contract §9, every field ASSUMED), same access-t
   Orders / transfers (ASSUMED — not part of Altruist's published API) keep their cpsim03 / cpsim04 shapes. Behaviour (D9): reject → 503 with the reason;
   delay → sleep min(delay_seconds, MAX_DELAY_S) before answering; partial / ACH do not apply to reads.
 
+cpsim06 — the Realtime-API-shaped ACCOUNT OPENING (docs/cpsim/CPSIM06_NOTES.md D1–D3; every path / field ASSUMED):
+    POST   …/realtime/realms/altruist/protocol/openid-connect/token   password grant / refresh_token (form body):
+                                          access 5 min; refresh on a FIXED 10 h window, the original stays valid
+    POST   …/realtime/api/households                 create, or reuse by exact name (the book's own household)
+    POST   …/realtime/api/contacts                   create / restate (client_reference); tax id → last four + salted
+                                                     hash; no date of birth stored
+    POST   …/realtime/api/account-drafts             create / restate while a draft (client_reference)
+    GET    …/realtime/api/account-drafts/{id}
+    POST   …/realtime/api/account-drafts/{id}/validate   every problem; opens nothing
+    POST   …/realtime/api/account-drafts/{id}/submit     in good order → OPENED at once (ACTIVE, date_open = the clock,
+                                                     CPSIM number, in the book + the /v2/accounts feed); repeat → same
+  Realtime access tokens (``Bearer cpsim_rtat_…``) only; RateLimit-* headers on every answer; 429 + Retry-After only by
+  the injected test behaviour (cpsim.realtime.force_429).
+
     POST /cpsim/c/{slug}/mirror        Authorization: Bearer cpsim_live_…  — a properly formatted envelope in, the
                                        mirrored message out (same message_id, mirrored: true, received_at from the
                                        counterparty's clock); malformed → 422 with the schema errors; unknown slug →
@@ -520,6 +534,127 @@ def create_app() -> FastAPI:
         log["shape_valid"] = valid
         log["error_count"] = 0 if valid else 1
         return Response("\n".join(replies), status_code=200, media_type="text/plain; charset=utf-8")
+
+    # ── cpsim06: the Realtime-API-shaped account opening (docs/cpsim/CPSIM06_NOTES.md D1–D3; every path ASSUMED) ──
+    from cpsim import realtime as RT
+
+    RT_BASE = "/c/{slug}/realtime"
+
+    @sub.post(RT_BASE + "/realms/altruist/protocol/openid-connect/token")
+    async def realtime_token(slug: str, request: Request):
+        """Password grant (+ refresh_token): access 5 min, refresh on a FIXED 10 h window. Form-encoded body; the
+        client secret is the counterparty's cpsim_ key. A refusal persists nothing."""
+        log = _log(request, slug, "/realtime/realms/altruist/protocol/openid-connect/token", "realtime.token")
+        form = O.parse_form(await request.body())
+        if form.get("grant_type") in RT.GRANTS:
+            log["message_type"] = f"realtime.token.{form['grant_type']}"
+        try:
+            async with DB.tx() as conn:
+                cp = await R.live_by_slug(conn, slug)
+                if cp is None:
+                    log["auth_outcome"] = "unknown_counterparty"
+                    return _out(404, {"detail": "no such simulated counterparty"})
+                log["counterparty_id"] = cp["id"]
+                try:
+                    body = await RT.token(conn, cp, form)
+                except O.OAuthRefused as r:
+                    log["auth_outcome"] = r.outcome
+                    raise _Refusal(r) from r
+                log["auth_outcome"] = "ok"
+        except _Refusal as rr:
+            r = rr.r
+            return _out(r.status, {"error": r.error, "error_description": r.description}, {"Cache-Control": "no-store"})
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return _out(500, {"detail": "simulator error"})
+        return _out(200, body, {"Cache-Control": "no-store", "Pragma": "no-cache"})
+
+    async def _realtime(slug: str, request: Request, tail: str, message_type: str, kind: str, work):
+        """Realtime access-token auth, then ``work(conn, cp, clock, doc)`` → (status, body) in ONE transaction. Every
+        answer carries RateLimit-* headers; the injected test behaviour answers 429 + Retry-After. A RealtimeError
+        rolls back everything the request wrote."""
+        log = _log(request, slug, tail, message_type)
+        headers = RT.rate_headers(kind)
+        wait = RT.take_429()
+        if wait is not None:
+            log["auth_outcome"] = "behaviour_reject"     # the injected test behaviour (request_log_auth_chk's value)
+            return _out(429, {"detail": "rate limit exceeded"}, {**headers, "RateLimit-Remaining": "0",
+                                                                  "Retry-After": str(wait)})
+        doc = None
+        if request.method == "POST":
+            raw = await request.body()
+            try:
+                doc = json.loads(raw.decode("utf-8")) if raw else {}
+            except (ValueError, UnicodeDecodeError):
+                return _out(400, {"detail": "body is not JSON"}, headers)
+        try:
+            async with DB.tx() as conn:
+                cp = await R.live_by_slug(conn, slug)
+                if cp is None:
+                    log["auth_outcome"] = "unknown_counterparty"
+                    return _out(404, {"detail": "no such simulated counterparty"}, headers)
+                log["counterparty_id"] = cp["id"]
+                outcome = await RT.check_access(conn, cp, A.bearer(request.headers.get("authorization")))
+                log["auth_outcome"] = outcome
+                if outcome != "ok":
+                    return _out(401, {"detail": REFUSALS.get(outcome, "not authorised")},
+                                {**headers, "WWW-Authenticate": 'Bearer realm="altruist", error="invalid_token"'})
+                clock = await R.business_date(conn, cp["id"]) or R.today()
+                status, body = await work(conn, cp, clock, doc)
+        except RT.RealtimeError as exc:
+            log["shape_valid"] = False
+            log["error_count"] = len(exc.problems) or 1
+            return _out(exc.status, {"detail": str(exc), **({"problems": exc.problems} if exc.problems else {})},
+                        headers)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return _out(500, {"detail": "simulator error"}, headers)
+        probs = body.get("problems") if isinstance(body, dict) else None
+        log["shape_valid"] = status < 400
+        log["error_count"] = len(probs or [])
+        return _out(status, body, headers)
+
+    @sub.post(RT_BASE + "/api/households")
+    async def realtime_household(slug: str, request: Request):
+        async def work(conn, cp, clock, doc):
+            status, hh = await RT.household(conn, cp["id"], (doc or {}).get("name") if isinstance(doc, dict) else None)
+            return status, {"household": hh}
+        return await _realtime(slug, request, "/realtime/api/households", "realtime.households.create", "write", work)
+
+    @sub.post(RT_BASE + "/api/contacts")
+    async def realtime_contact(slug: str, request: Request):
+        async def work(conn, cp, clock, doc):
+            status, c = await RT.upsert_contact(conn, cp["id"], doc, clock)
+            return status, {"contact": c}
+        return await _realtime(slug, request, "/realtime/api/contacts", "realtime.contacts.create", "write", work)
+
+    @sub.post(RT_BASE + "/api/account-drafts")
+    async def realtime_draft(slug: str, request: Request):
+        async def work(conn, cp, clock, doc):
+            status, d = await RT.upsert_draft(conn, cp["id"], doc)
+            return status, {"draft": d}
+        return await _realtime(slug, request, "/realtime/api/account-drafts", "realtime.drafts.create", "write", work)
+
+    @sub.get(RT_BASE + "/api/account-drafts/{draft_id}")
+    async def realtime_draft_get(slug: str, draft_id: str, request: Request):
+        async def work(conn, cp, clock, doc):
+            return 200, {"draft": await RT.get_draft(conn, cp["id"], draft_id)}
+        return await _realtime(slug, request, "/realtime/api/account-drafts/{draft_id}", "realtime.drafts.get", "read",
+                               work)
+
+    @sub.post(RT_BASE + "/api/account-drafts/{draft_id}/validate")
+    async def realtime_validate(slug: str, draft_id: str, request: Request):
+        async def work(conn, cp, clock, doc):
+            return 200, await RT.check(conn, cp["id"], draft_id, clock)
+        return await _realtime(slug, request, "/realtime/api/account-drafts/{draft_id}/validate",
+                               "realtime.drafts.validate", "write", work)
+
+    @sub.post(RT_BASE + "/api/account-drafts/{draft_id}/submit")
+    async def realtime_submit(slug: str, draft_id: str, request: Request):
+        async def work(conn, cp, clock, doc):
+            return await RT.submit(conn, cp["id"], draft_id, clock)
+        return await _realtime(slug, request, "/realtime/api/account-drafts/{draft_id}/submit",
+                               "realtime.drafts.submit", "write", work)
 
     return SimulatedMarker(sub)
 
