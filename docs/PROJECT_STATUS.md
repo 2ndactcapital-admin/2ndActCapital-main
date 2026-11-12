@@ -349,6 +349,8 @@ This file starts with the email item below.
 STATUS: BUILT — branch cpsim05-work (2026-11-11), all 10 tasks committed. Notes `docs/cpsim/CPSIM05_NOTES.md`
 (D1–D8 as built, the FIX message catalogue, findings 1–15). HELD for review (not merged).
 
+UPDATE (cpsim05 fix 1, 2026-11-11): IN PROGRESS — fixing the 27 FAILs of the first verify run (`sprint_prompts/logs/cpsim05_run.out`); findings table in CPSIM05_NOTES "Fix 1 findings".
+
 - **Schema** `docs/cpsim05_part1.sql` APPLIED (`scripts/_apply_cpsim05.py --all`, 25/25 read back): cpsim.fix_messages +
   fix_allocations (append-only, cpsim_app S/I — the shared withheld list), cpsim.orders.protocol / is_block, the
   `altruist` institution type + the `fix` group; public: custodian_order_chk admits a FIX OrderID, fix_sim_chk, two event
@@ -372,7 +374,7 @@ STATUS: BUILT — branch cpsim05-work (2026-11-11), all 10 tasks committed. Note
 - **Operator**: to demo it, apply `cpsim03_capabilities.py --apply` (the simulator capability) and save each existing
   simulated counterparty's FIX tab once; then run verify_cpsim05.py.
 
- matches Altruist's PUBLISHED Open API (developer.altruist.com, read 2026-11-11); cost basis (tax lots) + account balance; simulator + conformance on the documented shapes
+## ALTREAD1 — the Altruist READ client matches Altruist's PUBLISHED Open API (developer.altruist.com, read 2026-11-11); cost basis (tax lots) + account balance; simulator + conformance on the documented shapes
 
 STATUS: BUILT — branch altread1-work (2026-11-11), all 9 tasks committed. Notes `docs/altruist/ALTREAD1_NOTES.md`
 (findings, D1–D7 as built, 19 corrections old → new, diff review). Contract `docs/cpsim/ALTRUIST_CONTRACT.md` rewritten

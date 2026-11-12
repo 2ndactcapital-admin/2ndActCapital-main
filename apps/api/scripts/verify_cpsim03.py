@@ -175,9 +175,13 @@ def self_static(check, find):
     rows = [ln for ln in s8.splitlines() if ln.startswith("| ") and not ln.startswith("| #") and
             not ln.startswith("| Field") and not ln.startswith("|---")]
     unassumed = [ln[:60] for ln in rows if "ASSUMED" not in ln and "simulator" not in ln]
-    check(bool(s8) and "ASSUMED — no published Altruist trading API seen" in s8 and len(rows) >= 20 and not unassumed,
-          "ALTRUIST_CONTRACT §8 'Orders (ASSUMED — no published Altruist trading API seen)': every call / field row "
-          "is marked ASSUMED", f"{len(rows)} rows; not ASSUMED: {unassumed[:3]}")
+    # CPSIM05 FIX 1: altread1 relabelled the §8 heading "Orders — ASSUMED — not part of Altruist's published API
+    # (Realtime / FIX)"; the section is found by its NUMBER and its heading must still say ASSUMED (exact words no
+    # longer pinned). Every row ASSUMED and the row floor are unchanged.
+    h8 = s8.splitlines()[0] if s8 else ""
+    check(bool(s8) and "ASSUMED" in h8 and len(rows) >= 20 and not unassumed,
+          "ALTRUIST_CONTRACT §8 'Orders' (heading marked ASSUMED): every call / field row "
+          "is marked ASSUMED", f"heading={h8[:90]!r}; {len(rows)} rows; not ASSUMED: {unassumed[:3]}")
     for w in ("POST {api_base}/v2/orders", "GET {api_base}/v2/orders/{order_id}", "DELETE {api_base}/v2/orders/{order_id}",
               "client_order_id", "order.updated", "order.filled", "executions"):
         check(w in s8, f"contract §8 defines {w!r}")
