@@ -83,6 +83,8 @@ class Suite:
         cpsim05 — the fix (F…) group carries its own label: simulated FIX, no Altruist FIX contract seen."""
         if cid[:1] == "F":
             return contract if contract.startswith(FIX_CONTRACT) else f"{FIX_CONTRACT} {contract}"
+        if cid[:1] == "R":
+            return contract if contract.startswith(REALTIME_CONTRACT) else f"{REALTIME_CONTRACT} {contract}"
         if cid[:1] in ("O", "T") and not contract.startswith(ASSUMED):
             return f"{ASSUMED} {contract}"
         return contract
@@ -115,7 +117,7 @@ async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], tr
               redirect_uri: str = DEFAULT_REDIRECT, scope: str = AO.DEFAULT_SCOPE, timeout: float = 15.0,
               expect_simulated_header: bool | None = None, max_accounts: int = 25, orders: dict | None = None,
               transfers: dict | None = None, today: date | None = None, lookback_days: int = 400,
-              fix: dict | None = None) -> dict:
+              fix: dict | None = None, realtime: dict | None = None) -> dict:
     """Run every check. Returns ``{"target", "passed", "failed", "results": [...]}``. Never raises for a server
     defect — a defect is a failed check; a client-side refusal (D1) is a failed check too. ``today`` (the target's
     business date when known) ends the transactions window checked by C14b; it starts ``lookback_days`` earlier."""
@@ -495,6 +497,13 @@ async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], tr
         S.na("F00", FIX_CONTRACT, "fix group", fskip)
     else:
         await _fix_group(S, raw=raw, api=api, access=access, fx=fix)
+
+    rskip = realtime_group_skip(environment, realtime)
+    if rskip:
+        S.na("R00", REALTIME_CONTRACT, "realtime_open group", rskip)
+    else:
+        await _realtime_group(S, raw=raw, api=api, access=access, credentials=credentials, transport=transport,
+                              fx=realtime)
 
     if sim:
         missing = [u for u, v in seen_headers if v != "true"]
@@ -1135,3 +1144,305 @@ async def _fix_group(S: Suite, *, raw, api: str, access: str, fx: dict):
                 "a body that is not FIX at all → a Reject (35=3), HTTP 200 — never a 500", f"{code} {lines[:1]}")
     except Exception as exc:  # noqa: BLE001
         S.check(False, "F19", "3 (malformed)", "garbage", f"{type(exc).__name__}: {exc}")
+
+
+# ── cpsim06: the realtime_open group (account opening — ASSUMED: the Realtime API paths are not published) ──────────
+REALTIME_CONTRACT = "ASSUMED — Realtime API paths not published (CPSIM06_NOTES §3–§4)"
+NOT_A_REALTIME_FIXTURE = ("not run: the realtime_open group opens accounts in the target's book and moves its token clock, "
+                          "so it runs only against a fixture counterparty (the in-process run)")
+
+
+def realtime_group_skip(environment: str, realtime: dict | None) -> str | None:
+    if environment != AO.SIMULATOR:
+        return "Hollisworks has no Realtime API access — the realtime_open group runs against a simulated counterparty only"
+    if realtime is None:
+        return NOT_A_REALTIME_FIXTURE
+    return None
+
+
+def _fake_itin(rng) -> str:
+    """A FAKE tax id in the reserved ITIN range (9XX-7X-XXXX) — never a plausible real SSN."""
+    return f"9{rng.randrange(10)}{rng.randrange(10)}{rng.randrange(70, 89)}{rng.randrange(10000):04d}"
+
+
+async def _realtime_group(S: Suite, *, raw, api: str, access: str, credentials, transport, fx: dict):
+    """R01–R31. ``fx`` = {username, password, clock (date), set_now(datetime|None) — moves BOTH the simulator's and the
+    client's clock, force_429(count, retry_after), sleeps (list the client's injected sleep appends to)}. Token rules
+    through raw form posts AND the client (services.altruist_realtime_sim); every D2 rule pass + fail on the
+    validate endpoint; every YES type opened and listed in the Open API feed; every NO type refused."""
+    import random
+    from datetime import datetime, timezone
+
+    from services import altruist_realtime_sim as RS
+    from services import custodian_account_opening as CAO
+
+    rng = random.SystemRandom()
+    root = api                                    # the simulator's /cpsim/c/<slug> (api_base == login_base)
+    token_url = f"{root}/realtime/realms/altruist/protocol/openid-connect/token"
+    rt = f"{root}/realtime/api"
+    client_id, secret = credentials
+    # the counterparty's business date NOW (an earlier group — fix — advances it); falls back to the fixture's
+    clock = (await fx["business_date"]()) if callable(fx.get("business_date")) else fx["clock"]
+    t0 = datetime(clock.year, clock.month, clock.day, 15, 0, tzinfo=timezone.utc)
+    tag = secrets.token_hex(3)
+    seq = {"n": 0}
+
+    def form(**kw) -> dict:
+        return {"content": "&".join(f"{k}={quote(str(v), safe='')}" for k, v in kw.items()),
+                "headers": {"Content-Type": "application/x-www-form-urlencoded"}}
+
+    async def grant(**kw):
+        r = await raw("POST", token_url, **form(client_id=client_id, client_secret=secret, **kw))
+        try:
+            return r.status_code, r.json()
+        except ValueError:
+            return r.status_code, {}
+
+    fx["set_now"](t0)
+    try:
+        # ── token rules ──────────────────────────────────────────────────────────────────────────────────────
+        code, tok = await grant(grant_type="password", username=fx["username"], password=fx["password"])
+        S.check(code == 200 and tok.get("token_type") == "Bearer" and tok.get("expires_in") == 300
+                and tok.get("refresh_expires_in") == 36000, "R01", "password grant",
+                "password grant → Bearer access 300 s, refresh window 36000 s (10 h)",
+                f"HTTP {code} expires_in={tok.get('expires_in')} refresh_expires_in={tok.get('refresh_expires_in')}")
+        code_bad, body_bad = await grant(grant_type="password", username=fx["username"],
+                                         password="cpsim_rtpw_wrong" + tag)
+        S.check(code_bad == 401 and body_bad.get("error") == "invalid_grant", "R02", "password grant",
+                "a wrong password is refused (401 invalid_grant)", f"HTTP {code_bad} {body_bad.get('error')}")
+        access_rt, refresh0 = tok.get("access_token", ""), tok.get("refresh_token", "")
+        hdr = {"Authorization": f"Bearer {access_rt}"}
+        r = await raw("POST", f"{rt}/households", json={"name": f"Conformance RT {tag}"}, headers=hdr)
+        S.check(r.status_code in (200, 201) and all(r.headers.get(h) for h in ("RateLimit-Limit", "RateLimit-Remaining",
+                                                                                "RateLimit-Reset")),
+                "R03", "rate-limit headers", "a Realtime answer carries RateLimit-Limit / -Remaining / -Reset",
+                f"HTTP {r.status_code} {dict(r.headers)}")
+        fx["set_now"](t0 + timedelta(minutes=5, seconds=1))
+        r = await raw("POST", f"{rt}/households", json={"name": f"Conformance RT {tag}"}, headers=hdr)
+        S.check(r.status_code == 401, "R04", "access token 5 min", "the access token is refused after 5 minutes",
+                f"HTTP {r.status_code}")
+        code, tok2 = await grant(grant_type="refresh_token", refresh_token=refresh0)
+        S.check(code == 200 and tok2.get("refresh_expires_in") == 36000 - 301, "R05", "refresh: fixed window",
+                "a refresh issues a new access token and does NOT extend the 10-hour window",
+                f"HTTP {code} refresh_expires_in={tok2.get('refresh_expires_in')}")
+        code, tok3 = await grant(grant_type="refresh_token", refresh_token=refresh0)
+        S.check(code == 200, "R06", "refresh: original stays valid", "the ORIGINAL refresh token is still valid after "
+                "a refresh", f"HTTP {code}")
+        fx["set_now"](t0 + timedelta(hours=10, seconds=1))
+        code, _ = await grant(grant_type="refresh_token", refresh_token=refresh0)
+        code2, _ = await grant(grant_type="refresh_token", refresh_token=tok2.get("refresh_token", ""))
+        S.check(code == 400 and code2 == 400, "R07", "refresh: 10 h window",
+                "after 10 hours every refresh token of the session is refused", f"original {code}, rotated {code2}")
+        fx["set_now"](t0 + timedelta(hours=10, minutes=1))
+        code, tok = await grant(grant_type="password", username=fx["username"], password=fx["password"])
+        hdr = {"Authorization": f"Bearer {tok.get('access_token', '')}"}
+
+        # ── the client: token cache + 429 / Retry-After ─────────────────────────────────────────────────────────
+        sess = {"environment": AO.SIMULATOR, "slug": "conformance", "token_url": token_url, "api_base": rt,
+                "client_id": client_id, "client_secret": secret, "username": fx["username"],
+                "password": fx["password"]}
+        RS.clear_cache()
+        fx["sleeps"].clear()
+        await RS.household(sess, f"Conformance RT {tag}", transport=transport)
+        await RS.household(sess, f"Conformance RT {tag}", transport=transport)
+        steps = [e["step"] for e in RS.events]
+        S.check(steps[:2] == ["password", "cached"], "R08", "client token cache",
+                "the client grants once and reuses the access token inside its 5 minutes", str(steps))
+        fx["set_now"](t0 + timedelta(hours=10, minutes=7))
+        await RS.household(sess, f"Conformance RT {tag}", transport=transport)
+        S.check([e["step"] for e in RS.events][-1] == "refresh", "R09", "client token cache",
+                "after 5 minutes the client REFRESHES (inside the fixed window)", str([e["step"] for e in RS.events]))
+        fx["force_429"](1, 2)
+        out = await RS.call(sess, "POST", "/households", json_body={"name": f"Conformance RT {tag}"},
+                            transport=transport)
+        S.check(out["status"] == 200 and fx["sleeps"] == [2.0] and any(e["step"] == "429" for e in RS.events),
+                "R10", "429 + Retry-After", "a 429 + Retry-After 2 → the client waits 2 s and retries ONCE (then 200)",
+                f"status {out['status']} sleeps {fx['sleeps']}")
+        fx["force_429"](2, 1)
+        try:
+            await RS.call(sess, "POST", "/households", json_body={"name": f"Conformance RT {tag}"}, transport=transport)
+            twice = False
+        except RS.RealtimeRateLimited:
+            twice = True
+        fx["force_429"](0)
+        S.check(twice, "R11", "429 + Retry-After", "a second 429 is not retried again (RealtimeRateLimited)")
+        # the token clock goes back to real time for the opening section: the Open API read token (``access``) was
+        # issued on the real clock, and the raw Realtime token is re-granted on it (account dates follow the
+        # counterparty's BUSINESS clock, which no token clock moves)
+        fx["set_now"](None)
+        code, tok = await grant(grant_type="password", username=fx["username"], password=fx["password"])
+        hdr = {"Authorization": f"Bearer {tok.get('access_token', '')}"}
+
+        # ── the opening fixtures ───────────────────────────────────────────────────────────────────────────────
+        def person(**over) -> dict:
+            seq["n"] += 1
+            n = seq["n"]
+            b = {"client_reference": f"conf-{tag}-p{n}", "kind": "person", "legal_name": f"Conformance Person {tag} {n}",
+                 "date_of_birth": clock.replace(year=clock.year - 40).isoformat(),
+                 "email": f"rt-{tag}-p{n}@example.test", "phone": "512-555-0100",
+                 "residential_address": {"street1": "100 Congress Ave", "city": "Austin", "state": "TX",
+                                         "postal_code": "78701", "country": "US"},
+                 "citizenship": "us_citizen", "employment": {"status": "employed", "employer": "Conformance Co"},
+                 "tax_id": {"kind": "itin", "value": _fake_itin(rng)}}
+            b.update(over)
+            return b
+
+        async def contact(body: dict) -> dict:
+            r = await raw("POST", f"{rt}/contacts", json=body, headers=hdr)
+            return r.json().get("contact") or {} if r.status_code in (200, 201) else {}
+
+        r = await raw("POST", f"{rt}/households", json={"name": f"Conformance RT {tag}"}, headers=hdr)
+        hh = (r.json().get("household") or {}).get("id")
+        r2 = await raw("POST", f"{rt}/households", json={"name": f"Conformance RT {tag}"}, headers=hdr)
+        S.check(r2.status_code == 200 and (r2.json().get("household") or {}).get("id") == hh and hh, "R12",
+                "households", "a household is created once and reused by name", f"{r.status_code}/{r2.status_code}")
+        probe = person()
+        r = await raw("POST", f"{rt}/contacts", json=probe, headers=hdr)
+        txt = r.text
+        S.check(r.status_code == 201 and (r.json().get("contact") or {}).get("tax_id_last4") == probe["tax_id"]["value"][-4:]
+                and not re.search(r"[0-9]{9}", txt) and probe["date_of_birth"] not in txt, "R13", "contacts (D3)",
+                "a contact answer carries the tax id's LAST FOUR only and never the date of birth",
+                f"HTTP {r.status_code}")
+
+        async def draft(account_type: str, owners: list, **extra) -> dict:
+            body = {"client_reference": f"conf-{tag}-d{secrets.token_hex(4)}", "household_id": hh,
+                    "account_type": account_type, "owners": owners, **extra}
+            r = await raw("POST", f"{rt}/account-drafts", json=body, headers=hdr)
+            return r.json().get("draft") or {}
+
+        async def validate(d: dict) -> list[str]:
+            r = await raw("POST", f"{rt}/account-drafts/{d.get('id')}/validate", headers=hdr)
+            return sorted(p["code"] for p in (r.json().get("problems") or [])) if r.status_code == 200 else ["HTTP"]
+
+        async def owners_for(shape: str) -> list:
+            if shape == "single":
+                return [{"contact_id": (await contact(person())).get("id"), "role": "owner"}]
+            if shape == "joint":
+                return [{"contact_id": (await contact(person())).get("id"), "role": "owner"},
+                        {"contact_id": (await contact(person())).get("id"), "role": "joint_owner"}]
+            if shape == "trust":
+                t = await contact({"client_reference": f"conf-{tag}-t{secrets.token_hex(3)}", "kind": "entity",
+                                   "legal_name": f"Conformance Trust {tag}",
+                                   "residential_address": {"street1": "1 Trust Way", "city": "Austin", "state": "TX",
+                                                           "postal_code": "78701"},
+                                   "tax_id": {"kind": "ein", "value": f"81{rng.randrange(10 ** 7):07d}"}})
+                return [{"contact_id": t.get("id"), "role": "trust"},
+                        {"contact_id": (await contact(person())).get("id"), "role": "trustee"}]
+            minor = await contact(person(date_of_birth=clock.replace(year=clock.year - 10).isoformat(),
+                                         email=None, phone=None, employment=None))
+            return [{"contact_id": minor.get("id"), "role": "minor"},
+                    {"contact_id": (await contact(person())).get("id"), "role": "custodian"}]
+
+        # ── R14: every D2 rule passes on good data and fails on exactly its own fault ─────────────────────────
+        good = await draft("individual", await owners_for("single"))
+        S.check(await validate(good) == [], "R14", "good order", "a complete individual draft validates with no "
+                                                                   "problem")
+        cases = [
+            ("R15", "PO Box residence", {"residential_address": {"street1": "PO Box 12", "city": "Austin", "state": "TX",
+                                                                 "postal_code": "78701"}}, ["po_box"]),
+            ("R16", "foreign address", {"residential_address": {"street1": "1 Rue", "city": "Paris", "state": "TX",
+                                                                "postal_code": "75001", "country": "FR"}},
+             ["foreign_address"]),
+            ("R17", "SSN area 000", {"tax_id": {"kind": "ssn", "value": "000" + f"{rng.randrange(10, 99)}"
+                                                                         f"{rng.randrange(1000, 9999)}"}}, ["ssn_area"]),
+            ("R18", "SSN area 666", {"tax_id": {"kind": "ssn", "value": "666" + f"{rng.randrange(10, 99)}"
+                                                                         f"{rng.randrange(1000, 9999)}"}}, ["ssn_area"]),
+            ("R19", "SSN area 9xx", {"tax_id": {"kind": "ssn", "value": "9" + f"{rng.randrange(10, 99)}40"
+                                                                         f"{rng.randrange(1000, 9999)}"}}, ["ssn_area"]),
+            ("R20", "visa outside the list", {"citizenship": "visa", "visa_type": "B2",
+                                              "visa_expiration": (clock + timedelta(days=400)).isoformat()},
+             ["visa_not_accepted"]),
+            ("R21", "listed visa < 90 days", {"citizenship": "visa", "visa_type": "H1B",
+                                              "visa_expiration": (clock + timedelta(days=60)).isoformat()},
+             ["visa_expiring"]),
+            ("R22", "date of birth in the future", {"date_of_birth": (clock + timedelta(days=5)).isoformat()},
+             ["dob_future", "missing"]),
+        ]
+        for cid, label, over, want in cases:
+            d = await draft("individual", [{"contact_id": (await contact(person(**over))).get("id"), "role": "owner"}])
+            got = await validate(d)
+            S.check(got == sorted(want), cid, f"D2 — {label}", f"{label}: refused with exactly that problem",
+                    f"got {got}")
+        dup_email = f"rt-{tag}-dup@example.test"
+        await contact(person(email=dup_email))
+        d = await draft("individual", [{"contact_id": (await contact(person(email=dup_email))).get("id"),
+                                        "role": "owner"}])
+        S.check(await validate(d) == ["duplicate_email"], "R23", "D2 — unique email",
+                "an email another client already uses is refused")
+        d = await draft("jtwros", (await owners_for("joint"))[:1])
+        S.check(await validate(d) == ["role_count_joint_owner"], "R24", "D2 — JTWROS owners",
+                "JTWROS with one owner is refused")
+        d = await draft("trust", (await owners_for("trust"))[:1])
+        S.check(await validate(d) == ["role_count_trustee"], "R25", "D2 — trust needs a trustee",
+                "a trust without a trustee is refused")
+        adult_minor = [{"contact_id": (await contact(person())).get("id"), "role": "minor"},
+                       {"contact_id": (await contact(person())).get("id"), "role": "custodian"}]
+        d = await draft("utma", adult_minor)
+        S.check(await validate(d) == ["not_a_minor"], "R26", "D2 — UTMA minor", "a UTMA whose 'minor' is an adult is "
+                                                                                 "refused")
+        for cid, pcts in (("R27", ("50", "49.99")), ("R28", ("50", "50.01"))):
+            d = await draft("ira", await owners_for("single"), beneficiaries=[
+                {"tier": "primary", "name": "Conformance Ben A", "kind": "person", "percentage": pcts[0]},
+                {"tier": "primary", "name": "Conformance Ben B", "kind": "person", "percentage": pcts[1]}])
+            S.check(await validate(d) == ["percent_total"], cid, "D2 — beneficiaries total 100 (Decimal)",
+                    f"primary beneficiaries totalling {Decimal(pcts[0]) + Decimal(pcts[1])} are refused")
+        own = await owners_for("single")
+        owner_c = person()
+        d = await draft("individual", own, trusted_contact={"contact_id": own[0]["contact_id"], "name": "x",
+                                                            "email": owner_c["email"]})
+        S.check(await validate(d) == ["is_owner"], "R29", "D2 — trusted contact", "a trusted contact who is an owner is "
+                                                                                 "refused")
+        # ── R30: every NO type refused; every YES type opened, ACTIVE at once, in the Open API feed ─────────────
+        own = await owners_for("single")
+        not_refused = []
+        for k in CAO.UNSUPPORTED_TYPES:
+            if "unsupported_type" not in await validate(await draft(k, own)):
+                not_refused.append(k)
+        S.check(not not_refused and len(CAO.UNSUPPORTED_TYPES) == 24, "R30", "published NO list",
+                "every NO-list type (24, the client's list) is refused as not supported by the custodian's API",
+                f"not refused: {not_refused}")
+        S.check(await validate(await draft("brokerage_x", own)) == ["unknown_type"], "R31", "account types",
+                "a type on neither list is refused as unknown")
+        doc_day = clock.strftime("%Y/%m/%d")
+        opened, bad = [], []
+        for k, (_label, shape, _reg) in CAO.ACCOUNT_TYPES.items():
+            d = await draft(k, await owners_for(shape))
+            r = await raw("POST", f"{rt}/account-drafts/{d.get('id')}/submit", headers=hdr)
+            a = (r.json().get("account") or {}) if r.status_code == 201 else {}
+            ok = (r.status_code == 201 and a.get("status") == "ACTIVE" and a.get("date_open") == doc_day
+                  and bool(re.fullmatch(r"CPSIM[0-9]{9}", a.get("account_number") or "")))
+            (opened if ok else bad).append((k, a.get("id"), r.status_code) if ok else
+                                           (k, r.status_code, {f: a.get(f) for f in ("status", "date_open")},
+                                            bool(re.fullmatch(r"CPSIM[0-9]{9}", a.get("account_number") or ""))))
+        S.check(not bad and len(opened) == 14, "R32", "submit → open",
+                "every YES type (14, the client's list) in good order opens at once: 201, ACTIVE, a CPSIM number, "
+                "date_open = the counterparty clock", f"not opened: {bad}")
+
+        async def feed() -> dict:
+            r = await raw("GET", f"{api}/v2/accounts", params={"household_id": hh, "page_size": 1000},
+                          headers={"Authorization": f"Bearer {access}"})
+            rows = ((r.json().get("data") or {}).get("accounts") or []) if r.status_code == 200 else []
+            return {a["id"]: a for a in rows}
+        listed = await feed()
+        missing = [k for k, aid, _ in opened if not (aid in listed and listed[aid]["status"] == "ACTIVE"
+                                                    and listed[aid]["date_open"] == doc_day
+                                                    and str(listed[aid]["account_number"]).startswith("CPSIM"))]
+        S.check(bool(opened) and not missing, "R33", "Open API accounts feed (DOCUMENTED shape)",
+                "every opened account is listed by GET /v2/accounts at once — status ACTIVE, date_open, its number",
+                f"missing: {missing}")
+        d = await draft("roth_ira", await owners_for("single"))
+        n0 = len(listed)
+        await validate(d)
+        n1 = len(await feed())
+        s1 = await raw("POST", f"{rt}/account-drafts/{d.get('id')}/submit", headers=hdr)
+        s2 = await raw("POST", f"{rt}/account-drafts/{d.get('id')}/submit", headers=hdr)
+        n2 = len(await feed())
+        a1 = (s1.json().get("account") or {}).get("id") if s1.status_code == 201 else None
+        a2 = (s2.json().get("account") or {}).get("id") if s2.status_code == 200 else None
+        S.check(n1 == n0, "R34", "validate never opens", "validate opens nothing (the feed is unchanged)",
+                f"{n0} → {n1}")
+        S.check(a1 is not None and a1 == a2 and n2 == n0 + 1, "R35", "submit is idempotent",
+                "submitting the same draft twice → one account (201, then 200 with the same account)",
+                f"{s1.status_code}/{s2.status_code} {n0}→{n2}")
+    finally:
+        fx["set_now"](None)

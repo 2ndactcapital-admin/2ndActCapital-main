@@ -294,6 +294,43 @@ async def _fix_log_check(counterparty_id) -> dict:
                      "ones flagged not valid)", "passed": bool(ok), "detail": "" if ok else str(dict(r))}
 
 
+def _realtime_fixture(user: dict, clock: date, counterparty_id=None) -> dict:
+    """cpsim06 — the realtime_open group's fixture: the simulator user (its password in memory only), the clock (one
+    callback moves BOTH the simulator's token clock and the client's), the 429 behaviour and the client's sleep."""
+    from cpsim import oauth as SO
+    from cpsim import realtime as SRT
+    from services import altruist_realtime_sim as RS
+
+    sleeps: list = []
+
+    def set_now(dt) -> None:
+        SO.set_now((lambda: dt) if dt is not None else None)
+        RS.set_now((lambda: dt) if dt is not None else None)
+
+    async def business_date() -> date:
+        from cpsim import db as SDB
+        from cpsim import registry as R
+
+        async with SDB.tx() as conn:
+            return await R.business_date(conn, counterparty_id) or clock
+
+    RS.set_sleep(lambda sec: sleeps.append(float(sec)))
+    return {"username": user["username"], "password": user["password"], "clock": clock, "set_now": set_now,
+            "force_429": SRT.force_429, "sleeps": sleeps, "business_date": business_date}
+
+
+def _realtime_reset() -> None:
+    from cpsim import oauth as SO
+    from cpsim import realtime as SRT
+    from services import altruist_realtime_sim as RS
+
+    SO.set_now(None)
+    RS.set_now(None)
+    RS.set_sleep(None)
+    RS.clear_cache()
+    SRT.force_429(0)
+
+
 async def run_in_process(json_out: pathlib.Path, *, transform=None) -> dict:
     """The fixture run. ``transform`` (tests only) rewrites a response — the planted-divergence proof."""
     from _db_connect import hydrate
@@ -314,6 +351,9 @@ async def run_in_process(json_out: pathlib.Path, *, transform=None) -> dict:
             sec = await _pick_security(conn, clock)
             planted = await FX.plant_book(conn, cp["id"], fixture_book(sec, clock))
             banks = await fixture_banks(conn, clock)
+            from cpsim import realtime as SRT
+
+            rt_user = await SRT.create_user(conn, cp["id"], "conformance-" + secrets.token_hex(3))
         rejected = {k: v["counts"]["rejected"] for k, v in planted.items()}
         transport = FX.TimeoutASGITransport(app=FX.mounted_app())
         if transform is not None:
@@ -327,8 +367,13 @@ async def run_in_process(json_out: pathlib.Path, *, transform=None) -> dict:
             tfx = {"from": "conf-acct-1", "to": "conf-acct-2", "cash": "1250.00", "value_date": clock.isoformat(),
                    **banks}
             fixfx = await _fix_fixture(cp, sec) if sec else None
-            out = await AC.run(environment=AO.SIMULATOR, hosts=hosts, credentials=(cp["client_id"], cp["key"]),
-                               transport=transport, orders=fx, transfers=tfx, today=clock, fix=fixfx)
+            rtfx = _realtime_fixture(rt_user, clock, cp["id"])
+            try:
+                out = await AC.run(environment=AO.SIMULATOR, hosts=hosts, credentials=(cp["client_id"], cp["key"]),
+                                   transport=transport, orders=fx, transfers=tfx, today=clock, fix=fixfx,
+                                   realtime=rtfx)
+            finally:
+                _realtime_reset()
             if fixfx:
                 out["results"].append(await _fix_log_check(cp["id"]))
         if not sec:      # cpsim03 — the orders group needs a priced equity / fund: its absence is a failure, not a skip

@@ -233,7 +233,7 @@ async def token(conn, cp: dict, form: dict) -> dict:
                                   str(cp["id"]), username) if username else None
         if row is None or not hmac.compare_digest(bytes(row["password_hash"]),
                                                   _pw_hash(bytes(row["password_salt"]), password)):
-            raise O.OAuthRefused(401, "invalid_grant", "bad_password", "Invalid user credentials")
+            raise O.OAuthRefused(401, "invalid_grant", "bad_grant", "Invalid user credentials")
         return await _issue(conn, cp, row["id"], str(uuid.uuid4()), t + SESSION_TTL)
     rt = form.get("refresh_token") or ""
     row = await conn.fetchrow(

@@ -153,8 +153,25 @@ async def _post_form(url: str, form: dict, *, environment: str, transport: Any) 
             raise AltruistOAuthError(f"POST token failed at the transport layer: {type(exc).__name__}") from exc
 
 
+def _client_creds(sess: dict) -> tuple[str, str]:
+    """The session's own in-memory client credentials (the conformance fixture's), else Doppler's."""
+    if sess.get("client_secret"):
+        if not str(sess["client_secret"]).startswith(SIMULATOR_SECRET_PREFIX):
+            raise AltruistConfigError("refusing to send a simulator client secret that lacks the cpsim_ prefix")
+        return sess["client_id"], sess["client_secret"]
+    return client_credentials(SIMULATOR)
+
+
+def _user(sess: dict) -> tuple[str, str]:
+    if sess.get("username") and sess.get("password"):
+        if not str(sess["password"]).startswith(SIMULATOR_SECRET_PREFIX):
+            raise AltruistConfigError("refusing to send a simulator password that lacks the cpsim_ prefix")
+        return sess["username"], sess["password"]
+    return user_credentials()
+
+
 async def _grant(sess: dict, form: dict, transport: Any) -> dict:
-    client_id, client_secret = client_credentials(SIMULATOR)
+    client_id, client_secret = _client_creds(sess)
     r = await _post_form(sess["token_url"], {**form, "client_id": client_id, "client_secret": client_secret},
                          environment=sess["environment"], transport=transport)
     if r.status_code >= 400:
@@ -173,7 +190,7 @@ async def _grant(sess: dict, form: dict, transport: Any) -> dict:
 
 async def access_token(sess: dict, *, transport: Any = None, force_new: bool = False) -> str:
     """A live access token for ``sess``: cached → refresh (inside the fixed window) → password grant."""
-    username, password = user_credentials()
+    username, password = _user(sess)
     key = (sess["token_url"], sess["client_id"], username)
     c = _cache.get(key)
     t = now()

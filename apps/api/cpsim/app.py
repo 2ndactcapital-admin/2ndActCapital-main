@@ -577,7 +577,7 @@ def create_app() -> FastAPI:
         headers = RT.rate_headers(kind)
         wait = RT.take_429()
         if wait is not None:
-            log["auth_outcome"] = "rate_limited"
+            log["auth_outcome"] = "behaviour_reject"     # the injected test behaviour (request_log_auth_chk's value)
             return _out(429, {"detail": "rate limit exceeded"}, {**headers, "RateLimit-Remaining": "0",
                                                                   "Retry-After": str(wait)})
         doc = None
