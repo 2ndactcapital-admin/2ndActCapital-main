@@ -51,6 +51,19 @@ function Count({ n, filter, allowed, testid }) {
     : <span data-testid={testid}>{n}</span>;
 }
 
+// PRICES2 — the nightly price refresh: "covered N · refreshed today M · oldest price date D" and the latest day's
+// progress. Every word and number is the server's (prices.refresh_status); nothing here is a control.
+export function PriceRefreshLine({ refresh }) {
+  if (!refresh || !refresh.label) return null;
+  const d = (refresh.days || [])[0];
+  return (
+    <div className="mt-1 text-xs" data-testid="price-refresh">
+      <p className="text-navy" data-testid="price-refresh-label">{refresh.label}</p>
+      {d ? <p className="text-text-muted" data-testid="price-refresh-day">{d.price_day}: {d.progress_label} · {d.calls} calls · <span className={d.status === "stopped_error" ? "text-[#9B2335]" : d.status === "complete" ? "text-[#2D6A4F]" : ""}>{d.status_label}</span>{d.stop_detail ? ` — ${d.stop_detail}` : ""}</p> : null}
+    </div>
+  );
+}
+
 export function SummaryPanel({ envelope }) {
   const sm = envelope?.summary;
   if (!sm || !can(envelope, "can_read")) return null;
@@ -90,6 +103,7 @@ export function SummaryPanel({ envelope }) {
               <tr key={x.provider_key} className="border-t border-[#E2E8F0]"><td>{x.provider_key}</td>
                 <td className="text-right"><Count n={x.securities} filter={x.filter} allowed={allowed} testid={`provider-${x.provider_key}`} /></td></tr>))}</tbody></table>
           <p className="mt-4 text-text-muted">Prices</p>
+          <PriceRefreshLine refresh={envelope?.price_refresh} />
           <table className="mt-2 w-full"><thead className={head}><tr><th>Coverage</th><th className="text-right">Securities</th><th className="text-right">With a price</th></tr></thead>
             <tbody>{(sm.prices || []).map((x) => (
               <tr key={x.price_coverage} className="border-t border-[#E2E8F0]"><td>{x.price_coverage.replace(/_/g, " ")}</td>

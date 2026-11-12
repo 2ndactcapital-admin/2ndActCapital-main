@@ -104,13 +104,18 @@ async def master_status(request: Request):
 
 @router.get(f"{_P}/summary")
 async def master_summary(request: Request):
-    """SECMASTER2 — the load summary (services.security_master_summary). Super Admin, checked first."""
+    """SECMASTER2 — the load summary (services.security_master_summary). Super Admin, checked first. PRICES2 adds
+    ``price_refresh`` (prices.refresh_status)."""
     principal = require_super_admin(request)
     pool = await get_pool()
+    from services.security_data import prices as P
+
     async with pool.acquire() as conn:
         async with platform_scope(conn):
             out = await SUM.summary(conn)
-    return _envelope(principal, {"summary": out, "list_filters": list(SUM.FILTERS)})
+        # PRICES2 — "covered N · refreshed today M · oldest price date D" + the latest day rows of the price refresh
+        price_refresh = await P.refresh_status(conn)
+    return _envelope(principal, {"summary": out, "list_filters": list(SUM.FILTERS), "price_refresh": price_refresh})
 
 
 def _check_filters(filters: dict) -> dict:
