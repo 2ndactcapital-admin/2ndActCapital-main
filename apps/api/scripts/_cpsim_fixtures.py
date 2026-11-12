@@ -34,7 +34,9 @@ OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 #: every cpsim table that carries counterparty_id, children first (FK order for the teardown); cpsim03 + orders;
 #: cpsim04 + transfers, transfer events, the cash ledger; altread1 + book_lots (references book_uploads)
 # cpsim05: fix_messages + fix_allocations first (fix_allocations references cpsim.orders)
-CP_TABLES = ("cpsim.fix_messages", "cpsim.fix_allocations", "cpsim.cash_movements", "cpsim.transfer_events", "cpsim.transfers", "cpsim.order_executions", "cpsim.orders", "cpsim.oauth_tokens", "cpsim.oauth_codes", "cpsim.book_lots", "cpsim.book_transactions", "cpsim.book_positions",
+# cpsim06: the Realtime account-opening tables, children first (beneficiaries → drafts; tokens → users)
+CP_TABLES = ("cpsim.realtime_validation_log", "cpsim.realtime_beneficiaries", "cpsim.realtime_drafts",
+             "cpsim.realtime_contacts", "cpsim.realtime_tokens", "cpsim.realtime_users", "cpsim.fix_messages", "cpsim.fix_allocations", "cpsim.cash_movements", "cpsim.transfer_events", "cpsim.transfers", "cpsim.order_executions", "cpsim.orders", "cpsim.oauth_tokens", "cpsim.oauth_codes", "cpsim.book_lots", "cpsim.book_transactions", "cpsim.book_positions",
              "cpsim.book_accounts", "cpsim.book_households", "cpsim.book_uploads", "cpsim.conformance_runs",
              "cpsim.request_log", "cpsim.counterparty_fix_sessions", "cpsim.counterparty_bank_details",
              "cpsim.counterparty_behaviour", "cpsim.counterparty_clock", "cpsim.counterparty_credentials")
@@ -52,6 +54,11 @@ CPSIM_APP_WITHHELD = {
     "cash_movements": frozenset({"UPDATE", "DELETE"}),     # docs/cpsim04_part1.sql: the cash ledger, append-only
     "fix_messages": frozenset({"UPDATE", "DELETE"}),       # docs/cpsim05_part1.sql: the FIX message log, append-only
     "fix_allocations": frozenset({"UPDATE", "DELETE"}),    # docs/cpsim05_part1.sql: allocation legs, append-only
+    "realtime_users": frozenset({"DELETE"}),               # docs/cpsim06_part1.sql: revoked, never deleted
+    "realtime_contacts": frozenset({"DELETE"}),            # docs/cpsim06_part1.sql: valid axis, never deleted
+    "realtime_drafts": frozenset({"DELETE"}),              # docs/cpsim06_part1.sql: valid axis, never deleted
+    "realtime_beneficiaries": frozenset({"UPDATE", "DELETE"}),   # docs/cpsim06_part1.sql: append-only
+    "realtime_validation_log": frozenset({"UPDATE", "DELETE"}),  # docs/cpsim06_part1.sql: append-only
 }
 
 

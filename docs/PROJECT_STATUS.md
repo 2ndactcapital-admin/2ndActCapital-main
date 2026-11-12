@@ -346,7 +346,7 @@ This file starts with the email item below.
 
 ## CPSIM06 — ACCOUNT OPENING at the simulated custodian (Realtime-API-shaped, simplified: in good order → opened at once, in the feed; refused → every problem listed)
 
-STATUS: IN PROGRESS — branch cpsim06-work (2026-11-12). Task 1 DONE (cpsim05 merged; [FIND] CRM tax ids are sha256+last4 only — unrecoverable — and entities.tax_id is a plaintext column returned by every entity read; no custodian-of-minor / trusted-contact relationship types; API map file absent); notes `docs/cpsim/CPSIM06_NOTES.md`.
+STATUS: IN PROGRESS — branch cpsim06-work (2026-11-12). Task 2 DONE (docs/cpsim06_part1.sql APPLIED, catalog read-back 36 PASS — 6 cpsim realtime tables + book_accounts.date_open/account_number; no public DDL). Task 1 DONE (cpsim05 merged; [FIND] CRM tax ids are sha256+last4 only — unrecoverable — and entities.tax_id is a plaintext column returned by every entity read; no custodian-of-minor / trusted-contact relationship types; API map file absent); notes `docs/cpsim/CPSIM06_NOTES.md`.
 
 ---
 
