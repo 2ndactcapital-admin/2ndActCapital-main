@@ -93,7 +93,7 @@ def build(msg_type: str, fields: list[tuple[int, Any]], *, sender: str, target: 
           delim: str = SOH, sending_time: datetime | None = None) -> str:
     head = [(35, msg_type), (49, sender), (56, target), (34, str(int(seq))), (52, stamp(sending_time))]
     pairs = head + [(t, str(v)) for t, v in fields if v is not None and str(v) != ""]
-    body = "".join(f"{t}={v}{SOH}" for t, v in pairs)
+    body = "".join(f"{t}={str(v).replace(SOH, ' ').replace(PIPE, '/')}{SOH}" for t, v in pairs)   # no delimiter in a value
     prefix = f"8={BEGIN}{SOH}9={len(body.encode('utf-8'))}{SOH}{body}"
     msg = f"{prefix}10={checksum(prefix)}{SOH}"
     return msg if delim == SOH else msg.replace(SOH, delim)

@@ -99,11 +99,18 @@ def ymd(d: date) -> str:
     return d.strftime("%Y%m%d")
 
 
+def clean(v) -> str:
+    """A value never carries a delimiter: SOH and '|' (the readable form's delimiter) become ' ' and '/' — so a reply
+    reads the same in both forms (fix group F19: a Reject's Text once contained '|')."""
+    return str(v).replace(SOH, " ").replace(PIPE, "/")
+
+
 def encode(msg_type: str, fields: list[tuple[int, str]], *, sender: str, target: str, seq: int,
            delim: str = SOH, sending_time: datetime | None = None) -> str:
     """A complete message: header (8, 9, 35, 49, 56, 34, 52), the body fields in order, trailer (10)."""
     head = [(35, msg_type), (49, sender), (56, target), (34, str(int(seq))), (52, utc_stamp(sending_time))]
-    body = "".join(f"{t}={v}{SOH}" for t, v in head + [(t, str(v)) for t, v in fields if v is not None and v != ""])
+    body = "".join(f"{t}={clean(v)}{SOH}" for t, v in head + [(t, str(v)) for t, v in fields
+                                                            if v is not None and v != ""])
     prefix = f"8={BEGIN}{SOH}9={len(body.encode('utf-8'))}{SOH}{body}"
     msg = f"{prefix}10={checksum(prefix)}{SOH}"
     return msg if delim == SOH else msg.replace(SOH, delim)
@@ -118,7 +125,7 @@ def parse(raw: str) -> tuple[str, list[tuple[int, str]]]:
         raise FixReject(f"message longer than {MAX_MESSAGE} characters", reason=SRR_FORMAT)
     delim = SOH if SOH in raw else (PIPE if PIPE in raw else None)
     if delim is None:
-        raise FixReject("no field delimiter (SOH or '|')", reason=SRR_FORMAT)
+        raise FixReject("no field delimiter (SOH or pipe)", reason=SRR_FORMAT)
     soh = raw if delim == SOH else raw.replace(PIPE, SOH)
     if not soh.endswith(SOH):
         soh += SOH          # a trailing delimiter after 10= is customary; tolerate its absence

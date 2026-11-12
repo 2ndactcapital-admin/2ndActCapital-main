@@ -33,7 +33,8 @@ import httpx  # noqa: E402
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 #: every cpsim table that carries counterparty_id, children first (FK order for the teardown); cpsim03 + orders;
 #: cpsim04 + transfers, transfer events, the cash ledger; altread1 + book_lots (references book_uploads)
-CP_TABLES = ("cpsim.cash_movements", "cpsim.transfer_events", "cpsim.transfers", "cpsim.order_executions", "cpsim.orders", "cpsim.oauth_tokens", "cpsim.oauth_codes", "cpsim.book_lots", "cpsim.book_transactions", "cpsim.book_positions",
+# cpsim05: fix_messages + fix_allocations first (fix_allocations references cpsim.orders)
+CP_TABLES = ("cpsim.fix_messages", "cpsim.fix_allocations", "cpsim.cash_movements", "cpsim.transfer_events", "cpsim.transfers", "cpsim.order_executions", "cpsim.orders", "cpsim.oauth_tokens", "cpsim.oauth_codes", "cpsim.book_lots", "cpsim.book_transactions", "cpsim.book_positions",
              "cpsim.book_accounts", "cpsim.book_households", "cpsim.book_uploads", "cpsim.conformance_runs",
              "cpsim.request_log", "cpsim.counterparty_fix_sessions", "cpsim.counterparty_bank_details",
              "cpsim.counterparty_behaviour", "cpsim.counterparty_clock", "cpsim.counterparty_credentials")

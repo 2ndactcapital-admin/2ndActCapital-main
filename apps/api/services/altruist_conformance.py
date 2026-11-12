@@ -30,9 +30,11 @@ The D2 feed types are pinned here too (T02: the served cash rows carry the §9.4
 
 from __future__ import annotations
 
+import json
 import re
 import secrets
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -77,7 +79,10 @@ class Suite:
 
     @staticmethod
     def _label(cid: str, contract: str) -> str:
-        """ALTREAD1 D5 — the orders (O…) and transfers (T…) groups test ASSUMED contracts: say so on every row."""
+        """ALTREAD1 D5 — the orders (O…) and transfers (T…) groups test ASSUMED contracts: say so on every row.
+        cpsim05 — the fix (F…) group carries its own label: simulated FIX, no Altruist FIX contract seen."""
+        if cid[:1] == "F":
+            return contract if contract.startswith(FIX_CONTRACT) else f"{FIX_CONTRACT} {contract}"
         if cid[:1] in ("O", "T") and not contract.startswith(ASSUMED):
             return f"{ASSUMED} {contract}"
         return contract
@@ -109,7 +114,8 @@ def _num_ok(v) -> bool:
 async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], transport: Any = None,
               redirect_uri: str = DEFAULT_REDIRECT, scope: str = AO.DEFAULT_SCOPE, timeout: float = 15.0,
               expect_simulated_header: bool | None = None, max_accounts: int = 25, orders: dict | None = None,
-              transfers: dict | None = None, today: date | None = None, lookback_days: int = 400) -> dict:
+              transfers: dict | None = None, today: date | None = None, lookback_days: int = 400,
+              fix: dict | None = None) -> dict:
     """Run every check. Returns ``{"target", "passed", "failed", "results": [...]}``. Never raises for a server
     defect — a defect is a failed check; a client-side refusal (D1) is a failed check too. ``today`` (the target's
     business date when known) ends the transactions window checked by C14b; it starts ``lookback_days`` earlier."""
@@ -483,6 +489,12 @@ async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], tr
     else:
         await _transfers_group(S, raw=raw, api=api, access=access, credentials=credentials, transport=transport,
                                timeout=timeout, fx=transfers)
+
+    fskip = fix_group_skip(environment, fix)
+    if fskip:
+        S.na("F00", FIX_CONTRACT, "fix group", fskip)
+    else:
+        await _fix_group(S, raw=raw, api=api, access=access, fx=fix)
 
     if sim:
         missing = [u for u, v in seen_headers if v != "true"]
@@ -909,3 +921,217 @@ async def _transfers_group(S: Suite, *, raw, api: str, access: str, credentials,
                 "X-Counterparty-Simulated: true", f"{r.headers.get(SIM_HEADER)}")
     except Exception as exc:  # noqa: BLE001
         S.check(False, "T15", "§9.1 T-6", "SIMULATED header", f"{type(exc).__name__}")
+
+
+# ── cpsim05: the fix group (simulated FIX — no Altruist FIX contract has been seen) ─────────────────────────────────
+FIX_CONTRACT = "simulated FIX — no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES §3)"
+NOT_A_FIX_FIXTURE = ("not run: the fix group places FIX orders, moves the book and advances the clock, so it runs only "
+                     "against a fixture counterparty (the in-process run)")
+
+
+def fix_group_skip(environment: str, fix: dict | None) -> str | None:
+    """Why the fix group does not run (None → it runs). A real target: there is no Altruist FIX contract at all."""
+    if environment != AO.SIMULATOR:
+        return "no Altruist FIX contract has been seen — the fix group runs against a simulated counterparty only"
+    if fix is None:
+        return NOT_A_FIX_FIXTURE
+    return None
+
+
+async def _fix_group(S: Suite, *, raw, api: str, access: str, fx: dict):
+    """F01–F19. ``fx`` = {account_id, account_2, cusip, held, sender, target, behaviour(async fn(dict)),
+    advance(async fn())} — the behaviour / clock callbacks are the runner's (a fixture counterparty's admin acts).
+    Every message is built and every reply parsed by the CLIENT's own codec (services.fix_sim_client), so this group
+    also proves the two independent codecs (client / simulator) agree on BodyLength and CheckSum."""
+    from services import fix_sim_client as FC
+
+    sec = {"identifiers": {"cusip": fx["cusip"]}}
+    hdr = {"Authorization": f"Bearer {access}", "Content-Type": "text/plain"}
+    seq = {"n": 0}
+    tag = secrets.token_hex(3)
+
+    async def post(msg: str, headers=None) -> tuple[int, list]:
+        r = await raw("POST", f"{api}/fix", content=msg.encode("utf-8"), headers=headers or hdr)
+        return r.status_code, [line for line in r.text.split("\n") if line.strip()] if r.status_code == 200 else []
+
+    async def send(mt: str, fields, *, delim=FC.PIPE, sender=None) -> tuple[int, list, list]:
+        seq["n"] += 1
+        msg = FC.build(mt, fields, sender=sender or fx["sender"], target=fx["target"], seq=seq["n"], delim=delim)
+        code, lines = await post(msg)
+        return code, lines, [FC.parse(x) for x in lines]
+
+    def last(replies, tag_):
+        return FC.first(replies[-1], tag_) if replies else None
+
+    def nos(cl, side="buy", qty="2", **kw):
+        return FC.new_order_single(cl_ord_id=cl, account=kw.pop("account", fx["account_id"]), side=side, sec=sec,
+                                   quantity=qty, **kw)
+
+    await fx["behaviour"]({"default_outcome": "accept"})
+    buy_id = f"fixconf-{tag}-buy"
+    try:
+        code, lines, rep = await send("D", nos(buy_id))
+        s1 = FC.summarize(rep)
+        swapped = all(FC.first(f, 49) == fx["target"] and FC.first(f, 56) == fx["sender"] for f in rep)
+        S.check(code == 200 and len(rep) >= 2 and FC.first(rep[0], 150) == "0" and len(s1["trades"]) == 1
+                and s1["status"] == "filled" and Decimal(s1["trades"][0]["price"]) > 0 and swapped
+                and s1["order_id"].startswith("sim-o-"), "F01", "D → 8",
+                "NewOrderSingle (market) → ExecutionReport New (150=0) then one Trade (150=F, 39=2) at the platform "
+                "close; every reply passes the client's BodyLength + CheckSum; 49/56 swapped back",
+                f"{code} {lines[:3]}")
+        exec_id = s1["trades"][0]["exec_id"] if s1["trades"] else None
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F01", "D → 8", "NewOrderSingle", f"{type(exc).__name__}: {exc}")
+        s1, exec_id = {"order_id": None, "trades": []}, None
+    try:
+        code, lines, rep = await send("D", nos(buy_id, qty="7"))
+        s2 = FC.summarize(rep)
+        S.check(code == 200 and s2["order_id"] == s1["order_id"] and [t["exec_id"] for t in s2["trades"]] == [exec_id]
+                and last(rep, 150) == "I", "F02", "D → 8 (idempotent ClOrdID)",
+                "a repeated ClOrdID (a different quantity) → the SAME order's reports + a 150=I status, never a second "
+                "order", f"{lines[:3]}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F02", "D → 8 (idempotent ClOrdID)", "repeat", f"{type(exc).__name__}: {exc}")
+    try:
+        code, lines, rep = await send("H", FC.status_request(cl_ord_id=buy_id, order_id=s1["order_id"], side="buy"))
+        s3 = FC.summarize(rep)
+        S.check(code == 200 and s3["order_id"] == s1["order_id"] and len(s3["trades"]) == 1 and last(rep, 150) == "I"
+                and s3["status"] == "filled", "F03", "H → 8", "OrderStatusRequest → every trade report + 150=I status",
+                f"{lines[:3]}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F03", "H → 8", "status", f"{type(exc).__name__}: {exc}")
+    lim_id = f"fixconf-{tag}-lim"
+    try:
+        code, lines, rep = await send("D", nos(lim_id, price_kind="limit", limit_price="0.01"))
+        s4 = FC.summarize(rep)
+        S.check(code == 200 and len(rep) == 1 and FC.first(rep[0], 39) == "0" and not s4["trades"], "F04",
+                "D → 8 (limit)", "an unmarketable limit → New (39=0) only, nothing filled", f"{lines[:3]}")
+        code, lines, rep = await send("F", FC.cancel_request(cl_ord_id=lim_id + "-x", orig_cl_ord_id=lim_id,
+                                                             side="buy", sec=sec, quantity="2"))
+        ok1 = code == 200 and FC.first(rep[0], 35) == "8" and FC.first(rep[0], 150) == "4" and \
+            FC.first(rep[0], 39) == "4"
+        code, lines, rep = await send("F", FC.cancel_request(cl_ord_id=lim_id + "-y", orig_cl_ord_id=lim_id,
+                                                             side="buy", sec=sec, quantity="2"))
+        S.check(ok1 and FC.first(rep[0], 35) == "9" and FC.first(rep[0], 102) == "0", "F05", "F → 8 / 9",
+                "OrderCancelRequest of a working order → 150=4 / 39=4; a second cancel → OrderCancelReject 102=0",
+                f"{lines[:2]}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F05", "F → 8 / 9", "cancel", f"{type(exc).__name__}: {exc}")
+    try:
+        code, lines, rep = await send("F", FC.cancel_request(cl_ord_id=f"fixconf-{tag}-u", orig_cl_ord_id="nope-" + tag,
+                                                             side="buy", sec=sec, quantity="1"))
+        S.check(code == 200 and FC.first(rep[0], 35) == "9" and FC.first(rep[0], 102) == "1", "F06", "F → 9",
+                "cancelling an unknown order → OrderCancelReject 102=1", f"{lines[:2]}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F06", "F → 9", "unknown cancel", f"{type(exc).__name__}: {exc}")
+    try:
+        code, lines, rep = await send("D", nos(f"fixconf-{tag}-over", side="sell", qty="1000000"))
+        s7 = FC.summarize(rep)
+        S.check(code == 200 and s7["status"] == "rejected" and "insufficient position" in (s7["reject_reason"] or ""),
+                "F07", "D → 8 (rejected)", "an oversell → 39=8 with 58 'insufficient position'", f"{lines[:2]}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F07", "D → 8 (rejected)", "oversell", f"{type(exc).__name__}: {exc}")
+    try:
+        f8 = [(t, ("5" if t == 54 else v)) for t, v in nos(f"fixconf-{tag}-short", side="sell", qty="1")]
+        code, lines, rep = await send("D", f8)
+        S.check(code == 200 and FC.first(rep[0], 39) == "8" and FC.first(rep[0], 37) == "NONE"
+                and "no shorting" in (FC.first(rep[0], 58) or ""), "F08", "D → 8 (54=5)",
+                "SELL SHORT (54=5) → rejected 'no shorting declared', no order created (OrderID NONE)", f"{lines[:2]}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F08", "D → 8 (54=5)", "short", f"{type(exc).__name__}: {exc}")
+
+    async def reject_of(msg: str) -> list:
+        code, lines = await post(msg)
+        return [FC.parse(x) for x in lines] if code == 200 else []
+    good = FC.build("H", [(11, buy_id)], sender=fx["sender"], target=fx["target"], seq=900, delim=FC.PIPE)
+    cs = good.split("|10=")[1][:3]
+    try:
+        rep = await reject_of(good.replace(f"|10={cs}", f"|10={(int(cs) + 1) % 256:03d}"))
+        S.check(len(rep) == 1 and FC.first(rep[0], 35) == "3" and FC.first(rep[0], 371) == "10"
+                and "CheckSum" in (FC.first(rep[0], 58) or ""), "F09", "3 (CheckSum)",
+                "a wrong CheckSum → Reject (35=3) naming tag 10, HTTP 200 (never a 500)", f"{rep[:1]}")
+        n9 = good.split("|9=")[1].split("|")[0]
+        rep = await reject_of(good.replace(f"|9={n9}|", f"|9={int(n9) + 3}|", 1))
+        S.check(len(rep) == 1 and FC.first(rep[0], 35) == "3" and FC.first(rep[0], 371) == "9", "F10", "3 (BodyLength)",
+                "a wrong BodyLength → Reject naming tag 9", f"{rep[:1]}")
+        _, _, rep = await send("H", [(11, buy_id)], sender="SOMEONE_ELSE")
+        S.check(len(rep) == 1 and FC.first(rep[0], 35) == "3" and FC.first(rep[0], 373) == "9", "F11", "3 (CompID)",
+                "an unknown SenderCompID → Reject 373=9 (CompID problem)", f"{rep[:1]}")
+        _, _, rep = await send("D", [(t, v) for t, v in nos(f"fixconf-{tag}-miss") if t != 54])
+        S.check(len(rep) == 1 and FC.first(rep[0], 35) == "3" and FC.first(rep[0], 371) == "54"
+                and FC.first(rep[0], 373) == "1", "F12", "3 (required tag)",
+                "a NewOrderSingle without Side (54) → Reject 373=1 naming tag 54", f"{rep[:1]}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F09", "3", "Reject", f"{type(exc).__name__}: {exc}")
+    try:
+        code, lines, rep = await send("H", FC.status_request(cl_ord_id=buy_id), delim=FC.SOH)
+        S.check(code == 200 and lines and all(FC.SOH in x and "|" not in x for x in lines) and
+                FC.summarize(rep)["order_id"] == s1["order_id"], "F13", "delimiters",
+                "SOH and '|' both accepted; the reply uses the request's delimiter", f"{[x[:40] for x in lines[:1]]}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F13", "delimiters", "SOH", f"{type(exc).__name__}: {exc}")
+    try:
+        await fx["behaviour"]({"default_outcome": "partial", "partial_pct": 50})
+        pid = f"fixconf-{tag}-part"
+        _, lines, rep = await send("D", nos(pid, qty="4"))
+        a = FC.summarize(rep)
+        await fx["behaviour"]({"default_outcome": "delay", "delay_seconds": 0})
+        did = f"fixconf-{tag}-delay"
+        _, lines2, rep2 = await send("D", nos(did, qty="2"))
+        b = FC.summarize(rep2)
+        await fx["advance"]()
+        _, _, rp = await send("H", FC.status_request(cl_ord_id=pid))
+        _, _, rd = await send("H", FC.status_request(cl_ord_id=did))
+        pa, da = FC.summarize(rp), FC.summarize(rd)
+        S.check(a["status"] == "partially_filled" and len(a["trades"]) == 1 and pa["status"] == "filled"
+                and len(pa["trades"]) == 2 and sum(Decimal(t["quantity"]) for t in pa["trades"]) == 4, "F14",
+                "D → 8 (partial, advance)", "partial → 39=1 with one trade; after a clock advance the rest fills "
+                "(39=2, two trades totalling the order)", f"{lines[:2]} {pa}")
+        S.check(b["status"] == "new" and not b["trades"] and da["status"] == "filled" and len(da["trades"]) == 1,
+                "F15", "D → 8 (delay, advance)", "delay → New (39=0), nothing filled; filled after a clock advance",
+                f"{lines2[:2]} {da}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F14", "D → 8 (partial / delay)", "advance", f"{type(exc).__name__}: {exc}")
+    finally:
+        await fx["behaviour"]({"default_outcome": "accept"})
+    try:
+        bid = f"fixconf-{tag}-blk"
+        _, lines, rep = await send("D", nos(bid, qty="2", account="CUSTODIAN-DESK", block=True))
+        bs = FC.summarize(rep)
+        legs = [(fx["account_id"], "1"), (fx["account_2"], "1")]
+        alloc = FC.allocation_instruction(alloc_id=bid + "-a", cl_ord_id=bid, order_id=bs["order_id"], side="buy",
+                                          sec=sec, quantity="2", avg_price=bs["trades"][0]["price"],
+                                          trade_date="20261111", legs=legs)
+        _, _, ra = await send("J", alloc)
+        ack = FC.summarize(ra)["alloc"] or {}
+        _, _, ra2 = await send("J", alloc)
+        ack2 = FC.summarize(ra2)["alloc"] or {}
+        S.check(bs["status"] == "filled" and ack.get("accepted") and set(ack.get("legs", {})) == {a for a, _ in legs}
+                and all(v.startswith("sim-a-") for v in ack["legs"].values()) and ack2.get("accepted")
+                and ack2.get("legs") == ack.get("legs"), "F16", "D (block) + J → P",
+                "a block order (591) fills without an account; AllocationInstruction → Ack 87=0 naming each "
+                "account's booked transaction (467); a repeat AllocID → the same Ack, nothing booked twice",
+                f"{lines[:2]} {ack} {ack2}")
+        hdr_ = {"Accept": "application/json"}
+        moved = []
+        for a, _ in legs:
+            moved.append(any(t.get("external_id", t.get("id")) == ack["legs"][a] or ack["legs"][a] in json.dumps(t)
+                             for t in await _book_transactions(raw, api, {**hdr_, "Authorization": f"Bearer {access}"},
+                                                              a)))
+        S.check(all(moved), "F17", "J → book", "each allocation leg is in its account's transactions feed",
+                f"{moved}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F16", "D (block) + J → P", "block", f"{type(exc).__name__}: {exc}")
+    try:
+        r = await raw("POST", f"{api}/fix", content=b"8=FIX.4.4|", headers={"Content-Type": "text/plain"})
+        S.check(r.status_code == 401, "F18", "auth", "the FIX endpoint needs an ACCESS token (none → 401)",
+                f"{r.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F18", "auth", "401", f"{type(exc).__name__}: {exc}")
+    try:
+        code, lines = await post("this is not FIX")
+        rep = [FC.parse(x) for x in lines]
+        S.check(code == 200 and len(rep) == 1 and FC.first(rep[0], 35) == "3", "F19", "3 (malformed)",
+                "a body that is not FIX at all → a Reject (35=3), HTTP 200 — never a 500", f"{code} {lines[:1]}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "F19", "3 (malformed)", "garbage", f"{type(exc).__name__}: {exc}")
