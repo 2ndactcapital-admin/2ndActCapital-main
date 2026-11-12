@@ -717,8 +717,9 @@ async def nightly(pool, *, today: date | None = None, run_id=None, include_test_
     (FAILED_SLICES_STOP failed slices in a row); otherwise it stays 'running' and the scheduler tick (prices_tick)
     continues it. A day row that another slice holds → nothing is done ('busy').
 
-    ONE-OFF MODE (``only_gsids`` without a ``scope`` — the operator's --gsid, PRICES1 / TRACK1 verifies): no day row;
-    every requested security is refreshed (PRICES1's behaviour).
+    ONE-OFF MODE (``only_gsids`` without a ``scope`` — the operator's --gsid, PRICES1 / TRACK1 verifies): no day row
+    and no price_refresh_state write; every requested security is refreshed (PRICES1's behaviour). (A state row is
+    platform data keyed by the security: written by a one-off run, it made those verifies' org-keyed teardown refuse.)
 
     Raises PricesJobError when any adapter's request failed (after storing and recording what it could) unless
     ``raise_errors`` is False (the tick)."""
@@ -839,8 +840,9 @@ async def _slice(pool, *, today, run_id, include_test_orgs, only_gsids, keys, ye
                                  error="; ".join(res_old.errors + res_new.errors)[:2000] or None, run_id=run_id,
                                  day=today)
         await _aclose(prov)
-        await mark_refreshed(pool, res_old.done_ids + res_new.done_ids, day=today, outcome="found", provider_key=key,
-                             day_id=day["id"] if day else None)
+        if day is not None:      # the state belongs to the DAY refresh; a one-off run (--gsid, a verify) leaves it alone
+            await mark_refreshed(pool, res_old.done_ids + res_new.done_ids, day=today, outcome="found",
+                                 provider_key=key, day_id=day["id"])
         new_loaded += len(res_new.done_ids)
         deferred_total += len(res_old.deferred) + len(res_new.deferred)
         summary["providers"][key] = {"gap_fill": res_old.summary(), "new_history": res_new.summary(),
@@ -850,9 +852,9 @@ async def _slice(pool, *, today, run_id, include_test_orgs, only_gsids, keys, ye
         pending = [it for it in pending if it.gsid in nf]      # the next adapter tries only what this one lacked
         max_new = max(0, max_new - len(res_new.done_ids))
     # what EVERY adapter answered "no data" for has been asked today: refreshed (not found), not retried all day
-    if pending and order:
+    if pending and order and day is not None:
         await mark_refreshed(pool, [it.gsid for it in pending], day=today, outcome="not_found", provider_key=order[-1],
-                             day_id=day["id"] if day else None)
+                             day_id=day["id"])
     summary["errors"] = errors
     summary["deferred"] = deferred_total
     summary["new_loaded"] = new_loaded
