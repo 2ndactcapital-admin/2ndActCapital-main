@@ -260,3 +260,9 @@ nothing else heavy alongside).
   automated route (blocks); real Altruist capability 'unknown' (unchanged, guard).
 - **Loaders not applied**: no altruist_simulator capability row (unchanged).
 - Nothing in fix 2 changed product code; the only verify change is the per-section elapsed-seconds print.
+| `--cleanup-only` (end) | **17 PASS, 0 FAIL** | 0 fixture rows before and after in all 55 counted tables; real fingerprints unchanged |
+
+Not re-run by fix 2 (the cap): `auto` within 600 s. Its 17 section assertions all PASSED. Only the end teardown overran,
+and a separate `--cleanup-only` removed what it left. Splitting `auto` would not help, because each half needs its own
+executed proposal, and the fixed overhead (seed ≈ 82 s, two teardowns, counts + fingerprints) is ≈ 300 s of every
+one-off.
