@@ -930,8 +930,14 @@ async def y_note_nocap(conn):
           and used(l2) == u[m2]["input_tokens"] + u[m2]["output_tokens"]
           and int(l1["calls"]) == u[m1]["calls"] and int(l2["calls"]) == u[m2]["calls"],
           "usage is recorded per model on the run and matches the shared ledger exactly", f"{u}")
-    check(calls_to(m1) == calls_to(m2) == N_DOCS and len(CALL_LOG) - n0 == 2 * N_DOCS,
-          "one call per model per document (never a one-model reading)", f"{calls_to(m1)}/{calls_to(m2)}")
+    k = calls_to(m1) // N_DOCS
+    check(calls_to(m1) == calls_to(m2) and k >= 1 and calls_to(m1) == k * N_DOCS
+          and len(CALL_LOG) - n0 == 2 * k * N_DOCS,
+          "both models are called the same number of times for every document (never a one-model reading)",
+          f"{calls_to(m1)}/{calls_to(m2)} = {k} per document")
+    if k == 2:
+        find("each fixture note makes TWO reserved pairs: the stub answers with no values, so both readers return "
+             "null on a critical field and the cascade's fuller-text retry runs (cascade.py step (c)) — by design")
     # a configured cap above 10^6 is refused at the start with a clear reason
     os.environ[DR.CAP_ENV] = "1000001"
     try:
@@ -1012,11 +1018,20 @@ async def exact_budget(conn, key: str, slot: int, job_factory, unit_from: str):
     target, other = DEP[key][slot - 1], DEP[key][2 - slot]
     ref = DEP[unit_from][slot - 1]
     rec, res_ = recorded_per_call(ref), reserved_per_call(ref)
-    if not rec or not res_ or len(set(rec)) != 1 or len(set(res_)) != 1:
-        check(False, f"{key}: the per-call usage is known from the completing run", f"rec={set(rec)} res={set(res_)}")
+    k = len(rec) // 3 if len(rec) % 3 == 0 else 0
+    seq_e, seq_r = rec[:k], res_[:k]
+    if not k or rec != seq_e * 3 or res_ != seq_r * 3:
+        check(False, f"{key}: every document of the completing run made the same call sequence (needed to place "
+              "the budget exactly)", f"rec={rec} res={res_}")
         return
-    E, R = rec[0], res_[0]
-    used0 = int(budget) - R - E // 2
+    # One document = k calls: reservation R[j] then recorded E[j]. The next document fits iff every step fits:
+    # used0 + sum(E[:j]) + R[j] <= budget for every j, and the final total used0 + sum(E) <= budget.
+    need = max([sum(seq_e[:j]) + seq_r[j] for j in range(k)] + [sum(seq_e)])
+    used0 = int(budget) - need
+    E, R = sum(seq_e), seq_r[0]
+    if not used0 + E + R > int(budget):
+        check(False, f"{key}: the exact-stop scenario is constructible", f"used0={used0} E={E} R={R}")
+        return
     await platform(conn, f"INSERT INTO ai_daily_usage (budget_day, deployment, input_tokens) VALUES "
                          f"({AB.BUDGET_DAY_SQL}, $1, $2)", target, used0, fetch="execute")
     c_t, c_o = calls_to(target), calls_to(other)
@@ -1034,7 +1049,7 @@ async def exact_budget(conn, key: str, slot: int, job_factory, unit_from: str):
           and Decimal(row["stopped_used"]) == Decimal(final) and int(lt["reserved_tokens"]) == 0,
           f"{key}: honoured EXACTLY — used {final:,} <= {int(budget):,}, and the next call ({R:,}) would cross it; "
           "nothing left reserved", f"used0={used0:,} E={E:,} R={R:,} final={final:,} stopped_used={row['stopped_used']}")
-    check(calls_to(target) - c_t == 1 and calls_to(other) - c_o == 1 and used(lo) == E,
+    check(calls_to(target) - c_t == k and calls_to(other) - c_o == k and used(lo) == E,
           f"{key}: the stopping document made NO call on either model (all-or-nothing pair)",
           f"target +{calls_to(target) - c_t}, other +{calls_to(other) - c_o}")
 
