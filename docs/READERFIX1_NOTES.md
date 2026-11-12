@@ -83,3 +83,7 @@ One-offs (each `timeout 600`, 2026-11-12):
 [FIND] The note-extraction verifies (`verify_noteextractb1`, `verify_notefix1/2`, `verify_notefields`, `verify_notetermsextraction`) have no `--self-checks-only` mode, so they cannot run as fast nested regressions. They were not run (the rule is not to run another sprint's full verify).
 
 [FIND] The fix is proven against recorded response shapes, not a live model. Whether gpt-5-nano at LOW effort answers inside 15,000 / 16,000 tokens will show on the first real run. Either way it is bounded: one retry at 30,000 / 32,000, then invalid with the reason. It never loops.
+
+## Task 5 — operator note
+
+After merge + deploy, the next nightly fund-terms run re-reads IVV. Check that both readers have values: `portfolio.replica_term_readings` for IVV should have rows with `metadata->>'reread' = 'true'` from BOTH gpt-5-mini and gpt-5-nano, with status ok. Then press extract on IVV's Replication Studio entry. Its draft will be rebuilt from the re-read run, which is reused, so there is no model cost. If gpt-5-nano's re-read row says "the model used its whole output allowance", the low effort was not enough even at 30,000 tokens. Report it; do not retry by hand. Deploy this together with (or after) dailyops1, because the first real nightly note run must already use the new allowance.
