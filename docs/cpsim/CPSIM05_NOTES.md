@@ -326,3 +326,9 @@ external_references ×2, the connection, `counterparty_sim_may_connect`, the org
   counted approval < 15 s absolute. Deviation from the prompt's literal (b), stated: "a 2-line and a 6-line proposal
   issue the same number" cannot hold for the TOTAL (each line is at least an instruction INSERT + its event); it is
   asserted on the simulated route's EXTRA over the manual baseline, which is what cpsim05 adds.
+
+### 9a. Fix 3 proof — one-offs, each `timeout 600`, recorded and committed as it ran
+
+| run | result | detail |
+|---|---|---|
+| `--only=timing` | **101 PASS, 0 FAIL** (482 s) | Section 10/0. Round-trips / seconds: manual_2 224 / 6.52 s; sim_2 239 / 6.99 s; manual_6 264 / 7.78 s; sim_6 279 / 8.80 s. Simulated extra 15 at both 2 and 6 lines (≤ 15); baseline 10 per line (≤ 10); after-response round-trips in window 0; sim/manual seconds 1.07 (2 lines), 1.13 (6 lines) (≤ 1.5); slowest 8.80 s < 15 s; the after-response gate PASS; FIX message log (87 rows) 0.98 s, one query. Teardown zero, every table at its pre-test count, real fingerprints unchanged |
