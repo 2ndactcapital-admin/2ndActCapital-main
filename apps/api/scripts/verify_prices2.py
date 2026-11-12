@@ -511,6 +511,8 @@ def counted_plan(secs: list) -> dict:
 async def teardown() -> list[str]:
     op = await operator_conn()
     try:
+        # 2,600 fixture securities: the FK checks of one DELETE on securities_global outlast the default timeout
+        await op.execute("SET statement_timeout = '540s'")
         secs = [r[0] for r in await op.fetch(
             "SELECT id FROM portfolio.securities_global WHERE name LIKE $1 UNION SELECT global_security_id FROM "
             "portfolio.securities_global_identifiers WHERE id_type = 'ticker' AND id_value LIKE $2",
@@ -700,10 +702,12 @@ async def y_days(conn):
         check(refreshed_seq == sorted(refreshed_seq) and len(set(refreshed_seq)) == len(refreshed_seq)
               and refreshed_seq[-1] == BUDGET_D, "progress recorded on the row after every slice, rising to 2,000",
               f"{progress[:4]}…{progress[-2:]}")
-        check(asked_g == exp1, "day 1 asked EXACTLY the priority order: core ETFs → fixed income → commodities → key "
-              "benchmarks → S&P 500 → Russell 2000 (first 1,400)",
-              f"first mismatch at {next((i for i, (a, b) in enumerate(zip(asked_g, exp1)) if a != b), None)}; "
-              f"{len(asked_g)} asked")
+        # the order is decided per BATCH of 25 (ingest asks a batch's symbols sorted by symbol): every batch is
+        # exactly the next 25 of the priority order
+        bad1 = [i for i in range(0, BUDGET_D, 25) if set(asked_g[i:i + 25]) != set(exp1[i:i + 25])]
+        check(len(asked_g) == BUDGET_D and not bad1 and set(asked_g) == set(exp1),
+              "day 1 asked EXACTLY the priority order, batch by batch: core ETFs → fixed income → commodities → key "
+              "benchmarks → S&P 500 → Russell 2000 (first 1,400)", f"bad batches at {bad1[:5]}; {len(asked_g)} asked")
         check(len(asked) == len(set(asked)) == BUDGET_D, "no security asked twice in the day; 2,000 requests in total",
               f"{len(asked)} / {len(set(asked))}")
         logged = await calls_logged(conn, STUB, day1)
@@ -737,8 +741,9 @@ async def y_days(conn):
         row2 = await day_row(conn, SCOPE, day2)
         check(set(a2[:600]) == left and len(left) == 600,
               "day 2 STARTS with the 600 not refreshed on day 1 (oldest first)", f"{len(left)} {len(set(a2[:600]) & left)}")
-        check(a2 == exp2, "day 2 = the 600 left, then the 1,400 highest-priority of day 1's (the exact simulated order)",
-              f"first mismatch at {next((i for i, (a, b) in enumerate(zip(a2, exp2)) if a != b), None)}")
+        bad2 = [i for i in range(0, BUDGET_D, 25) if set(a2[i:i + 25]) != set(exp2[i:i + 25])]
+        check(len(a2) == BUDGET_D and not bad2, "day 2 = the 600 left, then the 1,400 highest-priority of day 1's (the "
+              "simulated order, batch by batch)", f"bad batches at {bad2[:5]}")
         check(bool(row1 and row1["status"] == "stopped_budget" and row2 and row2["status"] == "stopped_budget"
                    and row2["calls"] == BUDGET_D and row2["refreshed"] == BUDGET_D),
               "day 1's row is untouched; day 2 has its OWN row (2,000 calls, 2,000 refreshed)",

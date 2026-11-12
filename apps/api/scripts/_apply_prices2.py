@@ -3,6 +3,7 @@
     python3 apps/api/scripts/_apply_prices2.py --schema     # the migration, one transaction (operator DSN)
     python3 apps/api/scripts/_apply_prices2.py --verify     # read the catalog back
     python3 apps/api/scripts/_apply_prices2.py --all        # both, in order
+    python3 apps/api/scripts/_apply_prices2.py --fk-indexes # part 2: five FK indexes, CONCURRENTLY
 
 Runs on the operator's postgres DSN (``DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP``: DDL needs the table owner).
 Idempotent. Never prints a secret. Writes NO security, price or client-org row.
@@ -25,6 +26,9 @@ hydrate()
 sys.path.insert(0, str(API_DIR))
 
 SCHEMA_SQL = REPO / "docs" / "prices2_part1.sql"
+FK_INDEX_SQL = REPO / "docs" / "prices2_part2.sql"
+FK_INDEXES = ("securities_global_prices_gsid_fk_ix", "security_reference_attributes_gsid_fk_ix", "index_levels_gsid_fk_ix",
+              "sec_13f_list_gsid_fk_ix", "data_quality_events_gsid_fk_ix")
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 TABLES = ("price_refresh_days", "price_refresh_state")
 UQ = {"price_refresh_days": ("price_refresh_days_day_uq", "(scope, price_day)"),
@@ -46,6 +50,24 @@ async def apply_schema() -> None:
         async with conn.transaction():
             await conn.execute(SCHEMA_SQL.read_text(encoding="utf-8"))
         print("[OK] schema applied")
+    finally:
+        await conn.close()
+
+
+async def apply_fk_indexes() -> None:
+    """part 2: CREATE INDEX CONCURRENTLY, one statement at a time (never inside a transaction)."""
+    conn = await _conn()
+    try:
+        await conn.execute("SET statement_timeout = '900s'")
+        text = "\n".join(ln for ln in FK_INDEX_SQL.read_text(encoding="utf-8").splitlines()
+                         if not ln.strip().startswith("--"))
+        for body in [x.strip() for x in text.split(";")]:
+            if body:
+                await conn.execute(body)
+                print(f"[OK] {body.split(' ON ')[0].split()[-1]}")
+        bad = await conn.fetch("SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid WHERE "
+                               "c.relname = ANY($1::text[]) AND NOT i.indisvalid", list(FK_INDEXES))
+        print("[OK] every index valid" if not bad else f"[GAP] invalid: {[r[0] for r in bad]} (re-run after DROP)")
     finally:
         await conn.close()
 
@@ -85,6 +107,9 @@ def main() -> int:
     if "--all" in args:
         asyncio.run(apply_schema())
         return asyncio.run(verify())
+    if "--fk-indexes" in args:
+        asyncio.run(apply_fk_indexes())
+        return 0
     if "--schema" in args:
         asyncio.run(apply_schema())
         return 0
