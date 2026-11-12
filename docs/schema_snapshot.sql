@@ -7599,7 +7599,7 @@
 --   status                                   text NOT NULL DEFAULT 'running'::text
 --   ensemble_config_id                       uuid
 --   config                                   jsonb NOT NULL DEFAULT '{}'::jsonb
---   spend_cap_usd                            numeric NOT NULL
+--   spend_cap_usd                            numeric
 --   spent_usd                                numeric NOT NULL DEFAULT 0
 --   notes_planned                            integer NOT NULL DEFAULT 0
 --   notes_done                               integer NOT NULL DEFAULT 0
