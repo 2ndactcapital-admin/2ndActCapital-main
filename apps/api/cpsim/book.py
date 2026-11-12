@@ -537,7 +537,8 @@ async def households(conn, counterparty_id, name_pattern: str | None = None) -> 
 
 
 _ACCOUNTS_SQL = """
-SELECT a.external_id, a.name, a.household_external_id, a.account_type, snap.as_of AS balance_as_of,
+SELECT a.external_id, a.name, a.household_external_id, a.account_type, a.date_open, a.account_number,
+       snap.as_of AS balance_as_of,
        (SELECT sum(p.market_value) FROM cpsim.book_positions p WHERE p.counterparty_id = a.counterparty_id
          AND p.account_external_id = a.external_id AND p.valid_to IS NULL AND p.as_of = snap.as_of) AS balance
 FROM cpsim.book_accounts a
@@ -550,13 +551,15 @@ ORDER BY a.external_id
 
 async def accounts(conn, counterparty_id, household_id: str | None, clock: date | None = None) -> list[dict]:
     """DOCUMENTED fields: id, rep_code, account_number, account_type, account_name, status, date_open, date_closed,
-    as_of_date, account_balance. The balance is DERIVED (the latest positions' market value on or before the clock)."""
+    as_of_date, account_balance. The balance is DERIVED (the latest positions' market value on or before the clock).
+    cpsim06: an account OPENED through the Realtime simulation carries its own ``date_open`` and ``CPSIM…`` number;
+    an uploaded account (both NULL) is served exactly as before."""
     clock = clock or date.today()
     rows = await conn.fetch(_ACCOUNTS_SQL, str(counterparty_id), household_id, clock)
-    return [{"id": r["external_id"], "rep_code": None, "account_number": account_number(counterparty_id,
-                                                                                       r["external_id"]),
+    return [{"id": r["external_id"], "rep_code": None,
+             "account_number": r["account_number"] or account_number(counterparty_id, r["external_id"]),
              "account_type": (r["account_type"] or "").upper() or None, "account_name": r["name"],
-             "status": "ACTIVE", "date_open": None, "date_closed": None,
+             "status": "ACTIVE", "date_open": doc_date(r["date_open"]), "date_closed": None,
              "as_of_date": doc_date(r["balance_as_of"] or clock),
              "account_balance": fmt(r["balance"]) if r["balance"] is not None else "0",
              "household_id": r["household_external_id"]} for r in rows]
