@@ -578,6 +578,16 @@ def build() -> None:
 
 
 def main() -> int:
+    # dailyops1 — fast regression mode: the static / pure sections only (no database, no npm build), judged by
+    # the standard 'TOTAL: N PASS, M FAIL' line the shared nested-run parser reads (_verify_total).
+    if "--self-checks-only" in sys.argv:
+        environment()
+        node_tests()
+        routes_static()
+        no_hardcoding()
+        page_and_nav()
+        print(f"TOTAL: {_n_pass} PASS, {_n_fail} FAIL", flush=True)
+        return 1 if _n_fail else 0
     pkg = environment()
     node_tests()
     routes_static()

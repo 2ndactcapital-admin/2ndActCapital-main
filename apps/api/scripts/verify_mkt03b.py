@@ -1265,6 +1265,12 @@ async def phase_b(conn) -> None:
 
 
 async def main() -> int:
+    # dailyops1 — fast regression mode: the static / pure sections only (no database, no npm build), judged by
+    # the standard 'TOTAL: N PASS, M FAIL' line the shared nested-run parser reads (_verify_total).
+    if "--self-checks-only" in sys.argv:
+        await a_least_privilege_static()
+        print(f"TOTAL: {PASSED} PASS, {FAILED} FAIL")
+        return 1 if FAILED else 0
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true", help="also run Phase B against the real reference data")
     args = parser.parse_args()
