@@ -187,8 +187,15 @@ def self_static(check, find):
     rows = [ln for ln in head.splitlines() if ln.startswith("| ") and not ln.startswith("| #") and
             not ln.startswith("| Field") and not ln.startswith("|---")]
     unassumed = [ln[:60] for ln in rows if "ASSUMED" not in ln and "simulator" not in ln]
-    check(bool(s9) and "ASSUMED — no published Altruist money-movement API seen" in s9 and len(rows) >= 25
-          and not unassumed and "### 9.4 Feed transaction types for cash (`GET /v2/transactions`) — ASSUMED" in s9
+    # ALTREAD1 D5 relabelled §9 "ASSUMED — not part of Altruist's published API (Realtime / FIX)" and moved §9.4 to
+    # the documented transactions path; either the cpsim04 wording or the ALTREAD1 wording states the same fact
+    heading_ok = ("ASSUMED — no published Altruist money-movement API seen" in s9
+                  or "## 9. Transfers — ASSUMED — not part of Altruist's published API (Realtime / FIX)" in s9)
+    s94_ok = ("### 9.4 Feed transaction types for cash (`GET /v2/transactions`) — ASSUMED" in s9
+              or "### 9.4 Feed transaction types for cash (`GET /v2/accounts/{account_id}/transactions`, "
+                 "`transaction_type`) — ASSUMED values" in s9)
+    check(bool(s9) and heading_ok and len(rows) >= 25
+          and not unassumed and s94_ok
           and "### 9.5 Webhooks (outbound, simulator → us) — ASSUMED" in s9,
           "ALTRUIST_CONTRACT §9 'Transfers (ASSUMED — no published Altruist money-movement API seen)': every call / "
           "field row is marked ASSUMED; §9.4 / §9.5 headed ASSUMED", f"{len(rows)} rows; not ASSUMED: {unassumed[:3]}")

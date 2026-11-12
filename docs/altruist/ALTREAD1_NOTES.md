@@ -252,3 +252,17 @@ lookup), idempotency by external id, the PORTENTRY1 supersede + rollup, the simu
 - UI: `tests/altread1` 5/5; `node --test tests/` 762 pass, 0 fail.
 - Decisions the docs leave open are recorded in the contract §7 (households path, page base, refresh rotation, the
   Bearer prefix, reversal-flag values, the transaction-type vocabulary beyond BUY).
+- **[FIND] `minus_business_days` never moved** — `us_business_days.prior_business_day` returns its argument when it
+  is already a business day, so the "last synced date − 5 business days" overlap was 0 days. Fixed (each step starts
+  the day before); the verify now counts the five business days independently of the helper (it had passed
+  vacuously by using the same helper). 2026-11-13 − 5 → 2026-11-05 (Veterans Day skipped).
+- **verify_cpsim04's static §9 check pinned the cpsim04 heading text**; re-pinned to accept the ALTREAD1 relabel.
+- **Verify run (2026-11-11, in chunks — one tool call is capped at 10 minutes):** `--only=client,paging,envelope,dates`
+  97/0; `--only=transactions,balance,lots` 89/1 → fixed → `--only=transactions` 75/0; `--only=simulator,isolation,
+  unchanged` 86/1 (isolation leaned on the balance section) → fixed → `--only=isolation` 71/0; `--only=front_end`
+  (SKIP_BUILD=1) 2/0; `--self-checks-only` 50/0; `--cleanup-only` 12/0 (0 fixture rows, real fingerprints
+  unchanged); authz1_routes / visibility1_routes `--check` CURRENT; fast regressions (each `--self-checks-only`):
+  verify_cpsim02 30/0, verify_cpsim04 55/0, altruist sprint 2 / 3 / 5 / 6 3/0 · 4/0 · 4/0 · 4/0, verify_rep6 7/0,
+  verify_authz1 1/0. **Not run:** the single uninterrupted full run, and `npm run build` (it has crashed this WSL
+  machine twice — the operator runs it).
+

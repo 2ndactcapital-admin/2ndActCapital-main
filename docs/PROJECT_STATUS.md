@@ -363,7 +363,7 @@ for the read path from the published docs (DOCUMENTED rows with their page; §10
 - **Simulator + conformance** on the documented shapes; in-process conformance **55 PASS / 0 FAIL**; orders / transfers
   labelled ASSUMED. **UI**: account custodian panel, lot-source on the lot-method change, refresh expiry on Admin →
   Counterparties → Connections; `tests/altread1` 5/5, `node --test tests/` 0 fail.
-- **Verify** `apps/api/scripts/verify_altread1.py` (in scripts/regression_set.txt). Treasury unchanged (follow-up),
+- **Verify** `apps/api/scripts/verify_altread1.py` (in scripts/regression_set.txt) — RUN in chunks, every section green after two fixes (a real bug: `minus_business_days` never moved; isolation set up its own rows); self-checks 50/0, cleanup 0 rows, route docs CURRENT, fast regressions 0 FAIL; the single full run and npm build NOT run (see ALTREAD1_NOTES §5). Treasury unchanged (follow-up),
   `services/portfolio_altruist.py` untouched (slated for removal). Full regression: scripts/run_regressions.sh at the
   end of the sprint cycle (verify_cpsim02 / 03 / 04 full sections need re-pinning to the documented simulator paths
   first — OUTSTANDING_TODO_LIST §8).

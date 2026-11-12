@@ -1597,6 +1597,10 @@ async def y_isolation(conn):
     await platform(conn, "INSERT INTO account_custodian_balances (org_id, account_id, source_system, environment, "
                          "account_balance, as_of_date) VALUES ($1, $2, 'altruist', 'sandbox', 777.77, $3) "
                          "ON CONFLICT DO NOTHING", ORG_B, ACC_B, D0, fetch="execute")
+    # the section sets up its own org-A row too (never relies on the balance section having run)
+    await platform(conn, "INSERT INTO account_custodian_balances (org_id, account_id, source_system, environment, "
+                         "account_balance, as_of_date) VALUES ($1, $2, 'altruist', 'sandbox', 111.11, $3) "
+                         "ON CONFLICT DO NOTHING", ORG_A, ACC_BAL, D0, fetch="execute")
     await platform(conn, "INSERT INTO portfolio.custodian_tax_lots (org_id, account_id, source_system, environment, "
                          "external_id, quantity, cost_basis_adjusted, as_of_date) VALUES ($1, $2, 'altruist', 'sandbox', "
                          "'iso-lot-b', 1, 10, $3) ON CONFLICT DO NOTHING", ORG_B, ACC_B, D0, fetch="execute")
