@@ -865,6 +865,14 @@ async def build_block(pool, *, org_id, actor_id, instruction_ids: list, route: s
                 + (f"; and {cross_why}" if cross_why else ""))
         if not plan["members"]:
             raise BlockError("no eligible instruction was chosen")
+        if route == RT.SIM_ROUTE:       # cpsim05 D6 — the simulated FIX route only when EVERY member is simulated
+            from services import fix_sim_blocks as FB
+
+            sim_why = [w for m in plan["members"]
+                       if (w := await FB.member_refusal(conn, org_id, m["instruction"], m["account"]))]
+            if sim_why:
+                raise BlockConflict("the simulated FIX route needs every member at the simulated counterparty: "
+                                    + "; ".join(sim_why) + " — build it on the manual route")
         executor = plan["executor_type"]
         ea = None
         if executor in ("broker", "trader"):
@@ -1023,6 +1031,12 @@ async def _apply_block_outcome(pool, org_id, task: dict, outcome: str, actor_id,
                                    from_status="pending_approval", to_status="draft", actor_id=actor_id,
                                    detail={"task_id": task["id"], "note": note})
     await publish(pool, [ref])
+    if outcome == "approve" and new.get("route") == RT.SIM_ROUTE:
+        # cpsim05 D6 — the block's own maker-checker is its approval of record: its simulated FIX steps run after
+        # this request (simulated counterparty only)
+        from services import fix_sim_blocks as FB
+
+        FB.after_block_approved(pool, org_id=org_id, block=new, actor_id=actor_id)
     return new
 
 
@@ -1079,11 +1093,17 @@ async def decide(pool, *, org_id, block_id, actor_id, outcome: str, note: str | 
 
 
 # ── Sent, fills ─────────────────────────────────────────────────────────────
-async def mark_sent(pool, *, org_id, block_id, actor_id, channel: str, note: str | None = None) -> dict:
+async def mark_sent(pool, *, org_id, block_id, actor_id, channel: str, note: str | None = None,
+                    via_fix: bool = False) -> dict:
     """approved → sent, and each account instruction with it (rep2 'sent',
-    channel and person recorded on both)."""
+    channel and person recorded on both). cpsim05: the 'fix_sim' channel is
+    recorded ONLY by the simulated FIX block step (services.fix_sim_blocks,
+    ``via_fix``) — never claimed by hand."""
     if channel not in X.SENT_CHANNEL_LABELS:
         raise BlockError(f"channel must be one of {list(X.SENT_CHANNEL_LABELS)}")
+    if (channel == X.FIX_SIM_CHANNEL) != bool(via_fix) or channel == X.CUSTODIAN_CHANNEL:
+        raise BlockError(f"choose one of {list(X.MANUAL_SENT_CHANNELS)} — the simulated FIX channel is recorded only "
+                         "by the block's simulated FIX step")
     now = datetime.now(timezone.utc)
     refs, xrefs = [], []
     async with pool.acquire() as conn:

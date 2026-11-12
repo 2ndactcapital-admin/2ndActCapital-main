@@ -61,7 +61,7 @@ TAG_NAMES = {8: "BeginString", 9: "BodyLength", 35: "MsgType", 49: "SenderCompID
              151: "LeavesQty", 6: "AvgPx", 64: "SettlDate", 75: "TradeDate", 58: "Text", 102: "CxlRejReason",
              434: "CxlRejResponseTo", 45: "RefSeqNum", 371: "RefTagID", 372: "RefMsgType",
              373: "SessionRejectReason", 70: "AllocID", 71: "AllocTransType", 626: "AllocType", 53: "Quantity",
-             73: "NoOrders", 78: "NoAllocs", 79: "AllocAccount", 80: "AllocQty", 87: "AllocStatus",
+             73: "NoOrders", 78: "NoAllocs", 79: "AllocAccount", 80: "AllocQty", 467: "IndividualAllocID", 87: "AllocStatus",
              88: "AllocRejCode", 554: "Password", 96: "RawData"}
 #: required tags per inbound message type (after the header)
 REQUIRED = {"D": (11, 1, 54, 40), "F": (41, 11, 54), "H": (11,), "J": (70, 71, 54, 53, 6, 73, 11, 78)}
@@ -406,12 +406,18 @@ async def order_status(conn, cp: dict, fields) -> list[tuple[str, list]]:
 
 
 def _alloc_ack(alloc_id: str, status: str, trade_date: date, *, code: str | None = None,
-               text: str | None = None) -> tuple[str, list]:
+               text: str | None = None, legs: list[tuple[str, str]] | None = None) -> tuple[str, list]:
+    """35=P. Accepted: each account with its booked transaction (78 / 79 / 467 IndividualAllocID — the id the
+    account's synced transaction carries, so Hollisworks reconciles against the feed)."""
     f = [(70, alloc_id), (75, ymd(trade_date)), (87, status)]
     if code is not None:
         f.append((88, code))
     if text:
         f.append((58, text))
+    if legs:
+        f.append((78, str(len(legs))))
+        for acct, txn in legs:
+            f += [(79, acct), (467, txn)]
     return "P", f
 
 
@@ -450,10 +456,11 @@ async def allocate(conn, cp: dict, fields, *, clock: date) -> list[tuple[str, li
     total = _dec(fields, 53, required=True)
     price = _dec(fields, 6, required=True)
     cid = str(cp["id"])
-    done = await conn.fetch("SELECT account_external_id FROM cpsim.fix_allocations WHERE counterparty_id = $1::uuid "
-                            "AND alloc_id = $2", cid, alloc_id)
+    done = await conn.fetch("SELECT account_external_id, book_transaction_id FROM cpsim.fix_allocations WHERE "
+                            "counterparty_id = $1::uuid AND alloc_id = $2 ORDER BY account_external_id", cid, alloc_id)
     if done:
-        return [_alloc_ack(alloc_id, "0", clock, text=f"already accepted ({len(done)} account(s)) — nothing booked twice")]
+        return [_alloc_ack(alloc_id, "0", clock, text=f"already accepted ({len(done)} account(s)) — nothing booked twice",
+                           legs=[(r["account_external_id"], r["book_transaction_id"]) for r in done])]
     row = await SO._live(conn, cid, client_order_id=first(fields, 11))
     if row is None or (first(fields, 37) and first(fields, 37) != row["order_id"]):
         return [_alloc_ack(alloc_id, "2", clock, code="7", text="unknown block order (ClOrdID / OrderID)")]
@@ -477,15 +484,17 @@ async def allocate(conn, cp: dict, fields, *, clock: date) -> list[tuple[str, li
     sec = await B.security_row(conn, str(row["security_id"]))
     idents = await SO._identifiers(conn, row["security_id"])
     settle = next_business_day(clock + timedelta(days=1))
+    booked = []
     for acct, q in legs:
         txn = "sim-a-" + _h(cid, "alloc", alloc_id, acct)
+        booked.append((acct, txn))
         await SO._book_move(conn, cid, {**dict(row), "account_external_id": acct}, sec, idents, q, price, clock, txn,
                             settle, txn_external_id=txn)
         await conn.execute(
             "INSERT INTO cpsim.fix_allocations (counterparty_id, order_row_id, alloc_id, account_external_id, quantity, "
             "price, trade_date, settle_date, book_transaction_id) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, "
             "$9)", cid, row["id"], alloc_id, acct, q, price, clock, settle, txn)
-    return [_alloc_ack(alloc_id, "0", clock)]
+    return [_alloc_ack(alloc_id, "0", clock, legs=sorted(booked))]
 
 
 async def handle(conn, cp: dict, fields, *, clock: date, behaviour: dict) -> list[tuple[str, list]]:
