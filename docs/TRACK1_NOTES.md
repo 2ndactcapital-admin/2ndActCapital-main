@@ -69,3 +69,43 @@ Super Admin → Security data → Security master (`components/securityData/Secu
 predicate builder `security_master_summary._where` — TRACK1 adds `q` (dailyops1's search predicate: name / short name
 contains, ticker / CUSIP prefix), `exchange`, `category` (fund_category), `tracked`, `in_list` to that SAME builder, so
 a bulk action's count and the list it acts on can never disagree.
+
+## Task 2 — schema + service (2026-11-12)
+- `docs/track1_part1.sql` — APPLIED (`scripts/_apply_track1.py --all` → SCHEMA OK; all three tables empty).
+- `services/security_data/tracking.py` — track / untrack (ids), by filter (THE master predicates,
+  `security_master_summary._where`, re-evaluated inside the write and required to equal the confirmed count), by
+  named list; estimate; progress; list upsert. One `audit_log` row per action on the platform org
+  (`security_data.tracked` / `security_data.untracked` / `security_data.list_loaded`), the BUGFIX4 pattern.
+- Cap **3,000** per action (track and untrack): the largest intended list (Russell 2000, ~2,000) fits; 3,000 is 1.5 days
+  of the free source's budget and already beyond what it can keep current daily; the broad filters a slip would select
+  (all equities 8,666 · all funds 6,133) are refused with the count. An EMPTY filter is refused (the whole master).
+- `prices.coverage_set` reads live `tracked` rows as the reason **'tracked'** (an `OPTIONAL_SOURCES` entry — read when
+  the table exists; platform-wide, the test-org rule does not apply). Existing reasons untouched.
+- `prices.nightly`: gap fill stalest-first; while new members wait it takes at most half the remaining deadline.
+  `summary.tracked_progress` ("1,240 of 2,700 loaded") on the nightly and the backfill's run rows.
+- Routes (`routers/security_master.py`, all `require_super_admin` first): GET `/tracked`, POST `/tracked/estimate`,
+  `/tracked/track`, `/tracked/untrack`; the master list gains `q`, `exchange`, `category`, `tracked`, `in_list` and per-row
+  `tracked` / `has_price`. `GET /market/securities/search` gains a `tracking` block (can_track = Super Admin, else the
+  disabled reason; which results are tracked; the note that tracking does not by itself make a security selectable
+  there).
+
+## Task 3 — list loader (2026-11-12)
+- Data file `docs/security_lists/security_lists_v1.json` (DRAFTED 2026-11-12, `reviewed_on: null` — operator review owed):
+  Core ETFs 42 · Fixed income 27 · Commodities 12 · Key benchmarks 16 (incl. SPY / AGG / ACWI) · S&P 500 (SPY via
+  ssga_spdr) · Russell 2000 (IWM via sec_nport). Each list's `overlap_note` names the FRED / Market Indicators series it
+  does NOT duplicate (Treasury yields, TIPS real yield, credit spreads, WTI / Brent / Henry Hub / gold / copper spot,
+  index levels).
+- Resolution: `services/security_data/security_lists.py`; operator CLI `scripts/security_lists_load.py`.
+- READ-ONLY dry run against the live master (2026-11-12, no network, nothing written):
+  Core ETFs 42/42 · Fixed income 27/27 · Commodities 12/12 · Key benchmarks 16/16 (0 misses on the curated lists) ·
+  S&P 500 **503 resolved, 1 miss** (`2602335D CONTRA HOLOGIC` — a contra / CVR line, correctly a miss) from the live
+  Replication Studio SPY snapshot as of 2026-11-11 · Russell 2000: "would fetch IWM's holdings from sec_nport" (no
+  snapshot; network = the real run). All lists: 562 distinct; 539 need history = 539 calls = 1 day at 2,000/day; upkeep
+  572 calls / day — WARNING: the nightly refreshes ~128 a night, each refreshed every 5 nights (run the backfill to
+  catch up).
+- [FIND] the first dry run had **31** S&P 500 misses: non-US-domiciled constituents (Linde, Accenture, Chubb, Medtronic,
+  Eaton …) carry G- / N- CUSIPs the master lacks, and Replication Studio's resolver uses the ticker only when a row has
+  NO strong identifier. Lists now fall back to the ticker when the strong id misses (ambiguous tickers still refused);
+  30 recovered. Replication Studio's own (stricter, replica-safe) rule is unchanged.
+- [FIND] the master's 13 `index` securities carry Bloomberg-style tickers (SPX, RTY, NDX …) the free source cannot
+  price, so "Key benchmarks" tracks ETF proxies.
