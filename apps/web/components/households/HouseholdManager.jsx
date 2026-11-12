@@ -18,6 +18,7 @@ import { NetWorthLines } from "@/components/crm/LiabilitiesTab";
 import { formatMoney } from "@/lib/crmDetail.mjs";
 import { skippedSentence } from "@/lib/bugfix3.mjs";
 import { accountLine, billableDefault, dvpMissing, dvpReason, ownerOptions, withCounts } from "@/lib/portentry2.mjs";
+import OpenCustodianAccountAction from "@/components/households/OpenCustodianAccount";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-6";
 const input = "w-full rounded-[6px] border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A]";
@@ -507,6 +508,8 @@ function HouseholdCard({ row, onDetail }) {
               )}
               {canWrite && <AddAccount key={detail.member_count + ":" + detail.account_count} household={detail}
                 vocabularies={detail.vocabularies} onAdded={load} />}
+              {/* CPSIM06 — "Open account at custodian" (SIMULATED custodian only): present only on the server's can_open */}
+              <OpenCustodianAccountAction household={detail} onOpened={load} />
             </>
           )}
         </div>

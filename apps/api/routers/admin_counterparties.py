@@ -21,6 +21,10 @@ the cpsim work runs AS role ``cpsim_app`` (cpsim.db.as_simulator) and the audit 
                                                              settled fills' cash, listed too
     GET  /admin/counterparties/{id}/orders                  cpsim03: the orders received (read-only)
     GET  /admin/counterparties/{id}/fix/messages            cpsim05: the FIX session + message log (read-only)
+    GET  /admin/counterparties/{id}/realtime                cpsim06 D6: simulator users, contacts (tax ids last four
+                                                             only), drafts + opened accounts, the validation log
+    POST /admin/counterparties/{id}/realtime/users          cpsim06: a simulator user; its password shown ONCE
+    POST /admin/counterparties/{id}/realtime/users/{user_id}/revoke   cpsim06: revoke it (and its tokens)
     GET  /admin/counterparties/{id}/transfers               cpsim04: the transfers a custodian received (+ cash ledger)
     POST /admin/counterparties/{id}/transfers/{transfer_id}/consent   cpsim04 D8: "Record member consent"
     GET  /admin/counterparties/{id}/received                cpsim04: a BANK's received transfers (+ its links)
@@ -85,9 +89,9 @@ GROUP_LABELS = {"connection": "Connection", "fix": "FIX session", "bank_domestic
 TABS = [("connection", "Connection"), ("fix", "FIX"), ("bank", "Bank details"), ("behaviour", "Behaviour"),
         ("clock", "Clock"), ("activity", "Activity"), ("import_export", "Import / Export"),
         ("connections", "Connections"), ("webhooks", "Webhooks"), ("conformance", "Conformance"), ("orders", "Orders"),
-        ("transfers", "Transfers"), ("received", "Received")]
+        ("transfers", "Transfers"), ("received", "Received"), ("realtime", "Realtime")]
 #: cpsim02 — the tabs that need a BOOK (a REST + OAuth custodian type); the page enables them per type from this list
-BOOK_TABS = ["import_export", "connections", "webhooks", "conformance", "orders", "transfers"]
+BOOK_TABS = ["import_export", "connections", "webhooks", "conformance", "orders", "transfers", "realtime"]
 #: cpsim04 D6 — a simulated BANK keeps a book too (cash accounts) and shows what it received
 BANK_TABS = ["import_export", "received"]
 TRANSFER_STATUS_LABELS = {"received": "Received", "pending_consent": "Awaiting the member's consent",
@@ -1024,3 +1028,67 @@ async def run_conformance(request: Request, counterparty_id: UUID, body: Conform
                                           audit_payload=lambda rid: {"run_id": rid, "passed": out["passed"],
                                                                      "failed": out["failed"]})
     return _envelope(principal, {"run_id": run_id, **out}, types)
+
+
+# ── cpsim06 D6: the Realtime tab (account opening at the SIMULATED custodian) ───────────────────────────────────────
+class RealtimeUserIn(_Body):
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
+
+
+REALTIME_NOTES = [
+    "SIMULATED — Realtime-API-shaped account opening. Every path and field is ASSUMED: the real Realtime API's paths "
+    "are not published, and Hollisworks has no Realtime access.",
+    "In good order → opened at once (ACTIVE, opened on the counterparty clock date, in the accounts feed). No invitation, "
+    "no client portal, no approval step. A refusal lists every problem.",
+    "Tax ids are stored as their last four + a salted hash; no date of birth is stored.",
+]
+
+
+@router.get(f"{_P}/{{counterparty_id}}/realtime")
+async def realtime_tab(request: Request, counterparty_id: UUID, limit: int = 100):
+    """cpsim06 D6 — one query per list (no per-row reads)."""
+    from cpsim import realtime as RTM
+
+    lim = max(1, min(int(limit), 500))
+
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        return {"users": await RTM.users(c, counterparty_id), "contacts": await RTM.contacts(c, counterparty_id, lim),
+                "drafts": await RTM.drafts(c, counterparty_id, lim),
+                "validation_log": await RTM.validation_log(c, counterparty_id, lim),
+                "realtime": RTM.vocabularies(), "notes": REALTIME_NOTES, "limit": lim}
+    principal, out, types = await _sim(request, fn)
+    return _envelope(principal, out, types)
+
+
+@router.post(f"{_P}/{{counterparty_id}}/realtime/users")
+async def realtime_user_create(request: Request, counterparty_id: UUID, body: RealtimeUserIn):
+    """A simulator user for the password grant. The generated password is returned ONCE (``issued``) and stored only as
+    a salted hash; the audit row carries the username, never the password."""
+    from cpsim import realtime as RTM
+
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        try:
+            return await RTM.create_user(c, counterparty_id, body.username, request.state.principal.user_id)
+        except RTM.RealtimeError as exc:
+            raise (R.Conflict(str(exc)) if exc.status == 409 else R.RegistryError(str(exc))) from exc
+    principal, out, types = await _sim(request, fn, action="counterparty.realtime_user_created",
+                                       resource=counterparty_id,
+                                       audit_payload=lambda o: {"user_id": o["id"], "username": o["username"]})
+    return _envelope(principal, {"user": {"id": out["id"], "username": out["username"]},
+                                 "issued": {"realtime_password": out["password"]}, "shown_once": True}, types)
+
+
+@router.post(f"{_P}/{{counterparty_id}}/realtime/users/{{user_id}}/revoke")
+async def realtime_user_revoke(request: Request, counterparty_id: UUID, user_id: UUID):
+    from cpsim import realtime as RTM
+
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        if not await RTM.revoke_user(c, counterparty_id, user_id):
+            raise HTTPException(status_code=404, detail="no live simulator user with that id")
+        return {"user_id": str(user_id), "revoked": True}
+    principal, out, types = await _sim(request, fn, action="counterparty.realtime_user_revoked",
+                                       resource=counterparty_id, audit_payload=lambda o: o)
+    return _envelope(principal, out, types)

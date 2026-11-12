@@ -1,5 +1,5 @@
 {
- "app_route_count": 1077,
+ "app_route_count": 1080,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -21331,6 +21331,60 @@
    "name": "run_conformance",
    "note": "",
    "path": "/api/v1/admin/counterparties/{counterparty_id}/conformance",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "realtime_tab",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/realtime",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "realtime_user_create",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/realtime/users",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_counterparties",
+   "name": "realtime_user_revoke",
+   "note": "",
+   "path": "/api/v1/admin/counterparties/{counterparty_id}/realtime/users/{user_id}/revoke",
    "public": false,
    "write": true
   },
