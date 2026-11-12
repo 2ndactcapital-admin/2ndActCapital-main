@@ -274,11 +274,14 @@ async def load_holdings(conn, org_id, account_id) -> dict:
     the latest ``account_balances_daily.cash_value`` (one row: latest date,
     final first, billing source first — never a sum across source systems),
     plus any position whose asset_type is 'cash'."""
-    from services import execution as X
     from services import rebalance_engine as E
 
+    from services import custodian_lots as CL
+
     rows = [dict(r) for r in await conn.fetch(_POS_SQL, str(org_id), str(account_id))]
-    lots = await X.account_lots(conn, org_id, account_id)
+    # ALTREAD1 D4 — Hollisworks lots (exactly as before) unless the account's approved lot-method row says 'custodian';
+    # a custodian lot arrives with id None (it can never be named on an instruction)
+    lots, lot_source = await CL.lots_for_engine(conn, org_id, account_id)
     by_sec: dict[str, list] = {}
     for lot in lots:
         by_sec.setdefault(lot["global_security_id"], []).append(lot)
@@ -334,7 +337,7 @@ async def load_holdings(conn, org_id, account_id) -> dict:
     cash = (E.d(bal["cash_value"]) if bal else Decimal(0)) + cash_from_positions
     return {"holdings": list(holdings.values()), "unresolved": unresolved, "cash": cash,
             "cash_as_of": bal["as_of_date"] if bal else None, "cash_source": bal["source_system"] if bal else None,
-            "valuation_as_of": await valuation_as_of(conn, org_id, account_id)}
+            "valuation_as_of": await valuation_as_of(conn, org_id, account_id), "lot_source": lot_source}
 
 
 async def _fresher_closes(conn, org_id, holdings: dict) -> None:

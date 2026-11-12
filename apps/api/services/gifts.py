@@ -97,6 +97,7 @@ EXCLUSION_LABELS = {
     "unknown_cost": "not estimated — needs the lot's cost",
     "unknown_term": "not estimated — needs the lot's acquisition date",
     "average_cost": "carried at average cost — no lot choice for an in-kind gift",
+    "custodian_lot": "the custodian's reported lot — an in-kind gift names a Hollisworks lot",
 }
 OPEN_ITEMS = (
     "AGI limits (30% of AGI for appreciated long-term stock to a public charity or DAF, 20% to a private foundation; "
@@ -131,6 +132,8 @@ def classify(lot: E.Lot, price: Decimal | None, today: date, *, authority: str, 
         return "unpriced"
     if lot.unit_cost is None:
         return "unknown_cost"
+    if lot.id is None:          # ALTREAD1 D4 — a custodian-reported lot (lot source 'custodian') has no Hollisworks id
+        return "custodian_lot"
     term = E.term_of(lot, today)
     if term == "unknown" or lot.acquired is None:      # the gift lot records its acquisition date (Form 8283)
         return "unknown_term"

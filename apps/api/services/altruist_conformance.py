@@ -1,4 +1,9 @@
-"""cpsim02 D11 — the Altruist-compatible CONFORMANCE SUITE (core).
+"""cpsim02 D11 — the Altruist-compatible CONFORMANCE SUITE (core). ALTREAD1 D5 — every READ check (C00–C17) is
+re-pinned to Altruist's PUBLISHED Open API (developer.altruist.com, read 2026-11-11): each row's ``contract`` names the
+DOCUMENTED page it tests (open-api-authentication, endpoints + the resource pages, json-code-examples); the paging,
+envelope, date-format, cost-basis and transactions-window checks are new. The orders (§8) and transfers (§9) groups
+are unchanged checks of ASSUMED contracts (not part of Altruist's published API — Realtime / FIX); they observe the
+book through the documented read paths now.
 
 One suite, two targets: the simulator (now) and Altruist's real sandbox (the day access arrives — any difference found
 then is a SIMULATOR defect). Every check cites the contract row it tests (docs/cpsim/ALTRUIST_CONTRACT.md §6 items 1–7,
@@ -27,26 +32,42 @@ from __future__ import annotations
 
 import re
 import secrets
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 
 from services import altruist_oauth as AO
+from services import altruist_positions_sync as APS
 
+#: the DOCUMENTED pages each read check cites (developer.altruist.com/docs, read 2026-11-11)
+DOC_AUTH = "DOCUMENTED open-api-authentication"
+DOC_ENDPOINTS = "DOCUMENTED endpoints"
+DOC_JSON = "DOCUMENTED json-code-examples"
 #: the types the client maps (services/altruist_positions_sync.TRANSACTION_TYPE_MAP): its 7 + cpsim04's 7 cash types
-TXN_TYPES = ("buy", "sell", "dividend", "interest", "fee", "fee_expense", "adjustment",
-             "transfer_in", "transfer_out", "ach_in", "ach_out", "wire_in", "wire_out", "ach_return")
-POSITION_FIELDS = ("id", "cusip", "isin", "ticker", "name", "asset_type", "quantity", "market_value", "cost_basis",
-                   "currency_code")
-TRANSACTION_FIELDS = ("id", "type", "cusip", "isin", "ticker", "name", "trade_date", "settle_date", "quantity", "price",
-                      "gross_amount", "fees", "taxes", "net_amount", "currency_code")
-TOKEN_FIELDS = ("access_token", "refresh_token", "expires_in", "scope", "token_type")
+TXN_TYPES = tuple(APS.TRANSACTION_TYPE_MAP)
+HOUSEHOLD_FIELDS = ("id", "name")
+ACCOUNT_FIELDS = ("id", "rep_code", "account_number", "account_type", "account_name", "status", "date_open",
+                  "date_closed", "as_of_date", "account_balance")
+ACCOUNT_STATUSES = ("ACTIVE", "REJECTED", "CLOSED", "RESTRICTED", "PENDING")
+POSITION_FIELDS = ("id", "cusip", "symbol", "description", "long_short_indicator", "currency_code", "quantity",
+                   "as_of_date", "security_type", "market_value")
+LOT_FIELDS = ("id", "cusip", "symbol", "description", "quantity", "market_value", "cost_basis_unadjusted",
+              "cost_basis_adjusted", "unrealized_gain_loss", "as_of_date", "open_date")
+TRANSACTION_FIELDS = ("id", "cusip", "symbol", "security_type", "quantity", "price", "amount", "interest",
+                      "currency_code", "transaction_type", "transaction_subtype", "transaction_description",
+                      "cancellation_reversal_flag", "transaction_fees", "broker_fees", "other_fees", "TEFRA_withheld",
+                      "state_tax_withheld", "as_of_date", "transaction_date", "settle_date")
+TOKEN_FIELDS = ("access_token", "refresh_token", "expires_in", "token_type")
+#: the ASSUMED orders / transfers lists answer in ONE response (contract §8 / §9) — none of these keys
 PAGINATION_KEYS = ("next", "cursor", "next_cursor", "has_more", "links", "page", "total_pages")
 ISO_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+DOC_DATE_RX = re.compile(r"^\d{4}/\d{2}/\d{2}$")
 NUM_RX = re.compile(r"^-?\d+(\.\d+)?$")
 SIM_HEADER = "x-counterparty-simulated"
+#: the label every orders / transfers row carries — not part of Altruist's published API
+ASSUMED = "ASSUMED (not published — Realtime / FIX)"
 DEFAULT_REDIRECT = "https://conformance.hollisworks.invalid/altruist/callback"
 
 
@@ -54,14 +75,22 @@ class Suite:
     def __init__(self):
         self.results: list[dict] = []
 
+    @staticmethod
+    def _label(cid: str, contract: str) -> str:
+        """ALTREAD1 D5 — the orders (O…) and transfers (T…) groups test ASSUMED contracts: say so on every row."""
+        if cid[:1] in ("O", "T") and not contract.startswith(ASSUMED):
+            return f"{ASSUMED} {contract}"
+        return contract
+
     def check(self, passed, cid: str, contract: str, label: str, detail: str = "") -> bool:
         ok = bool(passed)
-        self.results.append({"id": cid, "contract": contract, "label": label, "passed": ok,
+        self.results.append({"id": cid, "contract": self._label(cid, contract), "label": label, "passed": ok,
                              "detail": "" if ok else str(detail)[:400]})
         return ok
 
     def na(self, cid: str, contract: str, label: str, why: str) -> None:
-        self.results.append({"id": cid, "contract": contract, "label": label, "passed": None, "detail": why})
+        self.results.append({"id": cid, "contract": self._label(cid, contract), "label": label, "passed": None,
+                             "detail": why})
 
     @property
     def failed(self) -> int:
@@ -78,12 +107,15 @@ def _num_ok(v) -> bool:
 
 
 async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], transport: Any = None,
-              redirect_uri: str = DEFAULT_REDIRECT, scope: str = "accounts:read", timeout: float = 15.0,
+              redirect_uri: str = DEFAULT_REDIRECT, scope: str = AO.DEFAULT_SCOPE, timeout: float = 15.0,
               expect_simulated_header: bool | None = None, max_accounts: int = 25, orders: dict | None = None,
-              transfers: dict | None = None) -> dict:
+              transfers: dict | None = None, today: date | None = None, lookback_days: int = 400) -> dict:
     """Run every check. Returns ``{"target", "passed", "failed", "results": [...]}``. Never raises for a server
-    defect — a defect is a failed check; a client-side refusal (D1) is a failed check too."""
+    defect — a defect is a failed check; a client-side refusal (D1) is a failed check too. ``today`` (the target's
+    business date when known) ends the transactions window checked by C14b; it starts ``lookback_days`` earlier."""
     S = Suite()
+    end = today or date.today()
+    window = (end - timedelta(days=lookback_days), end)
     sim = environment == AO.SIMULATOR if expect_simulated_header is None else expect_simulated_header
     login, api = hosts["login_base"], hosts["api_base"]
     client_id, secret = credentials
@@ -105,198 +137,338 @@ async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], tr
         q = parse_qs(urlsplit(res.headers.get("location") or "").query)
         return (q.get("code") or [""])[0], (q.get("state") or [""])[0]
 
-    # §6.1 / T1 — authorize
+    # ── AUTH (DOCUMENTED — docs/open-api-authentication) ────────────────────────────────────────────────────────
+    try:
+        state0 = secrets.token_urlsafe(32)
+        built = AO.build_authorize_url(environment=environment, state=state0, scope=scope, hosts=hosts,
+                                       credentials=(client_id, secret), redirect_uri=redirect_uri)
+        q = parse_qs(urlsplit(built).query)
+        S.check(built.startswith(f"{login}/api/oauth2/authorize?") and q.get("scope") == ["openid"]
+                and q.get("state") == [state0] and q.get("client_id") == [client_id]
+                and q.get("redirect_uri") == [redirect_uri], "C00", f"{DOC_AUTH} (authorize URL)",
+                "the client's authorize URL: the login host + /api/oauth2/authorize, scope openid, client_id, "
+                "redirect_uri, state", f"path {urlsplit(built).path}, scope {q.get('scope')}")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "C00", f"{DOC_AUTH} (authorize URL)", "the client's authorize URL", f"{type(exc).__name__}: {exc}")
     try:
         res, state = await authorize()
         code, echoed = code_of(res)
         S.check(res.status_code == 302 and (res.headers.get("location") or "").startswith(redirect_uri) and code
-                and echoed == state, "C01", "§6.1 / T1",
+                and echoed == state, "C01", f"{DOC_AUTH} (authorize)",
                 "authorize: 302 to redirect_uri with a code and the state echoed",
                 f"status {res.status_code}, location starts ok: "
                 f"{(res.headers.get('location') or '').startswith(redirect_uri)}")
     except Exception as exc:  # noqa: BLE001
-        S.check(False, "C01", "§6.1 / T1", "authorize: 302 to redirect_uri with a code and the state echoed",
-                f"{type(exc).__name__}: {exc}")
+        S.check(False, "C01", f"{DOC_AUTH} (authorize)", "authorize: 302 to redirect_uri with a code and the state "
+                "echoed", f"{type(exc).__name__}: {exc}")
         code = ""
     try:
         bad, _ = await authorize("00000000-0000-0000-0000-000000000000")
-        S.check(bad.status_code >= 400 and "location" not in bad.headers, "C02", "§6.1 / T1 (client_id)",
+        S.check(bad.status_code >= 400 and "location" not in bad.headers, "C02", f"{DOC_AUTH} (client_id)",
                 "authorize: an unknown client_id is refused (≥ 400, no redirect)", f"status {bad.status_code}")
     except Exception as exc:  # noqa: BLE001
-        S.check(False, "C02", "§6.1 / T1 (client_id)", "authorize: an unknown client_id is refused",
+        S.check(False, "C02", f"{DOC_AUTH} (client_id)", "authorize: an unknown client_id is refused",
                 f"{type(exc).__name__}: {exc}")
 
-    # §6.2 / T2 — the client's own exchange, then a used code
     tokens = None
     try:
         tokens = await AO.exchange_code_for_tokens(environment=environment, code=code, hosts=hosts,
                                                    transport=transport, credentials=credentials,
                                                    redirect_uri=redirect_uri, timeout=timeout)
-        S.check(bool(tokens.access_token and tokens.refresh_token and tokens.expires_in > 0), "C03", "§6.2 / T2",
-                "token (authorization_code): the client's exchange_code_for_tokens parses the response")
+        S.check(bool(tokens.access_token and tokens.refresh_token and tokens.expires_in > 0)
+                and AO.oauth_url(hosts, "token") == f"{api}/oauth2/token", "C03", f"{DOC_AUTH} (token)",
+                "token (authorization_code): the client posts to the API host + /oauth2/token and parses the response")
     except Exception as exc:  # noqa: BLE001
-        S.check(False, "C03", "§6.2 / T2", "token (authorization_code): the client's exchange_code_for_tokens "
-                                           "parses the response", f"{type(exc).__name__}: {exc}")
+        S.check(False, "C03", f"{DOC_AUTH} (token)", "token (authorization_code): the client's exchange parses the "
+                "response", f"{type(exc).__name__}: {exc}")
     try:
         await AO.exchange_code_for_tokens(environment=environment, code=code, hosts=hosts, transport=transport,
                                           credentials=credentials, redirect_uri=redirect_uri, timeout=timeout)
-        S.check(False, "C04", "§6.2 / T2", "token: a used authorization code is refused", "a used code was accepted")
+        S.check(False, "C04", f"{DOC_AUTH} (token)", "token: a used authorization code is refused",
+                "a used code was accepted")
     except AO.AltruistOAuthError:
-        S.check(True, "C04", "§6.2 / T2", "token: a used authorization code is refused")
+        S.check(True, "C04", f"{DOC_AUTH} (token)", "token: a used authorization code is refused")
     except Exception as exc:  # noqa: BLE001
-        S.check(False, "C04", "§6.2 / T2", "token: a used authorization code is refused", f"{type(exc).__name__}")
-
-    # §6.2 / T2 — the raw token response, primary field names, token_type Bearer
+        S.check(False, "C04", f"{DOC_AUTH} (token)", "token: a used authorization code is refused",
+                f"{type(exc).__name__}")
     try:
         res2, _s = await authorize()
         code2, _e = code_of(res2)
-        r = await raw("POST", f"{login}/oauth/token", data={
-            "grant_type": "authorization_code", "code": code2, "redirect_uri": redirect_uri, "client_id": client_id,
-            "client_secret": secret}, headers={"Accept": "application/json"})
+        form = {"grant_type": "authorization_code", "code": code2, "redirect_uri": redirect_uri,
+                "client_id": client_id, "client_secret": secret, "token_type": "id"}
+        r = await raw("POST", f"{api}/oauth2/token", data=form, headers={"Accept": "application/json"})
         body = r.json() if r.status_code < 400 else {}
-        S.check(r.status_code == 200 and all(k in body for k in TOKEN_FIELDS) and body.get("token_type") == "Bearer"
-                and isinstance(body.get("expires_in"), int), "C05", "§6.2 / T2",
-                "token response carries access_token, refresh_token, expires_in (int), scope, token_type Bearer",
-                f"status {r.status_code}, keys {sorted(body)}")
+        S.check(r.status_code == 200 and all(k in body for k in TOKEN_FIELDS)
+                and isinstance(body.get("expires_in"), int), "C05", f"{DOC_AUTH} (token response)",
+                "token response (POST {api}/oauth2/token, token_type=id) carries access_token, refresh_token, "
+                "expires_in (int), token_type", f"status {r.status_code}, keys {sorted(body)}")
+        if sim:
+            res3, _s3 = await authorize()
+            code3, _e3 = code_of(res3)
+            r3 = await raw("POST", f"{api}/oauth2/token", data={**form, "code": code3, "token_type": ""},
+                           headers={"Accept": "application/json"})
+            S.check(r3.status_code == 400, "C05b", f"{DOC_AUTH} (token_type=id)",
+                    "the simulator refuses a token request without token_type=id (the documented body)",
+                    f"status {r3.status_code}")
+        else:
+            S.na("C05b", f"{DOC_AUTH} (token_type=id)", "token_type=id enforced", "simulator-only strictness")
     except Exception as exc:  # noqa: BLE001
-        S.check(False, "C05", "§6.2 / T2", "token response primary fields", f"{type(exc).__name__}: {exc}")
+        S.check(False, "C05", f"{DOC_AUTH} (token response)", "token response primary fields",
+                f"{type(exc).__name__}: {exc}")
     try:
         await AO.exchange_code_for_tokens(environment=environment, code="cpsim_code_" + "0" * 40, hosts=hosts,
                                           transport=transport, credentials=(client_id, secret + "x"),
                                           redirect_uri=redirect_uri, timeout=timeout)
-        S.check(False, "C06", "§6.2 / T2 (client_secret)", "token: a wrong client_secret is refused", "accepted")
+        S.check(False, "C06", f"{DOC_AUTH} (client_secret)", "token: a wrong client_secret is refused", "accepted")
     except AO.AltruistOAuthError:
-        S.check(True, "C06", "§6.2 / T2 (client_secret)", "token: a wrong client_secret is refused")
+        S.check(True, "C06", f"{DOC_AUTH} (client_secret)", "token: a wrong client_secret is refused")
     except Exception as exc:  # noqa: BLE001
-        S.check(False, "C06", "§6.2 / T2 (client_secret)", "token: a wrong client_secret is refused",
+        S.check(False, "C06", f"{DOC_AUTH} (client_secret)", "token: a wrong client_secret is refused",
                 f"{type(exc).__name__}")
 
-    # §6.2 / T3 — refresh: the client's refresh_access_token; the old refresh token is spent
     access = tokens.access_token if tokens else ""
     if tokens:
         try:
             fresh = await AO.refresh_access_token(environment=environment, refresh_token=tokens.refresh_token,
                                                   hosts=hosts, transport=transport, credentials=credentials,
-                                                  timeout=timeout)
-            S.check(bool(fresh.access_token and fresh.access_token != tokens.access_token
-                         and fresh.refresh_token != tokens.refresh_token), "C07", "§6.2 / T3",
-                    "refresh: the client's refresh_access_token gets a new access AND refresh token (rotation)")
+                                                  timeout=timeout, redirect_uri=redirect_uri)
+            S.check(bool(fresh.access_token and fresh.access_token != tokens.access_token), "C07",
+                    f"{DOC_AUTH} (refresh_token grant)",
+                    "refresh (grant_type refresh_token, token_type=id): a new access token")
             access = fresh.access_token
-            try:
-                await AO.refresh_access_token(environment=environment, refresh_token=tokens.refresh_token,
-                                              hosts=hosts, transport=transport, credentials=credentials,
-                                              timeout=timeout)
-                S.check(False, "C08", "§6.2 / T3", "refresh: a spent refresh token is refused", "accepted twice")
-            except AO.AltruistOAuthError:
-                S.check(True, "C08", "§6.2 / T3", "refresh: a spent refresh token is refused")
+            if sim:
+                try:
+                    await AO.refresh_access_token(environment=environment, refresh_token=tokens.refresh_token,
+                                                  hosts=hosts, transport=transport, credentials=credentials,
+                                                  timeout=timeout)
+                    S.check(False, "C08", "(simulator) refresh rotation", "refresh: a spent refresh token is refused",
+                            "accepted twice")
+                except AO.AltruistOAuthError:
+                    S.check(True, "C08", "(simulator) refresh rotation", "refresh: a spent refresh token is refused")
+            else:
+                S.na("C08", "(rotation)", "refresh rotation", "Altruist does not document whether refresh tokens rotate")
         except Exception as exc:  # noqa: BLE001
-            S.check(False, "C07", "§6.2 / T3", "refresh rotates", f"{type(exc).__name__}: {exc}")
+            S.check(False, "C07", f"{DOC_AUTH} (refresh_token grant)", "refresh", f"{type(exc).__name__}: {exc}")
     else:
-        S.check(False, "C07", "§6.2 / T3", "refresh rotates", "no tokens from C03")
+        S.check(False, "C07", f"{DOC_AUTH} (refresh_token grant)", "refresh", "no tokens from C03")
 
-    # §6.3–6.6 / T4–T7 — resources through the client's fetch_resource AND raw
+    # ── READ PATH (DOCUMENTED — docs/endpoints, the resource pages, docs/json-code-examples) ────────────────────────
     headers = {"Authorization": f"Bearer {access}", "Accept": "application/json"}
 
-    async def both(resource: str, path: str, param_name: str | None, param: str | None):
-        items = await AO.fetch_resource(api_base=api, resource=resource, access_token=access, param=param,
-                                        timeout=timeout, transport=transport)
-        r = await raw("GET", f"{api}{path}", params={param_name: param} if param_name else None, headers=headers)
-        return items, r
+    async def raw_get(path: str, params: dict | None = None) -> tuple[httpx.Response, Any]:
+        r = await raw("GET", f"{api}{path}", params=params, headers=headers)
+        try:
+            return r, r.json()
+        except ValueError:
+            return r, None
+
+    def envelope_ok(body, key: str, echo: tuple[str, str] | None = None) -> str:
+        """'' when the body is the documented envelope, else what is wrong."""
+        if not isinstance(body, dict):
+            return f"body is {type(body).__name__}"
+        pg, data = body.get("paging"), body.get("data")
+        if not isinstance(pg, dict) or not all(isinstance(pg.get(k), int) for k in ("page", "page_size",
+                                                                                     "total_pages")):
+            return f"paging {pg!r} lacks page / page_size / total_pages"
+        if not isinstance(data, dict) or not isinstance(data.get(key), list):
+            return f"data.{key} is not a list (keys {sorted(body)})"
+        if echo and str(data.get(echo[0])) != str(echo[1]):
+            return f"data.{echo[0]} = {data.get(echo[0])!r}, expected {echo[1]!r}"
+        return ""
+
+    def dates_ok(rows: list[dict], fields: tuple[str, ...]) -> str:
+        for x in rows:
+            for f in fields:
+                v = x.get(f)
+                if v is None:
+                    continue
+                if not (isinstance(v, str) and DOC_DATE_RX.match(v)):
+                    return f"{x.get('id')}.{f} = {v!r} is not YYYY/MM/DD"
+                try:
+                    AO.parse_altruist_date(v)
+                except ValueError as exc:
+                    return str(exc)
+        return ""
+
+    def fields_ok(rows: list[dict], fields: tuple[str, ...], nums: tuple[str, ...]) -> str:
+        for x in rows:
+            missing = [k for k in fields if k not in x]
+            if missing:
+                return f"{x.get('id')}: missing {missing}"
+            if not (isinstance(x.get("id"), str) and x["id"]):
+                return "a row without an explicit string id"
+            bad = [k for k in nums if not _num_ok(x.get(k))]
+            if bad:
+                return f"{x.get('id')}: not a decimal {bad}"
+        return ""
 
     hh_items, accounts_all = [], []
     try:
-        hh_items, r = await both("households", "/api/v2/households", None, None)
-        body = r.json()
-        rows = body.get("households") if isinstance(body, dict) else None
-        S.check(r.status_code == 200 and isinstance(rows, list) and rows and all(
-            isinstance(x.get("id"), str) and x["id"] and isinstance(x.get("name"), str) for x in rows)
-            and len(rows) == len(hh_items), "C09", "§6.3 / T4",
-            'households: {"households": [{id, name}]} (primary key), non-empty, the client reads every one',
-            f"status {r.status_code}, keys {sorted(body) if isinstance(body, dict) else type(body).__name__}")
-        S.check(not any(k in body for k in PAGINATION_KEYS), "C10", "§6 (one response)",
-                "households: one response — no pagination keys", f"{[k for k in PAGINATION_KEYS if k in body]}")
+        hh_items = await AO.fetch_resource(api_base=api, resource="households", access_token=access, timeout=timeout,
+                                           transport=transport)
+        r, body = await raw_get(AO.HOUSEHOLDS_PATH, {"page": 0, "page_size": 1000})
+        why = envelope_ok(body, "households") or fields_ok((body.get("data") or {}).get("households") or [],
+                                                            HOUSEHOLD_FIELDS, ())
+        rows = ((body or {}).get("data") or {}).get("households") or []
+        S.check(r.status_code == 200 and not why and rows and len(rows) == len(hh_items), "C09",
+                f"{DOC_ENDPOINTS} households (GET {AO.HOUSEHOLDS_PATH})",
+                'households: {"paging": {page, page_size, total_pages}, "data": {"households": [{id, name}]}}, '
+                "non-empty, the client reads every one", f"status {r.status_code}: {why}")
     except Exception as exc:  # noqa: BLE001
-        S.check(False, "C09", "§6.3 / T4", "households", f"{type(exc).__name__}: {exc}")
+        S.check(False, "C09", f"{DOC_ENDPOINTS} households", "households", f"{type(exc).__name__}: {exc}")
+
+    # paging: several pages at page_size 1, an empty page past the end, the client reads the same set as one big page
+    try:
+        r0, b0 = await raw_get(AO.HOUSEHOLDS_PATH, {"page": 0, "page_size": 1})
+        pg = (b0 or {}).get("paging") or {}
+        total = pg.get("total_pages") if isinstance(pg.get("total_pages"), int) else 0
+        base = 1 if pg.get("page") == 1 else 0
+        if total < 2:
+            S.na("C10", f"{DOC_JSON} (paging)", "paging over several pages", "the target has fewer than 2 households")
+        else:
+            seen = []
+            for i in range(total):
+                _r, bi = await raw_get(AO.HOUSEHOLDS_PATH, {"page": i + base, "page_size": 1})
+                seen.extend(x["id"] for x in ((bi or {}).get("data") or {}).get("households") or [])
+            _r, past = await raw_get(AO.HOUSEHOLDS_PATH, {"page": total + base, "page_size": 1})
+            empty = ((past or {}).get("data") or {}).get("households")
+            small = await AO.fetch_pages(api_base=api, resource="households", access_token=access, page_size=1,
+                                         timeout=timeout, transport=transport)
+            S.check(sorted(seen) == sorted({h["id"] for h in hh_items}) and len(seen) == len(set(seen))
+                    and empty == [] and sorted(i["id"] for i in small.items) == sorted(seen)
+                    and small.pages >= total, "C10", f"{DOC_JSON} (paging)",
+                    "paging: page_size 1 walks total_pages distinct pages (base read from paging.page), the page past "
+                    "the end is empty, and the client's paged read returns the same set",
+                    f"total {total}, base {base}, seen {len(seen)}, empty {empty!r}, client {len(small.items)}")
+        r_big, _b = await raw_get(AO.HOUSEHOLDS_PATH, {"page": 0, "page_size": 1001})
+        if sim:
+            S.check(r_big.status_code == 400, "C10b", f"{DOC_ENDPOINTS} (page_size max 1000)",
+                    "the simulator refuses page_size above the documented maximum", f"status {r_big.status_code}")
+        else:
+            S.na("C10b", f"{DOC_ENDPOINTS} (page_size max 1000)", "page_size max", "simulator-only strictness")
+    except Exception as exc:  # noqa: BLE001
+        S.check(False, "C10", f"{DOC_JSON} (paging)", "paging", f"{type(exc).__name__}: {exc}")
+
     acct_ok, acct_detail = True, ""
     for hh in hh_items:
         try:
-            items, r = await both("accounts", "/v2/accounts", "household_id", hh["id"])
-            body = r.json()
-            rows = body.get("accounts") if isinstance(body, dict) else None
-            good = r.status_code == 200 and isinstance(rows, list) and all(
-                isinstance(x.get("id"), str) and x["id"] and isinstance(x.get("name"), str) for x in rows) \
-                and len(rows) == len(items) and not any(k in body for k in PAGINATION_KEYS)
-            if not good:
-                acct_ok, acct_detail = False, f"household {hh['id']}: status {r.status_code}"
+            items = await AO.fetch_resource(api_base=api, resource="accounts", access_token=access, param=hh["id"],
+                                            timeout=timeout, transport=transport)
+            r, body = await raw_get("/v2/accounts", {"household_id": hh["id"], "page": 0, "page_size": 1000})
+            rows = ((body or {}).get("data") or {}).get("accounts") or []
+            why = envelope_ok(body, "accounts", ("household_id", hh["id"])) or fields_ok(
+                rows, ACCOUNT_FIELDS, ("account_balance",)) or dates_ok(rows, ("as_of_date", "date_open",
+                                                                               "date_closed"))
+            if r.status_code != 200 or why or len(rows) != len(items) or any(
+                    x.get("status") not in ACCOUNT_STATUSES for x in rows):
+                acct_ok, acct_detail = False, f"household {hh['id']}: status {r.status_code}: {why or 'status / count'}"
             accounts_all.extend(items)
         except Exception as exc:  # noqa: BLE001
             acct_ok, acct_detail = False, f"{type(exc).__name__}: {exc}"
-    S.check(acct_ok and accounts_all, "C11", "§6.4 / T5",
-            'accounts?household_id=: {"accounts": [{id, name}]} per household, one response', acct_detail or "none")
+    S.check(acct_ok and accounts_all, "C11", f"{DOC_ENDPOINTS} accounts (GET /v2/accounts?household_id=)",
+            "accounts: data.household_id + data.accounts with every documented field (id, rep_code, account_number, "
+            "account_type, account_name, status ∈ ACTIVE/REJECTED/CLOSED/RESTRICTED/PENDING, date_open, date_closed, "
+            "as_of_date, account_balance); the client reads every one", acct_detail or "none")
 
-    pos_ok, pos_detail, txn_ok, txn_detail, ids_ok, dates_ok, link_ok, link_detail = (True, "", True, "", True, True,
-                                                                                      True, "")
+    pos_ok, pos_detail, lot_ok, lot_detail, txn_ok, txn_detail = True, "", True, "", True, ""
+    link_ok, link_detail, date_ok, date_detail, win_ok, win_detail = True, "", True, "", True, ""
     for acct in accounts_all[:max_accounts]:
+        aid = acct["id"]
+        enc = quote(aid, safe="")
         try:
-            p_items, r = await both("positions", "/v2/positions", "account_id", acct["id"])
-            body = r.json()
-            rows = body.get("positions") if isinstance(body, dict) else None
-            if not (r.status_code == 200 and isinstance(rows, list) and len(rows) == len(p_items)):
-                pos_ok, pos_detail = False, f"account {acct['id']}: status {r.status_code}, keys " \
-                                            f"{sorted(body) if isinstance(body, dict) else '?'}"
+            p_items = await AO.fetch_resource(api_base=api, resource="positions", access_token=access, param=aid,
+                                              timeout=timeout, transport=transport)
+            r, body = await raw_get(f"/v2/accounts/{enc}/positions/", {"page": 0, "page_size": 1000})
+            rows = ((body or {}).get("data") or {}).get("positions") or []
+            why = envelope_ok(body, "positions", ("account_id", aid)) or fields_ok(rows, POSITION_FIELDS,
+                                                                                    ("quantity", "market_value"))
+            if r.status_code != 200 or why or len(rows) != len(p_items):
+                pos_ok, pos_detail = False, f"account {aid}: status {r.status_code}: {why or 'count'}"
                 continue
-            for x in rows:
-                missing = [k for k in POSITION_FIELDS if k not in x]
-                if missing or not all(_num_ok(x.get(k)) for k in ("quantity", "market_value", "cost_basis")):
-                    pos_ok, pos_detail = False, f"account {acct['id']} position {x.get('id')}: missing primary " \
-                                                f"field(s) {missing}" if missing else "a number is not a decimal"
-                if not (isinstance(x.get("id"), str) and x["id"]):
-                    ids_ok = False
-            held = {(x.get("cusip") or x.get("isin") or x.get("ticker") or f"name:{(x.get('name') or '').lower()}")
-                    for x in rows}
-            held |= {v for x in rows for v in (x.get("cusip"), x.get("isin"), x.get("ticker")) if v}
-            t_items, r = await both("transactions", "/v2/transactions", "account_id", acct["id"])
-            body = r.json()
-            rows_t = body.get("transactions") if isinstance(body, dict) else None
-            if not (r.status_code == 200 and isinstance(rows_t, list) and len(rows_t) == len(t_items)):
-                txn_ok, txn_detail = False, f"account {acct['id']}: status {r.status_code}"
+            d = dates_ok(rows, ("as_of_date",))
+            if d:
+                date_ok, date_detail = False, d
+            held = {v for x in rows for v in (x.get("cusip"), x.get("symbol")) if v}
+            held |= {f"name:{(x.get('description') or '').lower()}" for x in rows}
+
+            l_items = await AO.fetch_resource(api_base=api, resource="cost_basis", access_token=access, param=aid,
+                                              timeout=timeout, transport=transport)
+            r, body = await raw_get(f"/v2/accounts/{enc}/cost-basis/", {"page": 0, "page_size": 1000})
+            rows_l = ((body or {}).get("data") or {}).get("cost_basis") or []
+            why = envelope_ok(body, "cost_basis", ("account_id", aid)) or fields_ok(
+                rows_l, LOT_FIELDS, ("quantity", "market_value", "cost_basis_unadjusted", "cost_basis_adjusted",
+                                     "unrealized_gain_loss"))
+            if r.status_code != 200 or why or len(rows_l) != len(l_items):
+                lot_ok, lot_detail = False, f"account {aid}: status {r.status_code}: {why or 'count'}"
+            d = dates_ok(rows_l, ("as_of_date", "open_date"))
+            if d:
+                date_ok, date_detail = False, d
+
+            t_items = await AO.fetch_resource(api_base=api, resource="transactions", access_token=access, param=aid,
+                                              timeout=timeout, transport=transport,
+                                              query={"date_from": window[0].isoformat(),
+                                                     "date_to": window[1].isoformat()})
+            r, body = await raw_get(f"/v2/accounts/{enc}/transactions", {
+                "page": 0, "page_size": 500, "date_from": window[0].isoformat(), "date_to": window[1].isoformat()})
+            rows_t = ((body or {}).get("data") or {}).get("transactions") or []
+            why = envelope_ok(body, "transactions", ("account_id", aid)) or fields_ok(
+                rows_t, TRANSACTION_FIELDS, ("quantity", "price", "amount", "interest", *AO.FEE_FIELDS,
+                                             *AO.TAX_FIELDS))
+            if r.status_code != 200 or why or len(rows_t) != len(t_items):
+                txn_ok, txn_detail = False, f"account {aid}: status {r.status_code}: {why or 'count'}"
                 continue
             for x in rows_t:
-                missing = [k for k in TRANSACTION_FIELDS if k not in x]
-                if missing or x.get("type") not in TXN_TYPES:
-                    txn_ok, txn_detail = False, f"transaction {x.get('id')}: missing {missing} or type " \
-                                                f"{x.get('type')!r}"
-                if not (isinstance(x.get("id"), str) and x["id"]):
-                    ids_ok = False
-                for dk in ("trade_date", "settle_date"):
-                    v = x.get(dk)
-                    if v is not None and not (isinstance(v, str) and ISO_RX.match(v) and date.fromisoformat(v)):
-                        dates_ok = False
-                key = x.get("cusip") or x.get("isin") or x.get("ticker") or f"name:{(x.get('name') or '').lower()}"
-                if key not in held:
+                if (x.get("transaction_type") or "").strip().lower() not in APS.TRANSACTION_TYPE_MAP:
+                    txn_ok, txn_detail = False, f"transaction {x.get('id')}: type {x.get('transaction_type')!r} " \
+                                                f"is not one the client maps"
+                key_hits = {x.get("cusip"), x.get("symbol")} - {None, ""}
+                if not (key_hits & held or f"name:{(x.get('transaction_description') or '').lower()}" in held
+                        or (x.get("security_type") or "").upper() == "CASH"):
                     link_ok, link_detail = False, f"transaction {x.get('id')} names a security with no position"
+                td = AO.parse_altruist_date(x.get("transaction_date")) if x.get("transaction_date") else None
+                if td is None or td < window[0] or td > window[1]:
+                    win_ok, win_detail = False, f"transaction {x.get('id')} on {x.get('transaction_date')} is " \
+                                                f"outside {window[0]}..{window[1]}"
+            d = dates_ok(rows_t, ("as_of_date", "transaction_date", "settle_date"))
+            if d:
+                date_ok, date_detail = False, d
+            # the default window (no date_from / date_to) is the past month — never more
+            _r, dflt = await raw_get(f"/v2/accounts/{enc}/transactions", {"page": 0, "page_size": 500})
+            lo = AO.add_months(window[1], -1)
+            for x in ((dflt or {}).get("data") or {}).get("transactions") or []:
+                td = AO.parse_altruist_date(x.get("transaction_date")) if x.get("transaction_date") else None
+                if td is None or td < lo:
+                    win_ok, win_detail = False, f"default window served {x.get('transaction_date')} (before {lo})"
         except Exception as exc:  # noqa: BLE001
             pos_ok, pos_detail = False, f"{type(exc).__name__}: {exc}"
-    S.check(pos_ok, "C12", "§6.5 / T6", "positions?account_id=: {\"positions\": [...]} with every T6 primary field "
-                                        "(id, cusip, isin, ticker, name, asset_type, quantity, market_value, "
-                                        "cost_basis, currency_code); decimals as numbers or decimal strings",
-            pos_detail)
-    S.check(txn_ok, "C13", "§6.6 / T7", "transactions?account_id=: {\"transactions\": [...]} with every T7 primary "
-                                        "field; type one of the client's 7", txn_detail)
-    S.check(link_ok, "C14", "§6.6 / T7 (position rule)",
-            "every transacted security also appears in the account's positions", link_detail)
-    S.check(ids_ok, "C15", "§6 (explicit ids)", "every position and transaction carries an explicit id")
-    S.check(dates_ok, "C16", "§6 (ISO dates)", "every date is ISO YYYY-MM-DD")
+    S.check(pos_ok, "C12", f"{DOC_ENDPOINTS} positions (GET /v2/accounts/{{account_id}}/positions/)",
+            "positions: data.account_id + data.positions with every documented field (id, cusip, symbol, description, "
+            "long_short_indicator, currency_code, quantity, as_of_date, security_type, market_value); the client reads "
+            "every one", pos_detail)
+    S.check(lot_ok, "C13", f"{DOC_ENDPOINTS} cost basis (GET /v2/accounts/{{account_id}}/cost-basis/)",
+            "cost basis: data.cost_basis, one row per tax lot with every documented field (id, cusip, symbol, "
+            "description, quantity, market_value, cost_basis_unadjusted, cost_basis_adjusted, unrealized_gain_loss, "
+            "as_of_date, open_date)", lot_detail)
+    S.check(txn_ok, "C14", f"{DOC_ENDPOINTS} transactions (GET /v2/accounts/{{account_id}}/transactions)",
+            "transactions: data.transactions with every documented field (incl. transaction_type, transaction_date, "
+            "settle_date, transaction_fees / broker_fees / other_fees, cancellation_reversal_flag); every type one "
+            "the client maps", txn_detail)
+    S.check(win_ok, "C14b", f"{DOC_ENDPOINTS} transactions (date_from / date_to)",
+            "transactions honour date_from / date_to (every row inside the window) and the default window is the past "
+            "month", win_detail)
+    S.check(link_ok, "C15", "client rule (a transaction needs a position — ALTRUIST_CONTRACT §3.5)",
+            "every transacted security also appears in the account's positions (cash rows exempt)", link_detail)
+    S.check(date_ok, "C16", f"{DOC_JSON} (dates YYYY/MM/DD)",
+            "every response date is YYYY/MM/DD and the client parses it", date_detail)
 
-    # resource auth: no token / a junk token → refused
     try:
-        r = await raw("GET", f"{api}/api/v2/households", headers={"Accept": "application/json"})
-        r2 = await raw("GET", f"{api}/api/v2/households", headers={"Authorization": "Bearer not-a-token",
-                                                                    "Accept": "application/json"})
-        S.check(r.status_code == 401 and r2.status_code == 401, "C17", "§6.3 (Bearer check)",
-                "a resource without a valid Bearer token is refused 401", f"{r.status_code}/{r2.status_code}")
+        r = await raw("GET", f"{api}{AO.HOUSEHOLDS_PATH}", headers={"Accept": "application/json"})
+        r2 = await raw("GET", f"{api}{AO.HOUSEHOLDS_PATH}", headers={"Authorization": "Bearer not-a-token",
+                                                                      "Accept": "application/json"})
+        S.check(r.status_code == 401 and r2.status_code == 401, "C17", f"{DOC_ENDPOINTS} (Authorization header)",
+                "a resource without a valid access token is refused 401", f"{r.status_code}/{r2.status_code}")
     except Exception as exc:  # noqa: BLE001
-        S.check(False, "C17", "§6.3 (Bearer check)", "Bearer check", f"{type(exc).__name__}")
+        S.check(False, "C17", f"{DOC_ENDPOINTS} (Authorization header)", "Bearer check", f"{type(exc).__name__}")
 
     skip = orders_group_skip(environment, orders)
     if skip:
@@ -319,6 +491,30 @@ async def run(*, environment: str, hosts: dict, credentials: tuple[str, str], tr
     else:
         S.na("C18", "§6 (SIMULATED header)", "SIMULATED header", "not applicable to a real counterparty")
     return {"environment": environment, "passed": S.passed, "failed": S.failed, "results": S.results}
+
+
+async def _book_rows(raw, api: str, hdr: dict, account: str, tail: str, key: str, size: int) -> list[dict]:
+    """The book as the ASSUMED groups observe it — through the DOCUMENTED read path (ALTREAD1): every page of
+    /v2/accounts/{id}/<tail> (``data.<key>``); a short or empty page ends the read."""
+    rows: list[dict] = []
+    for page in range(50):
+        r = await raw("GET", f"{api}/v2/accounts/{quote(account, safe='')}{tail}",
+                      params={"page": page, "page_size": size}, headers=hdr)
+        body = r.json() if r.status_code == 200 else {}
+        chunk = ((body or {}).get("data") or {}).get(key) or []
+        rows.extend(chunk)
+        if len(chunk) < size:
+            break
+    return rows
+
+
+async def _book_positions(raw, api: str, hdr: dict, account: str) -> list[dict]:
+    return await _book_rows(raw, api, hdr, account, "/positions/", "positions", 1000)
+
+
+async def _book_transactions(raw, api: str, hdr: dict, account: str) -> list[dict]:
+    """The documented default window (the past month) covers the fills / legs a group just made on the clock date."""
+    return await _book_rows(raw, api, hdr, account, "/transactions", "transactions", 500)
 
 
 NO_ORDERS_CONTRACT = "no published Altruist orders contract"
@@ -482,12 +678,11 @@ async def _orders_group(S: Suite, *, raw, api: str, access: str, credentials, tr
         S.check(False, "O11", "§8.1 O-2 (404)", "unknown order", f"{type(exc).__name__}")
     try:
         ex = (first.get("executions") or [{}])[0]
-        rp = await raw("GET", f"{api}/v2/positions", params={"account_id": acct}, headers=hdr)
-        rt = await raw("GET", f"{api}/v2/transactions", params={"account_id": acct}, headers=hdr)
-        qty = sum((Decimal(p["quantity"]) for p in rp.json().get("positions") or [] if p.get("cusip") == cusip),
-                  Decimal(0))
-        txn = [t for t in rt.json().get("transactions") or [] if t.get("id") == f"sim-x-{ex.get('exec_id')}"]
-        S.check(qty == held + Decimal("2") and len(txn) == 1 and txn[0].get("type") == "buy"
+        rp = await _book_positions(raw, api, hdr, acct)
+        rt = await _book_transactions(raw, api, hdr, acct)
+        qty = sum((Decimal(p["quantity"]) for p in rp if p.get("cusip") == cusip), Decimal(0))
+        txn = [t for t in rt if t.get("id") == f"sim-x-{ex.get('exec_id')}"]
+        S.check(qty == held + Decimal("2") and len(txn) == 1 and (txn[0].get("transaction_type") or "").lower() == "buy"
                 and txn[0].get("quantity") == "2", "O12", "§8.5 (book moves for fills)",
                 "the fill moved the book: the position is held + 2 and the buy transaction sim-x-<exec_id> is served",
                 f"position {qty} (held {held}), transactions {txn}")
@@ -528,7 +723,6 @@ async def _transfers_group(S: Suite, *, raw, api: str, access: str, credentials,
     cash, value_date, domestic: {slug, account_id, ach4, wire4}, international: {slug, account_id, bic, iban4}}."""
     from decimal import Decimal
 
-    from services import altruist_positions_sync as APS
     from services import altruist_transfers as AT
 
     tag = secrets.token_hex(4)
@@ -538,9 +732,8 @@ async def _transfers_group(S: Suite, *, raw, api: str, access: str, credentials,
     dom, intl = fx["domestic"], fx["international"]
 
     async def cash(account: str) -> Decimal:
-        r = await raw("GET", f"{api}/v2/positions", params={"account_id": account}, headers=hdr)
-        return sum((Decimal(p["market_value"]) for p in r.json().get("positions") or [] if not p.get("cusip")
-                    and not p.get("isin") and not p.get("ticker") and (p.get("asset_type") in (None, "cash"))),
+        return sum((Decimal(p["market_value"]) for p in await _book_positions(raw, api, hdr, account)
+                    if not p.get("cusip") and not p.get("symbol") and (p.get("security_type") or "").upper() == "CASH"),
                    Decimal(0))
 
     def body(cid: str, **over) -> dict:
@@ -564,15 +757,14 @@ async def _transfers_group(S: Suite, *, raw, api: str, access: str, credentials,
         S.check(False, "T01", "§9.1 T-1 / §9.3 / §9.6", "POST a journal", f"{type(exc).__name__}: {exc}")
     try:
         after_src, after_dst = await cash(src), await cash(dst)
-        rt = await raw("GET", f"{api}/v2/transactions", params={"account_id": src}, headers=hdr)
-        rd = await raw("GET", f"{api}/v2/transactions", params={"account_id": dst}, headers=hdr)
         tid = first.get("transfer_id")
-        out_ = [t for t in rt.json().get("transactions") or [] if t.get("id") == f"{tid}-out"]
-        in_ = [t for t in rd.json().get("transactions") or [] if t.get("id") == f"{tid}-in"]
-        mapped = all(t.get("type") in APS.TRANSACTION_TYPE_MAP for t in out_ + in_)
+        out_ = [t for t in await _book_transactions(raw, api, hdr, src) if t.get("id") == f"{tid}-out"]
+        in_ = [t for t in await _book_transactions(raw, api, hdr, dst) if t.get("id") == f"{tid}-in"]
+        typ = (lambda t: (t.get("transaction_type") or "").lower())
+        mapped = all(typ(t) in APS.TRANSACTION_TYPE_MAP for t in out_ + in_)
         S.check(after_src == before_src - Decimal("100") and after_dst == before_dst + Decimal("100") and len(out_) == 1
-                and len(in_) == 1 and out_[0].get("type") == "transfer_out" and in_[0].get("type") == "transfer_in"
-                and out_[0].get("net_amount") == "100" and in_[0].get("net_amount") == "100" and mapped
+                and len(in_) == 1 and typ(out_[0]) == "transfer_out" and typ(in_[0]) == "transfer_in"
+                and out_[0].get("amount") == "100" and in_[0].get("amount") == "100" and mapped
                 and APS.TRANSACTION_TYPE_MAP["transfer_out"] == "sell" and APS.TRANSACTION_TYPE_MAP["transfer_in"]
                 == "buy", "T02", "§9.4 / D2 (cash ledger + feed types)",
                 "the journal moved the cash rows exactly (−100 / +100) and the feed serves transfer_out / transfer_in "

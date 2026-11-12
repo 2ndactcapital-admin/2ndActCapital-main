@@ -45,6 +45,20 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY account_balances_daily_pkey: (org_id, account_id, as_of_date, source_system)
 
+-- ===== account_custodian_balances =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   source_system                            text NOT NULL
+--   environment                              text NOT NULL
+--   account_balance                          numeric NOT NULL
+--   as_of_date                               date NOT NULL
+--   custodian_status                         text
+--   fetched_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY account_custodian_balances_pkey: (id)
+
 -- ===== account_flows =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -142,6 +156,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   lot_source                               text NOT NULL DEFAULT 'hollisworks'::text
 --   PRIMARY KEY account_lot_method_settings_pkey: (id)
 
 -- ===== account_model_links =====
@@ -528,6 +543,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   refresh_token_issued_at                  timestamp with time zone
 --   PRIMARY KEY altruist_connections_pkey: (id)
 
 -- ===== altruist_oauth_states =====
@@ -5039,6 +5055,28 @@
 --   valid_to                                 timestamp with time zone
 --   PRIMARY KEY book_households_pkey: (id)
 
+-- ===== cpsim.book_lots =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   account_external_id                      text NOT NULL
+--   external_id                              text NOT NULL
+--   as_of                                    date NOT NULL
+--   security_id                              uuid NOT NULL
+--   cusip                                    text
+--   isin                                     text
+--   ticker                                   text
+--   name                                     text NOT NULL
+--   quantity                                 numeric NOT NULL
+--   market_value                             numeric
+--   cost_basis_unadjusted                    numeric NOT NULL
+--   cost_basis_adjusted                      numeric NOT NULL
+--   open_date                                date NOT NULL
+--   currency_code                            text NOT NULL
+--   upload_id                                uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY book_lots_pkey: (id)
+
 -- ===== cpsim.book_positions =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   counterparty_id                          uuid NOT NULL
@@ -6686,6 +6724,29 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY commitments_pkey: (id)
+
+-- ===== portfolio.custodian_tax_lots =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   source_system                            text NOT NULL
+--   environment                              text NOT NULL
+--   external_id                              text NOT NULL
+--   global_security_id                       uuid
+--   cusip                                    text
+--   symbol                                   text
+--   description                              text
+--   quantity                                 numeric NOT NULL
+--   market_value                             numeric
+--   cost_basis_unadjusted                    numeric
+--   cost_basis_adjusted                      numeric
+--   unrealized_gain_loss                     numeric
+--   open_date                                date
+--   as_of_date                               date NOT NULL
+--   fetched_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY custodian_tax_lots_pkey: (id)
 
 -- ===== portfolio.data_provider_entitlements =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()

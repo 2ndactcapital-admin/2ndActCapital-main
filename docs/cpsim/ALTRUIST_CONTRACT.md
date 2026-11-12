@@ -1,295 +1,157 @@
-# Altruist-compatible counterparty — wire contract (cpsim01)
+# Altruist Open API — wire contract (READ path DOCUMENTED; orders / transfers / webhooks ASSUMED)
 
-Specification for the cpsim02 Altruist-compatible simulator and the basis of
-its future conformance suite. Written 2026-11-10 from the code as it stands on
-branch `cpsim01-work` (`fca695d`). Every statement cites `file:line`; paths are
-relative to `apps/api/` unless they start with `docs/` or `sprint_prompts/`.
+Rewritten 2026-11-11 by ALTREAD1 (`docs/altruist/ALTREAD1_NOTES.md`) from **Altruist's published Open API**,
+developer.altruist.com/docs, read 2026-11-11 through the operator's browser (the sprint itself has no network). The
+cpsim01 version of this file described the client as built, with every field ASSUMED; the read path is now pinned to
+the published pages and the old assumptions that turned out wrong are listed in §10. Paths below are relative to
+`apps/api/` unless they start with `docs/`.
 
-> **Read this first: almost nothing here has been observed live.**
-> The client's own docstring says *"NO LIVE ALTRUIST CALL HAS EVER BEEN MADE
-> FROM THIS MODULE"* (`services/altruist_oauth.py:22`). Every token-response,
-> resource-response and webhook shape was built from guesses and proven only
-> against `httpx.MockTransport` payloads the verify scripts wrote themselves
-> (`services/altruist_oauth.py:27-31`). The webhook signature scheme is a
-> self-declared industry-standard best guess (`services/altruist_webhook.py:4-19`).
-> **So every field below is ASSUMED unless the code or a repo doc cites
-> Altruist's published docs.** Only three items carry such a citation (the
-> households/accounts paths and the `household_id` parameter, cited from the
-> Open API "Guides" — `services/altruist_oauth.py:632-634`,
-> `sprint_prompts/altruist_sprint2_identity_resolution.structural.md:9`), and
-> even those were never checked against Altruist's `/reference` pages.
->
-> One nuance: the Altruist stage1 host *has* been reached over the network, by
-> Sprint 1's verify script calling `call_households` with synthetic
-> credentials. It answered HTTP 401 (`docs/PROJECT_STATUS.md:7326-7329`,
-> `:7444-7448`). That proves DNS and egress, not any response shape.
+Status vocabulary:
+- **DOCUMENTED (page)** — on Altruist's published docs; the page is named (`open-api-authentication`, `endpoints`, a
+  resource page, `json-code-examples`).
+- **CLIENT** — a choice the client makes where the docs are silent (stated, never presented as Altruist's).
+- **ASSUMED** — never published; the orders (§8), transfers (§9) and inbound webhooks (§4) are wholly ASSUMED —
+  not part of Altruist's published API (money movement and events live in the Realtime API / FIX, not seen).
 
-Status vocabulary used in the tables below:
-- **DOCUMENTED**: cited by the code or a repo doc to Altruist's published docs.
-- **ASSUMED**: never observed live, and no citation.
+Nothing here has been observed against a live Altruist response yet (no sandbox credentials exist). The conformance
+suite (`services/altruist_conformance.py`, rows C00–C17 tagged with their doc page) is the instrument for the day
+they do: any difference it finds against the real sandbox is a SIMULATOR or client defect to fix, not a new guess.
 
 ---
 
 ## 1. Environments
 
-`ALTRUIST_HOSTS` (`services/altruist_oauth.py:78-87`):
+| Environment | API base (`api_base`) | Login base (`login_base`) | Source |
+|---|---|---|---|
+| `sandbox` | `https://openapi.stage1.altruistnet.tech/altruist-open-api` | `https://oauth.stage1.altruistnet.tech` | DOCUMENTED open-api-authentication (stage1 hosts) |
+| `production` | `https://openapi.altruist.com/altruist-open-api` | `https://oauth.altruist.com` | cpsim01 (unchanged) |
+| `simulator` | `CPSIM_BASE_URL` + `/cpsim/c/<slug>` (both) | same | cpsim02 D2 |
 
-| environment key | `api_base` | `login_base` (OAuth host) |
+Explicit branches (`services/altruist_oauth.py` `resolve_hosts`, `client_credentials`, `check_destination`): any other
+environment raises; no credential crosses environments in either direction. Data is **prior business day, end of
+day** (DOCUMENTED endpoints).
+
+## 2. OAuth 2.0 — authorization code, user-scoped (DOCUMENTED open-api-authentication)
+
+### 2.1 Authorize (browser → Altruist)
+
+`GET {login_base}/api/oauth2/authorize?client_id=…&scope=openid&redirect_uri=…&state=…`
+
+| Parameter | Value | Status |
 |---|---|---|
-| `sandbox` | `https://openapi.stage1.altruistnet.tech/altruist-open-api` | `https://oauth.stage1.altruistnet.tech` |
-| `production` | `https://openapi.altruist.com/altruist-open-api` | `https://oauth.altruist.com` |
+| `client_id` | the app's client id | DOCUMENTED |
+| `scope` | `openid` | DOCUMENTED |
+| `redirect_uri` | fully qualified **https**, allow-listed per environment | DOCUMENTED |
+| `state` | 32-byte url-safe random, single use, 10 min, org-scoped (`altruist_oauth_states`) | DOCUMENTED (param) / CLIENT (lifetime) |
+| `response_type` | `code` | CLIENT (the OAuth 2.0 request parameter; not shown on the page — the simulator accepts it optionally) |
 
-- The source cited is "Confirmed real facts (sprint prompt)" (`:73-77`). The
-  Sprint 1 prompt is not in the repo, so these hosts are sprint-prompt
-  assertions, not published-doc citations. Status: **ASSUMED**.
-- The allowed set is `ENVIRONMENTS = ("sandbox", "production")` (`:100`). The
-  router checks every request against it (`routers/altruist_connection.py:68-74`).
-- The key is **`sandbox`, not `stage`.** The cpsim01 prompt says "stage"
-  (`sprint_prompts/cpsim01.structural.md:88`). The code never uses that word.
-- `_OAUTH_PATHS` (`:91-94`): `authorize` = `/oauth/authorize`, `token` =
-  `/oauth/token`. The code calls these an assumption from standard OAuth2
-  convention (`:48-56`, `:89-90`). **ASSUMED**.
-- `_API_PATHS` (`:646-651`):
+Built by `build_authorize_url` (`oauth_url(hosts, "authorize")`).
 
-| key | path | basis |
+### 2.2 Token — `POST {api_base}/oauth2/token` (on the **API** host)
+
+Form body (`application/x-www-form-urlencoded`), client credentials in the BODY:
+
+| Grant | Fields | Status |
 |---|---|---|
-| `households` | `/api/v2/households` | "as documented … in the source Guides" (`:632-634`), with the inconsistent `/api` prefix flagged. **DOCUMENTED (Guides only)** |
-| `accounts` | `/v2/accounts` | same citation. **DOCUMENTED (Guides only)** |
-| `positions` | `/v2/positions` | "a guess, not a confirmed fact" (`:637-645`). **ASSUMED** |
-| `transactions` | `/v2/transactions` | same guess. **ASSUMED** |
+| `authorization_code` | `grant_type`, `code`, `redirect_uri`, `client_id`, `client_secret`, **`token_type=id`** | DOCUMENTED |
+| `refresh_token` | `grant_type`, `refresh_token`, `client_id`, `client_secret`, `redirect_uri` (when configured), **`token_type=id`** | DOCUMENTED |
 
-The full URL is `api_base + path`, for example
-`https://openapi.stage1.altruistnet.tech/altruist-open-api/api/v2/households`
-(`:762-763`).
+Response: `access_token` (1 h), `refresh_token` (**28 days**), `expires_in`, `token_type` — DOCUMENTED. `scope` in the
+response: not documented (read when present). Whether a refresh rotates the refresh token: **not documented** — the
+client keeps the old one when none is returned (`_parse_token_response`), and records the issue time of the one it
+holds (`altruist_connections.refresh_token_issued_at`).
 
-Credentials are read from environment variables. The code never reads them
-from the database for outbound calls, except the per-connection tokens.
+### 2.3 Refresh-token expiry (CLIENT, from the documented 28 days)
 
-| var | read at | notes |
+`refresh_token_expires_at = refresh_token_issued_at (else created_at) + 28 days`. `/altruist/status` shows
+`refresh_token_expires_at` / `refresh_token_expired` / `reconnect_required`; `require_active_connection` — so every sync
+— refuses an expired one with `AltruistRefreshExpiredError` (a 409 naming the date) before any call. The access token
+is refreshed just-in-time (5 min before expiry) as before.
+
+## 3. Read path (DOCUMENTED endpoints + resource pages + json-code-examples)
+
+Every request: `Authorization: Bearer <access token>` (DOCUMENTED: the Authorization header carries the access token;
+the `Bearer` prefix is CLIENT — standard, unconfirmed), `Accept: application/json`, and `X-API-Request-ID: <uuid4>`
+(DOCUMENTED optional; CLIENT: one per request, logged with path and status — never a token). V1 paths are deprecating
+and are never called.
+
+### 3.0 Paging + envelope (every list)
+
+- Query `page` (default 0) and `page_size` (default 100; **max 1000** households / accounts / positions / cost-basis,
+  **max 500** transactions). The client always asks for the maximum.
+- Response: `{"paging": {"page": 1, "page_size": 25, "total_pages": 3}, "data": {"<key>": [...], …}}`.
+- **The example's `paging.page` is 1 while the parameter defaults to 0.** CLIENT rule (`fetch_pages`): the first
+  `paging.page` echo decides the server's base; stop at `total_pages` in that base; stop on an empty page; stop on a
+  page that adds no new id (one such page right after the first is allowed — the base-1 probe); a base-1 server that
+  answers page 0 empty is retried at 1; a hard ceiling (`MAX_PAGES = 200`) stops the read and records it
+  (`AltruistPagingCeiling` with the partial rows — the sync records `paging_ceilings` per account).
+- Tolerated for old fixtures only: a bare list, `{"<key>": [...]}`, `{"data": [...]}`, `{"results": [...]}`. Anything
+  else is `AltruistOAuthError` naming `data.<key>`. A `data.account_id` / `data.household_id` naming another id than
+  the one requested is refused.
+- **Dates in responses are `YYYY/MM/DD`** (json-code-examples: "2019/01/15"); query dates are `YYYY-MM-DD`. The client
+  parses both (`parse_altruist_date`); anything else is a per-row error.
+
+### 3.1 Households — `GET {api_base}/api/v2/households`
+
+Query `name_pattern` (optional), `page`, `page_size`. `data.households[]`: `id` (required), `name`. **The portal is
+inconsistent:** the endpoints index says `/api/v2/households`, the households page itself shows `/v2/households`. The
+client uses ONE constant, `HOUSEHOLDS_PATH = "/api/v2/households"` (the index), so a correction is one edit.
+
+### 3.2 Accounts — `GET {api_base}/v2/accounts?household_id=…`
+
+`data.household_id`, `data.accounts[]`: `id`, `rep_code`, `account_number`, `account_type` (e.g. IRA, ROTH IRA, TRUST,
+INDIVIDUAL), `account_name`, `status` (ACTIVE, REJECTED, CLOSED, RESTRICTED, PENDING), `date_open`, `date_closed`,
+`as_of_date`, `account_balance`. CLIENT: the account number is reduced to its LAST FOUR in the normalizer (never
+stored, logged or returned whole); the account is crosswalked by `id` (`portfolio.external_references`, unchanged);
+`account_balance` + `as_of_date` + `status` are stored as the CUSTODIAN balance (`public.account_custodian_balances`)
+for every resolved account — never in `account_balances_daily` (the treasury's source, unchanged).
+
+### 3.3 Positions — `GET {api_base}/v2/accounts/{account_id}/positions/`
+
+`data.account_id`, `data.positions[]`: `id`, `cusip`, `symbol`, `description`, `long_short_indicator`,
+`currency_code`, `quantity`, `as_of_date`, `security_type` (e.g. ETF, AGENCY, CORPORATE, MUNICIPAL, GOVERNMENT,
+TREAS…), `market_value`. CLIENT: matched to an asset by CUSIP / ticker (symbol) / name, as before; written to
+`portfolio.positions` with the sync's as-of date (unchanged).
+
+### 3.4 Cost basis — `GET {api_base}/v2/accounts/{account_id}/cost-basis/`
+
+`data.account_id`, `data.cost_basis[]` — **one row per TAX LOT**: `id`, `cusip`, `symbol`, `description`, `quantity`,
+`market_value`, `cost_basis_unadjusted`, `cost_basis_adjusted`, `unrealized_gain_loss`, `as_of_date`, `open_date`.
+CLIENT: stored as CUSTODIAN lots (`portfolio.custodian_tax_lots`, valid-axis; a lot missing from a complete snapshot
+is closed), never in `portfolio.tax_lots`. The tax engine reads them only for an account whose approved lot-method
+row has `lot_source = 'custodian'` (default `hollisworks`); a reconciliation per account compares them with
+Hollisworks' lots (`services/custodian_lots.reconcile`).
+
+### 3.5 Transactions — `GET {api_base}/v2/accounts/{account_id}/transactions?date_from=…&date_to=…`
+
+Query `date_from`, `date_to` (`YYYY-MM-DD`; **default the past month**), `page`, `page_size` (max 500).
+`data.transactions[]`: `id`, `cusip`, `symbol`, `security_type` (ETF, FI, OPTION, TBILL, INDEX, EQ, WARRANT, CASH,
+MBS, MUTUAL, CD, EQUITY, UNIT, OTHER), `quantity`, `price`, `amount`, `interest`, `currency_code`, `transaction_type`
+(e.g. BUY), `transaction_subtype`, `transaction_description`, `cancellation_reversal_flag`, `transaction_fees`,
+`broker_fees`, `other_fees`, `TEFRA_withheld`, `state_tax_withheld`, `as_of_date`, `transaction_date`, `settle_date`.
+
+CLIENT mapping (`services/altruist_positions_sync.py`):
+
+| Documented | Hollisworks | Rule |
 |---|---|---|
-| `ALTRUIST_SANDBOX_CLIENT_ID` / `_CLIENT_SECRET` | `:245-256` | used when `environment == "sandbox"` |
-| `ALTRUIST_PRODUCTION_CLIENT_ID` / `_CLIENT_SECRET` | `:246` | used for **any other** environment value |
-| `ALTRUIST_REDIRECT_URI` | `:230-242` | must be set and must start with `https://` |
-| `ALTRUIST_TOKEN_ENCRYPTION_KEY` | `:116-138` | Fernet key for tokens at rest |
-| `ALTRUIST_WEBHOOK_SECRET` | `services/altruist_webhook.py:47,80` | HMAC key |
+| window | `date_from` / `date_to` always sent | first sync: 13 months back; later: last synced date − 5 US business days; walked in ≤ 1-month windows, each paged; deduped by id |
+| `transaction_type` | `transaction_type_code` | lower-cased through `TRANSACTION_TYPE_MAP`; unknown → per-row error (only `BUY` is documented as an example — the rest of the map is ASSUMED) |
+| `transaction_date` | `trade_date` | YYYY/MM/DD or ISO; bad → per-row error |
+| `settle_date` | `settle_date` | same |
+| `amount` | `gross_amount` | Decimal |
+| `transaction_fees + broker_fees + other_fees` | `fees` | summed exactly (Decimal), a missing part = 0 |
+| `TEFRA_withheld + state_tax_withheld` | `taxes` | same |
+| `interest`, `transaction_description`, `transaction_subtype` | — | carried on the sync result; **no ledger column** ([FIND], follow-up) |
+| `cancellation_reversal_flag` | — | strict yes / no; a flagged row whose id is recorded and current CLOSES that transaction (`valid_to = now()`); otherwise it is skipped with its reason — never booked as a new trade |
+| (client rule) | position | a transaction is recorded only against a current position of its asset (unchanged) |
 
-Token lifetimes (`services/altruist_oauth.py:96-98`):
-- `ACCESS_TOKEN_LIFETIME = 1h`. It is used only as the default when
-  `expires_in` is missing or falsy (`:370`).
-- `REFRESH_TOKEN_LIFETIME = 30d`. **It is defined but referenced nowhere** in
-  the codebase. Refresh-token expiry is not tracked or enforced.
-- `STATE_TTL = 10 min`: the OAuth `state` lifetime (`:180`).
-- Proactive refresh fires once the access token is within
-  `DEFAULT_REFRESH_THRESHOLD = 5 min` of expiry (`:555`, `:581`).
+### 3.6 Call sequence for one sync
 
----
+`require_active_connection` (refresh-expiry refusal, just-in-time refresh) → households (paged) → accounts per
+household (paged; balances stored) → per RESOLVED account: positions (paged) → transactions (windows × pages) →
+cost basis (paged; custodian lots stored) → the PORTENTRY1 provisional supersede and the family rollup (unchanged).
 
-## 2. OAuth
-
-### 2.1 Authorize redirect (browser → Altruist)
-
-Built by `build_authorize_url` (`services/altruist_oauth.py:259-272`):
-
-```
-GET {login_base}/oauth/authorize?response_type=code&client_id=…&redirect_uri=…&state=…&scope=accounts:read
-```
-
-- Encoding is `urllib.parse.urlencode`, with params in the order shown (`:265-272`).
-- `scope` defaults to `accounts:read` (`:259`). The only caller
-  (`routers/altruist_connection.py:194`) never overrides it.
-- `state` is `secrets.token_urlsafe(32)` (`:174-175`). It is stored in
-  `altruist_oauth_states` with a 10-minute expiry and is single-use (`:178-225`).
-- No PKCE parameters, no `nonce`, no `prompt`.
-- Entry point: `POST /api/v1/altruist/connect` returns `{authorize_url, environment}`
-  (`routers/altruist_connection.py:179-198`).
-
-The return leg (Altruist → our redirect URI) is
-`GET /api/v1/altruist/callback?code=…&state=…`. Both query parameters are
-required (`routers/altruist_connection.py:201-203`). The route is
-**authenticated**: it runs `_require(request, manage_custody_connections)`
-(`:222`) and derives `org_id` from the caller's session (`:78`). The state is
-consumed, which rejects a missing, used, expired or cross-org state with 400
-(`:226-229`). An `error=` or `error_description=` callback parameter is
-**not handled**. FastAPI would return 422 for the missing `code`.
-
-### 2.2 Token exchange: `authorization_code`
-
-`exchange_code_for_tokens` (`services/altruist_oauth.py:283-319`):
-
-- **Method/URL:** `POST {login_base}/oauth/token` (`:293`, `:297`).
-- **Headers:** `Accept: application/json` (`:306`). `Content-Type` is
-  `application/x-www-form-urlencoded`, which httpx sets implicitly from `data=`
-  (`:299`).
-- **Client authentication:** `client_secret` goes in the form body
-  (client_secret_post). **There is no HTTP Basic header** (`:299-305`).
-- **Body:** `grant_type=authorization_code`, `code`, `redirect_uri`,
-  `client_id`, `client_secret` (`:300-304`).
-- **Timeout:** 15 s (`:283`). A transport error raises `AltruistOAuthError`
-  (`:308-312`). Any status `>= 400` raises
-  `AltruistOAuthError("Token exchange was refused: HTTP n")` (`:314-317`).
-  The callback maps that to 502 (`routers/altruist_connection.py:237-238`).
-- **Response:** the client calls `response.json()` (`:318`), then
-  `_parse_token_response` (`:361-376`).
-
-### 2.3 Token refresh: `refresh_token`
-
-`refresh_access_token` (`services/altruist_oauth.py:322-358`): same URL,
-headers, auth style and error handling as the exchange.
-
-- **Body:** `grant_type=refresh_token`, `refresh_token`, `client_id`,
-  `client_secret` (`:339-344`).
-- **No `redirect_uri` and no `scope`** are sent.
-- It is called only from `ensure_fresh_token` (`:558-594`).
-
-### 2.4 Token response parsing (`_parse_token_response`, `:361-376`)
-
-| response field | behaviour when present | behaviour when missing or falsy |
-|---|---|---|
-| `access_token` | stored Fernet-encrypted, plus its last 4 characters | `AltruistOAuthError("Token response missing access_token.")` (`:363-364`) |
-| `refresh_token` | stored (replaces the old one on refresh) | exchange: error (`:368-369`); refresh: **the old refresh token is kept** (`:358`, `:367`) |
-| `expires_in` | `int(...)` → `token_expires_at = now + expires_in` (`:370`, `:431`, `:463`) | defaults to 3600. A value of `0` also becomes 3600 (falsy). A non-numeric string raises an unwrapped `ValueError` |
-| `scope` | stored in `altruist_connections.scope` (`:375`, `:453`) | `None` |
-| `token_type` | **never read.** The client always sends `Bearer` | — |
-| `id_token`, other fields | ignored | — |
-
-A non-JSON 2xx body makes `response.json()` raise an unwrapped decode error
-(`:318`, `:357`).
-
-### 2.5 When refresh happens
-
-- There is **no reactive refresh**. A 401 from a resource call is not retried
-  or refreshed. It becomes `AltruistOAuthError` like any other `>= 400`
-  (`:779-782`, etc.).
-- Refresh is **just-in-time only**. `require_active_connection` (`:597-629`)
-  runs before every resource call and calls `ensure_fresh_token`, which
-  refreshes when `token_expires_at - now <= 5 min` (`:581`).
-- If the refresh fails while the token is still valid, the failure is
-  swallowed (`:587-590`). If the token is already expired, the error is
-  re-raised.
-- `GET /api/v1/altruist/status` also refreshes opportunistically
-  (`routers/altruist_connection.py:270-280`).
-- There is no 429 handling, no `Retry-After`, no backoff and no retry anywhere.
-
----
-
-## 3. Resource calls
-
-Every call shares this shape (`services/altruist_oauth.py:741-912`):
-1. `require_active_connection(org, env)`, then decrypt the access token.
-2. `GET api_base + path` with headers `Authorization: Bearer <access_token>`
-   and `Accept: application/json`. No other headers: no `User-Agent`
-   override, no request id, no idempotency key.
-3. Timeout 15 s. Optional `transport` (test injection only).
-4. A status `>= 400` raises `AltruistOAuthError("GET <url> was refused: HTTP n")`.
-5. `response.json()`, then `_extract_list(body, <key>, "data", "results")`
-   (`:654-671`). The body may be a bare JSON array, or an object where the
-   **first** of the three keys that holds a list wins. Anything else raises
-   `AltruistOAuthError`.
-6. **Pagination: none.** Each resource is fetched in exactly one request. No
-   page, limit, cursor or offset is sent. Envelope keys such as `next`,
-   `cursor`, `total`, `has_more` and `links` are ignored. The call ends after
-   the first response, so only the first page of a paginated server would ever
-   be read.
-7. **No date-range parameters** on positions or transactions. "As of" is
-   local: `as_of_date or date.today()` (`services/altruist_positions_sync.py:482`).
-
-### 3.1 Households: `GET {api_base}/api/v2/households`
-
-- No query parameters (`:765-773`). Envelope list key: `households`, then `data`, then `results` (`:784`).
-- Per item (`_normalize_household`, `:674-679`):
-  - `id` = `str(id or household_id or "")`
-  - `name` = `name or household_name or ""`
-  - `raw` = the whole item
-- Caller: `resolve_identity` (`services/altruist_identity.py:198-200`) uses
-  each `id` as the `household_id` for the accounts call. `name` reaches the
-  database only inside an exception row's `raw_row` (`:139-146`).
-
-### 3.2 Accounts: `GET {api_base}/v2/accounts?household_id=<id>`
-
-- One call per household (`services/altruist_identity.py:207-211`, `services/altruist_oauth.py:808-815`).
-- Envelope key: `accounts`, then `data`, then `results` (`:826`).
-- Per item (`_normalize_account`, `:682-687`):
-  - `id` = `str(id or account_id or "")`
-  - `name` = `name or account_name or nickname or ""`
-- `id` is the crosswalk key: the client looks up
-  `portfolio.external_references(source_system='ALTRUIST', record_type='account', external_id=id)`
-  (`services/altruist_identity.py:68-78`).
-  - On a match it updates `last_seen` (`:81-98`).
-  - Otherwise it writes one `account_import_exceptions` row, idempotent by
-    `raw_row->>'external_id'` (`:127-176`).
-  - **It never creates an account.**
-- An empty `id` (both keys missing) produces `external_id = ""`. Nothing guards
-  against that.
-
-### 3.3 Positions: `GET {api_base}/v2/positions?account_id=<altruist account id>`
-
-- One call per *resolved* account, enumerated from `external_references`
-  (`services/altruist_positions_sync.py:438-457`, `:293-296`). Envelope key:
-  `positions`, then `data`, then `results` (`services/altruist_oauth.py:869`).
-- Per item (`_normalize_position`, `:690-710`). Candidate keys are listed in
-  order, and **an `or` chain means a falsy first key (`0`, `""`) falls through
-  to the next one**:
-
-| normalized | raw keys tried | use (`services/altruist_positions_sync.py`) |
-|---|---|---|
-| `id` | `id`, `position_id` | external id `pos:{id}:{as_of}` (`:191-204`). Without it, the external id is a sha256 of account, identifier, quantity, market_value and as_of |
-| `cusip` | `cusip` | asset identifier and security key (`:167-188`) |
-| `isin` | `isin` | same |
-| `ticker` | `ticker`, `symbol` | same |
-| `name` | `name`, `security_name`, `description` | asset match and asset-creation name (`:254-271`) |
-| `asset_type` | `asset_type`, `security_type` | `create_asset(asset_type=…)`, default `unclassified` (`:270`) |
-| `quantity` | `quantity`, `units` | `_to_decimal`. Present means units basis, absent means value basis (`:313-322`) |
-| `market_value` | `market_value`, `value` | `_to_decimal` → position market value |
-| `cost_basis` | `cost_basis` | `_to_decimal` |
-| `currency_code` | `currency_code`, `currency` | new asset's currency |
-
-Numeric fields may be JSON numbers or strings, because `_to_decimal`
-(`services/portfolio_import.py:226`) accepts strings with `$`, commas,
-parentheses or `%`. A row needs at least a name or one identifier
-(`services/altruist_positions_sync.py:261-265`).
-
-### 3.4 Transactions: `GET {api_base}/v2/transactions?account_id=<altruist account id>`
-
-Envelope key: `transactions`, then `data`, then `results`
-(`services/altruist_oauth.py:912`). Per item (`_normalize_transaction`, `:713-738`):
-
-| normalized | raw keys tried | use (`services/altruist_positions_sync.py`) |
-|---|---|---|
-| `id` | `id`, `transaction_id` | external id `txn:{id}`, no date suffix (`:207-220`). Also `external_ref` on the row (`:426`) |
-| `type` | `type`, `transaction_type`, `activity_type` | lowercased and stripped, then mapped through `TRANSACTION_TYPE_MAP` (`:117-125`, `:357-364`) |
-| `cusip` / `isin` | same name | locates the asset (`:366-387`) |
-| `ticker` | `ticker`, `symbol` | same |
-| `name` | `name`, `security_name`, `description` | security key only when no identifier is present |
-| `trade_date` | `trade_date`, `date` | **required.** An ISO `YYYY-MM-DD` string goes through `date.fromisoformat` (`:401-412`) |
-| `settle_date` | `settle_date` | optional ISO date |
-| `quantity` | `quantity`, `units` | `_to_decimal` |
-| `price` | `price` | `_to_decimal` |
-| `gross_amount` | `gross_amount`, `amount` | `_to_decimal` |
-| `fees` | `fees` | `_to_decimal` |
-| `taxes` | `taxes` | `_to_decimal` |
-| `net_amount` | `net_amount` | `_to_decimal` |
-| `currency_code` | `currency_code`, `currency` | transaction currency |
-
-Accepted `type` values: `buy`, `sell`, `dividend`, `interest`, `fee`,
-`fee_expense`, `adjustment` (`:117-125`). Any other value becomes a per-row
-error and is never guessed. A transaction is recorded only if a current
-position exists for its asset under the account (`:389-399`), so a simulator
-must return a matching position for each transacted security.
-
-### 3.5 Call sequence for one sync
-
-`POST /api/v1/altruist/sync`, the post-callback background task, or a resolved
-webhook each run:
-1. `require_active_connection` (`routers/altruist_connection.py:144`).
-2. households → accounts × each household (`services/altruist_identity.py:198-211`).
-3. A second `require_active_connection` (`services/altruist_positions_sync.py:480`).
-4. For each resolved account: positions, then transactions (`:486-507`).
-
-Every resource call also runs `require_active_connection` internally (`services/altruist_oauth.py:760`, etc.).
-
----
-
-## 4. Webhooks (inbound, Altruist → us)
+## 4. Webhooks (inbound, Altruist → us) — ASSUMED (not part of Altruist's published Open API; the Realtime API is a separate, beta track)
 
 - **Endpoint:** `POST /api/v1/altruist/webhook` (`routers/altruist_webhook.py:40`,
   mounted with prefix `/api/v1` in `main.py:639`). It is listed in
@@ -342,286 +204,55 @@ Every resource call also runs `require_active_connection` internally (`services/
 
 ---
 
-## 5. Field tables
+## 5. Field tables — see §3 (every read field is listed there with its page)
 
-Direction legend: req = we send; resp = counterparty sends; in = counterparty
-sends to our endpoint.
+The cpsim01 tables T1–T7 described the assumed shapes and are superseded by §2–§3; the rows that changed are in §10.
 
-**T1. Authorize + callback**
+## 6. Simulator obligations (cpsim02 → ALTREAD1)
 
-| field | dir | type | used for | status |
-|---|---|---|---|---|
-| `response_type=code` | req (query) | string | grant type | ASSUMED |
-| `client_id` | req (query) | string | client identity | ASSUMED |
-| `redirect_uri` | req (query) | https URL | callback target | ASSUMED |
-| `state` | req (query) | url-safe string, 43 chars | CSRF; must be echoed back | ASSUMED |
-| `scope=accounts:read` | req (query) | string | requested scope | ASSUMED |
-| `code` | in (callback query) | string | token exchange | ASSUMED |
-| `state` | in (callback query) | string | single-use state check | ASSUMED |
+The simulator (`cpsim/app.py`, `cpsim/oauth.py`, `cpsim/book.py`) serves exactly §2–§3:
 
-**T2. Token exchange (`POST /oauth/token`, authorization_code)**
+1. `GET /cpsim/c/<slug>/api/oauth2/authorize` (response_type optional, must be `code` when sent) and
+   `POST /cpsim/c/<slug>/oauth2/token` (**`token_type=id` required**; refresh tokens live 28 days and rotate — rotation
+   is a simulator choice, the docs are silent).
+2. The read routes at the documented paths, the `{"paging", "data"}` envelope, `page` / `page_size` with the documented
+   maxima (over the max → 400), page base 0 (a test injection, `set_page_base(1)`, serves base 1 — a page-0 request is
+   page 1, echoed as 1).
+3. `YYYY/MM/DD` dates; accounts with `account_balance` (DERIVED: the latest positions' market value on or before the
+   clock), `status` ACTIVE, `rep_code` null, a stable synthetic 9-digit `account_number`, `account_type` upper-cased;
+   positions with `long_short_indicator` (S when the quantity is negative) and `security_type` (CASH for a cash row,
+   else the book's type upper-cased); CUSIP / symbol filled from the security master when an upload named only an ISIN.
+4. Cost basis: the account's uploaded lots (kind `lots`, `cpsim.book_lots`) where it has any; else one lot per
+   security position with a cost basis, opened on the account's earliest buy of it (else the position's as-of).
+5. Transactions: `transaction_type` upper-cased, the book's single fee as `transaction_fees` (broker / other "0"), its
+   single tax as `TEFRA_withheld`, `amount` = net amount else gross, `cancellation_reversal_flag` "N"; `date_from` /
+   `date_to` (default the past month), never after the clock.
+6. `name_pattern` on households: case-insensitive substring (the docs do not define the pattern language).
+7. Every response carries `X-Counterparty-Simulated: true` and is request-logged (no bodies, no keys).
 
-| field | dir | type | used for | status |
-|---|---|---|---|---|
-| `Content-Type: application/x-www-form-urlencoded` | req hdr | — | form body | ASSUMED |
-| `Accept: application/json` | req hdr | — | — | ASSUMED |
-| `grant_type=authorization_code` | req body | string | — | ASSUMED |
-| `code` | req body | string | — | ASSUMED |
-| `redirect_uri` | req body | string | must equal the authorize value | ASSUMED |
-| `client_id` | req body | string | client auth | ASSUMED |
-| `client_secret` | req body | string | client auth (no Basic header) | ASSUMED |
-| `access_token` | resp | string | Bearer for resource calls; required | ASSUMED |
-| `refresh_token` | resp | string | stored; required on exchange | ASSUMED |
-| `expires_in` | resp | int seconds | `token_expires_at`; default 3600 | ASSUMED |
-| `scope` | resp | string | stored | ASSUMED |
+## 7. Open questions and divergences (updated by ALTREAD1)
 
-**T3. Token refresh (`POST /oauth/token`, refresh_token)**
-
-| field | dir | type | used for | status |
-|---|---|---|---|---|
-| `Content-Type` (form) | req hdr | — | — | ASSUMED |
-| `Accept: application/json` | req hdr | — | — | ASSUMED |
-| `grant_type=refresh_token` | req body | string | — | ASSUMED |
-| `refresh_token` | req body | string | — | ASSUMED |
-| `client_id` | req body | string | client auth | ASSUMED |
-| `client_secret` | req body | string | client auth | ASSUMED |
-| `access_token` | resp | string | required | ASSUMED |
-| `refresh_token` | resp | string | optional; old one kept if absent | ASSUMED |
-| `expires_in` | resp | int | expiry; default 3600 | ASSUMED |
-| `scope` | resp | string | read, but `persist_refresh` does not store it (`:458-481`) | ASSUMED |
-
-**T4. Households**
-
-| field | dir | type | used for | status |
-|---|---|---|---|---|
-| path `/api/v2/households` | req | — | — | DOCUMENTED (Guides) |
-| `Authorization: Bearer` | req hdr | — | auth | ASSUMED |
-| `Accept: application/json` | req hdr | — | — | ASSUMED |
-| list envelope (`households`, `data`, `results`, or bare array) | resp | array | item list | ASSUMED |
-| `id` / `household_id` | resp item | string or number | accounts query parameter | ASSUMED |
-| `name` / `household_name` | resp item | string | exception `raw_row` only | ASSUMED |
-
-**T5. Accounts**
-
-| field | dir | type | used for | status |
-|---|---|---|---|---|
-| path `/v2/accounts` | req | — | — | DOCUMENTED (Guides) |
-| `household_id` | req (query) | string | scope to one household | DOCUMENTED (Guides) |
-| `Authorization: Bearer` | req hdr | — | auth | ASSUMED |
-| `Accept: application/json` | req hdr | — | — | ASSUMED |
-| list envelope (`accounts`, `data`, `results`, or bare array) | resp | array | — | ASSUMED |
-| `id` / `account_id` | resp item | string or number | crosswalk `external_id` | ASSUMED |
-| `name` / `account_name` / `nickname` | resp item | string | exception row text | ASSUMED |
-
-**T6. Positions**
-
-| field | dir | type | used for | status |
-|---|---|---|---|---|
-| path `/v2/positions` | req | — | — | ASSUMED |
-| `account_id` | req (query) | string | scope | ASSUMED |
-| `Authorization: Bearer` | req hdr | — | — | ASSUMED |
-| `Accept: application/json` | req hdr | — | — | ASSUMED |
-| list envelope (`positions`, `data`, `results`, or bare array) | resp | array | — | ASSUMED |
-| `id` / `position_id` | resp item | string | dedup external id | ASSUMED |
-| `cusip` | resp item | string | asset match | ASSUMED |
-| `isin` | resp item | string | asset match | ASSUMED |
-| `ticker` / `symbol` | resp item | string | asset match | ASSUMED |
-| `name` / `security_name` / `description` | resp item | string | asset match/create | ASSUMED |
-| `asset_type` / `security_type` | resp item | string | new asset type | ASSUMED |
-| `quantity` / `units` | resp item | number or string | units | ASSUMED |
-| `market_value` / `value` | resp item | number or string | value | ASSUMED |
-| `cost_basis` | resp item | number or string | cost | ASSUMED |
-| `currency_code` / `currency` | resp item | ISO string | asset currency | ASSUMED |
-
-**T7. Transactions**
-
-| field | dir | type | used for | status |
-|---|---|---|---|---|
-| path `/v2/transactions` | req | — | — | ASSUMED |
-| `account_id` | req (query) | string | scope | ASSUMED |
-| `Authorization: Bearer` | req hdr | — | — | ASSUMED |
-| `Accept: application/json` | req hdr | — | — | ASSUMED |
-| list envelope (`transactions`, `data`, `results`, or bare array) | resp | array | — | ASSUMED |
-| `id` / `transaction_id` | resp item | string | dedup, `external_ref` | ASSUMED |
-| `type` / `transaction_type` / `activity_type` | resp item | string (7 legal values) | type code | ASSUMED |
-| `cusip` | resp item | string | asset lookup | ASSUMED |
-| `isin` | resp item | string | asset lookup | ASSUMED |
-| `ticker` / `symbol` | resp item | string | asset lookup | ASSUMED |
-| `name` / `security_name` / `description` | resp item | string | fallback security key | ASSUMED |
-| `trade_date` / `date` | resp item | ISO date | required | ASSUMED |
-| `settle_date` | resp item | ISO date | optional | ASSUMED |
-| `quantity` / `units` | resp item | number or string | — | ASSUMED |
-| `price` | resp item | number or string | — | ASSUMED |
-| `gross_amount` / `amount` | resp item | number or string | — | ASSUMED |
-| `fees` | resp item | number or string | — | ASSUMED |
-| `taxes` | resp item | number or string | — | ASSUMED |
-| `net_amount` | resp item | number or string | — | ASSUMED |
-| `currency_code` / `currency` | resp item | ISO string | — | ASSUMED |
-
-**T8. Webhook (inbound)**
-
-| field | dir | type | used for | status |
-|---|---|---|---|---|
-| `X-Altruist-Signature` | in hdr | lowercase hex HMAC-SHA256 | authenticity | ASSUMED |
-| raw body bytes | in | bytes | the signed message | ASSUMED |
-| `event_id` / `id` / `eventId` / `webhook_id` (or under `data`) | in | string | dedup key | ASSUMED |
-| `event_type` / `type` / `eventType` | in | string | stored only | ASSUMED |
-| `account_id` / `accountId` / `external_account_id` / `household_id` / `householdId` / `resource_id` / `resourceId` | in | string | org lookup (account only) | ASSUMED |
-| `environment` / `env` | in | string | which connection to sync; default `sandbox` | ASSUMED |
-| `data` (object) | in | object | second lookup level | ASSUMED |
-
-**T9. Legacy probe (`services/portfolio_altruist.py`, see §7)**
-
-| field | dir | type | used for | status |
-|---|---|---|---|---|
-| `GET {ALTRUIST_BASE_URL}/accounts` | req | — | auth probe (`:132-143`) | ASSUMED |
-| `limit=1` | req (query) | int | page size | ASSUMED |
-| `Accept: application/json` | req hdr | — | — | ASSUMED |
-| `X-Client-Id: <ALTRUIST_CLIENT_ID>` | req hdr | — | — | ASSUMED |
-| `Authorization: Bearer <ALTRUIST_CLIENT_SECRET>` | req hdr | — | secret used as bearer | ASSUMED |
-| status code + first 500 characters of body | resp | — | reported verbatim (`:155-175`) | ASSUMED |
-
-**Count: 89 rows. 3 DOCUMENTED** (households path, accounts path, and the
-`household_id` parameter, all "Guides only"). **86 ASSUMED.**
+1. **Two Altruist clients.** `services/portfolio_altruist.py` (Phase B, single global credential, `{BASE_URL}/accounts`,
+   the client secret as Bearer) is SUPERSEDED by `altruist_oauth.py` and slated for removal (OUTSTANDING_TODO_LIST);
+   untouched by ALTREAD1.
+2. Households path `/api/v2/` vs `/v2/` (§3.1) — portal inconsistency, one constant.
+3. `paging.page` base (§3.0) — handled both ways; the real base is unknown until a sandbox call.
+4. Refresh-token rotation — not documented (§2.2).
+5. `Authorization: Bearer …` — the docs say "the access token"; the `Bearer` prefix is unconfirmed.
+6. `interest` / `transaction_description` / `transaction_subtype` have no ledger column (§3.5).
+7. `cancellation_reversal_flag` values — the docs give the field, not its values; the client accepts only clear yes / no
+   values and treats anything else as a per-row error.
+8. Only `BUY` is documented as a `transaction_type` value; the rest of `TRANSACTION_TYPE_MAP` is ASSUMED.
+9. Inbound webhooks (§4) are ASSUMED; the Realtime API (beta, approval pending) is a separate track.
+10. Still open from cpsim01: the webhook's sandbox-vs-production choice from the payload; `external_references` not
+    scoped between sandbox and production; no browser leg for the real callback (the callback is an authenticated API
+    route); unwrapped parse errors on the token endpoint; state-rejection detail in the callback's 400.
+11. CLOSED by ALTREAD1: `REFRESH_TOKEN_LIFETIME` unused (now enforced, §2.3); the falsy-`or` chains on `quantity` /
+    `market_value` (now `is not None`); one-request reads (now paged); the past-month-only transactions read.
 
 ---
 
-## 6. Simulator obligations for cpsim02
-
-The minimal surface that lets every existing code path run **unchanged** once
-`api_base`/`login_base` point at the simulator:
-
-| # | must serve | minimal behaviour |
-|---|---|---|
-| 1 | `GET {login_base}/oauth/authorize` | Accept the 5 query parameters. Redirect (302) to `redirect_uri?code=<code>&state=<state echoed>` |
-| 2 | `POST {login_base}/oauth/token` | Accept a form body. `grant_type` is `authorization_code` or `refresh_token`. Validate `client_id`/`client_secret` from the body (not Basic). Return JSON `{access_token, refresh_token, expires_in, scope, token_type:"Bearer"}`. Return `>= 400` on a bad code, secret or refresh token |
-| 3 | `GET {api_base}/api/v2/households` | Bearer check. `{"households":[{"id","name"}]}` |
-| 4 | `GET {api_base}/v2/accounts?household_id=` | `{"accounts":[{"id","name"}]}` filtered by household |
-| 5 | `GET {api_base}/v2/positions?account_id=` | `{"positions":[…T6 fields…]}` |
-| 6 | `GET {api_base}/v2/transactions?account_id=` | `{"transactions":[…T7 fields…]}`. `type` must be one of the 7 mapped values. Each security must also appear in positions |
-| 7 | outbound webhook (simulator → `POST /api/v1/altruist/webhook`) | Body JSON with `event_id`, `event_type`, `account_id` (an id the org has already resolved) and `environment`. Header `X-Altruist-Signature` = lowercase hex `HMAC-SHA256(ALTRUIST_WEBHOOK_SECRET, body)` |
-
-**cpsim02 status (2026-11-10): items 1–7 SERVED** by the simulator (`apps/api/cpsim/app.py`, `oauth.py`, `book.py`,
-`webhooks.py`) at the client's exact paths under `/cpsim/c/<slug>`, from the uploaded book, and proven agreeing with
-the EXISTING client by the conformance suite (`services/altruist_conformance.py`, checks C01–C20, each citing its row
-here). Item 2's token endpoint additionally rotates refresh tokens; items 3–6 require an ACCESS token (the `cpsim_` key
-authenticates only the token endpoint). Still ASSUMED on Altruist's side — the suite is what will prove or disprove
-each row against the real sandbox.
-
-| # | status (cpsim02) | conformance checks |
-|---|---|---|
-| 1 | served | C01, C02 |
-| 2 | served (+ refresh rotation, single-use codes) | C03–C08 |
-| 3 | served | C09, C10, C17 |
-| 4 | served | C11 |
-| 5 | served | C12, C15 |
-| 6 | served (position rule enforced at upload) | C13, C14, C16 |
-| 7 | served (second secret `ALTRUIST_SIMULATOR_WEBHOOK_SECRET`) | C19 |
-
-Further obligations:
-- Return all items in **one response**. The client never paginates, so a
-  simulator page limit would silently truncate.
-- Use the **primary** key names (`households`, `id`, `name`, `cusip`,
-  `quantity`, …) so the conformance suite pins one shape. Alias keys are
-  client tolerance, not contract.
-- Give every position and transaction an explicit `id`. Without one, dedup
-  falls back to content hashes.
-- Use **ISO `YYYY-MM-DD`** for dates.
-- Every response must also carry `X-Counterparty-Simulated: true`
-  (`sprint_prompts/cpsim01.structural.md:48-49`). The client ignores unknown
-  headers, so this is safe.
-- Behaviours the client cannot currently observe, and so need not be
-  simulated for parity: 401→refresh retry, 429/`Retry-After`, pagination
-  cursors, `token_type`, and refresh-token expiry.
-
-### What the client would need, to add a `simulator` environment (DONE in cpsim02 — see CPSIM02_NOTES D1–D6)
-
-1. Add `ALTRUIST_HOSTS["simulator"] = {"api_base": "<api base>/cpsim/c/<slug>", "login_base": "<api base>/cpsim/c/<slug>"}`
-   (`services/altruist_oauth.py:78-87`). The current dict is static and global,
-   while a slug is per counterparty. One fixed slug, or a per-connection host
-   lookup, is a design decision for cpsim02.
-2. Add `"simulator"` to `ENVIRONMENTS` (`:100`). The router validator and
-   `build_authorize_url` both gate on it (`routers/altruist_connection.py:68-74`,
-   `services/altruist_oauth.py:260`).
-3. **Fix `client_credentials` (`:245-246`).** Any environment that is not
-   `sandbox` currently resolves to the `ALTRUIST_PRODUCTION_*` variables, so a
-   `simulator` environment would silently send *production* credentials to the
-   simulator. It needs its own branch (for example `ALTRUIST_SIMULATOR_*`, or
-   the `cpsim_`-prefixed key from the registry).
-4. `_redirect_uri` requires `https://` (`:238-241`). A local simulator
-   round-trip needs an HTTPS API base or a tunnel.
-5. The webhook has one global secret (`ALTRUIST_WEBHOOK_SECRET`) and no
-   per-environment secret, so simulator-signed webhooks would need the
-   production secret. The receiver would need an environment-aware or
-   counterparty-aware secret lookup.
-6. The `cpsim.may_connect(org, household)` gate
-   (`sprint_prompts/cpsim01.structural.md:42-47`) would be called from
-   `altruist_connect` before an authorize URL is issued for `simulator`.
-
----
-
-## 7. Open questions and divergences
-
-1. **Two independent Altruist clients.** `services/portfolio_altruist.py` (Phase
-   B) differs from `altruist_oauth.py` in every respect:
-   - it reads global `ALTRUIST_CLIENT_ID` / `_CLIENT_SECRET` / `_BASE_URL` (`:54-58`)
-   - it calls `{BASE_URL}/accounts` without `/v2` (`:132`)
-   - it sends `limit=1`, which the newer client never sends
-   - it sends a non-OAuth `X-Client-Id` header and uses **the client secret as
-     the Bearer token** (`:140-141`)
-
-   It is still live behind `GET /api/v1/portfolio/altruist/status`
-   (`routers/portfolio_ingest.py:363-384`). Neither client knows about the
-   other's variables.
-2. **Environment name:** the code says `sandbox`, the cpsim01 prompt says
-   `stage`. The conformance suite should use the code's key.
-3. **Path prefix inconsistency:** `/api/v2/households` versus `/v2/accounts`,
-   self-flagged in `services/altruist_oauth.py:632-634`. Positions and
-   transactions copied the `/v2` form as a guess.
-4. **Production credentials on unknown environments** (§6 item 3). **CLOSED (cpsim02):** explicit branches; any other
-   environment raises; `check_destination` refuses cross-environment credentials both ways.
-5. **`REFRESH_TOKEN_LIFETIME` is unused.** Nothing records or checks refresh
-   expiry, so a 30-day-stale connection shows `connected` until a refresh is
-   refused.
-6. **`scope` is dropped on refresh.** `persist_refresh` does not write it.
-7. **Falsy `or` chains:** a `quantity` or `market_value` of `0` falls through to
-   `units` or `value` (`services/altruist_oauth.py:705-706`).
-   `_first_present` does the same for webhook fields
-   (`services/altruist_webhook.py:91`).
-8. **Webhook household ids can never resolve.** They are extracted, but the
-   lookup is account-only (`services/altruist_webhook.py:171`).
-9. **The webhook trusts the payload's `environment`** to choose which
-   connection to sync, and defaults to `sandbox` even for production traffic
-   (`services/altruist_webhook.py:126-128`, `:226`). **CLOSED for the simulator (cpsim02):** the simulator secret
-   FORCES `simulator`, and a real-secret payload claiming `simulator` is refused. **Still open for real traffic:**
-   sandbox vs production is still read from the payload (one real secret for both).
-10. **The webhook response leaks the internal `org_id`** to the caller
-    (`services/altruist_webhook.py:237`). **CLOSED (cpsim02):** the router pops it before answering
-    (`routers/altruist_webhook.py`); it is still used internally for the credit events.
-11. **`external_references` is not environment-scoped**
-    (`docs/PROJECT_STATUS.md:7332-7337`). A sync in one environment re-syncs
-    every resolved account. **CLOSED for the simulator (cpsim02):** the simulator crosswalks under
-    `ALTRUIST_SIMULATOR`, the real environments under `ALTRUIST`, so neither touches the other's accounts. **Still open
-    between sandbox and production** (both `ALTRUIST`).
-12. **No web caller exists.** **Still OPEN (cpsim02 routed around it, D4):** the simulator connects server-to-server;
-    the real browser leg is logged in OUTSTANDING_TODO_LIST. Nothing in `apps/web` references
-    `/altruist/connect|callback|status|sync`. The callback is an authenticated
-    API route, while a browser redirect from an OAuth server carries no bearer
-    token, so the real redirect leg has never been wired end to end. cpsim02
-    will hit this first.
-13. **Unwrapped parse errors:** a non-JSON body (`response.json()`) or a
-    non-integer `expires_in` raises outside `AltruistOAuthError`. The callback
-    returns 500, not 502.
-14. **The callback leaks state-rejection detail.** It surfaces `str(exc)`
-    (`routers/altruist_connection.py:229`), so expired and already-used states
-    are distinguishable, as Sprint 1 warned (`docs/PROJECT_STATUS.md` Sprint 1
-    entry).
-15. **No error-parameter handling** on the callback (`error`,
-    `error_description`).
-
----
-
-## 8. Orders (ASSUMED — no published Altruist trading API seen)
+## 8. Orders — ASSUMED — not part of Altruist's published API (Realtime / FIX)
 
 Written 2026-11-11 for cpsim03 (`docs/cpsim/CPSIM03_NOTES.md` D1). **Altruist's real trading API has never been seen**:
 no repo doc, no code comment, no sandbox call cites an orders contract of any kind. The real Altruist route stays
@@ -708,7 +339,7 @@ type other than equity / fund → rejected `unsupported instrument`; a sell abov
 position`. Working orders are re-evaluated on every clock advance (delay orders and unmarketable limits; a partial's
 remainder stays working).
 
-## 9. Transfers (ASSUMED — no published Altruist money-movement API seen)
+## 9. Transfers — ASSUMED — not part of Altruist's published API (Realtime / FIX)
 
 Written 2026-11-11 for cpsim04 (`docs/cpsim/CPSIM04_NOTES.md` D1). **Altruist's real money-movement API has never
 been seen**: no repo doc, no code comment, no sandbox call cites a transfer contract of any kind
@@ -773,7 +404,7 @@ rule, ASSUMED like the rest of §9.
 | `events` | list `{status, on, at}` oldest first — every status the transfer took | ASSUMED |
 | `created_at`, `updated_at` | ISO 8601 UTC | ASSUMED |
 
-### 9.4 Feed transaction types for cash (`GET /v2/transactions`) — ASSUMED
+### 9.4 Feed transaction types for cash (`GET /v2/accounts/{account_id}/transactions`, `transaction_type`) — ASSUMED values
 
 Every cash movement is a transaction on the account's CASH row (row_type cash, no identifier, `name` = the cash
 position's name), with an explicit `id` and ISO dates; amounts in `net_amount` (decimal string):
@@ -801,3 +432,32 @@ behaviour) — a mismatch is rejected with the bank's reason — and the source 
 (journal and wire: the value date; ACH: value date + 1 business day): the destination is credited. An ACH with a return
 code (the sender's behaviour, else the receiving bank's) is returned `ach_return_after_days` business days after
 settlement, both legs reversed. Every step re-runs at each clock advance.
+
+---
+
+## 10. Corrections — the cpsim01 assumptions that the published docs overturned
+
+| # | Item | cpsim01 (ASSUMED) | Published (DOCUMENTED) | Page |
+|---|---|---|---|---|
+| 1 | authorize path | `/oauth/authorize` | `/api/oauth2/authorize` | open-api-authentication |
+| 2 | scope | `accounts:read` | `openid` | open-api-authentication |
+| 3 | token host | login host | API host | open-api-authentication |
+| 4 | token path | `/oauth/token` | `/oauth2/token` | open-api-authentication |
+| 5 | token body | — | `token_type=id` | open-api-authentication |
+| 6 | refresh lifetime | 30 days, unused | 28 days, enforced | open-api-authentication |
+| 7 | positions | `/v2/positions?account_id=` | `/v2/accounts/{account_id}/positions/` | endpoints |
+| 8 | transactions | `/v2/transactions?account_id=` | `/v2/accounts/{account_id}/transactions` | endpoints |
+| 9 | cost basis | not read | `/v2/accounts/{account_id}/cost-basis/` | endpoints |
+| 10 | request id | none | `X-API-Request-ID` | endpoints |
+| 11 | paging | one response | `page` / `page_size` / `paging.total_pages` | endpoints, json-code-examples |
+| 12 | envelope | `{"<key>": [...]}` | `{"paging": …, "data": {"<key>": [...]}}` | json-code-examples |
+| 13 | dates | ISO | `YYYY/MM/DD` (queries ISO) | json-code-examples |
+| 14 | transactions window | none | `date_from` / `date_to` (default past month) | transactions |
+| 15 | transaction date | `trade_date` / `date` | `transaction_date` | transactions |
+| 16 | transaction type | `type` | `transaction_type` (+ `transaction_subtype`) | transactions |
+| 17 | fees | `fees` | `transaction_fees` + `broker_fees` + `other_fees` | transactions |
+| 18 | amount | `gross_amount` / `net_amount` | `amount` | transactions |
+| 19 | reversal | — | `cancellation_reversal_flag` | transactions |
+| 20 | security fields | `ticker` / `name` / `asset_type` / `isin` | `symbol` / `description` / `security_type` (no ISIN) | positions |
+| 21 | account fields | `name` | `account_name`, `account_balance`, `status`, `rep_code`, `account_number`, dates | accounts |
+| 22 | households path | `/api/v2/households` | unchanged (index) — the page shows `/v2/households` | endpoints vs households |

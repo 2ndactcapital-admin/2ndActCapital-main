@@ -72,6 +72,13 @@ WHAT THIS SCRIPT IS CAREFUL ABOUT
 
 from __future__ import annotations
 
+import sys as _sc_sys
+if __name__ == "__main__" and "--self-checks-only" in _sc_sys.argv:   # ALTREAD1: static self-checks (fast regressions)
+    import pathlib as _sc_p
+    _sc_sys.path.insert(0, str(_sc_p.Path(__file__).resolve().parent))
+    import _altruist_offline_selfcheck as _SC
+    _sc_sys.exit(_SC.run(__file__, ('date_from=None, date_to=None', 'fake_call_cost_basis', 'call_cost_basis = original_call_cost_basis')))
+
 import os as _authz_os
 _authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
 
@@ -543,9 +550,16 @@ async def fake_call_positions(conn, *, org_id, environment, account_id, transpor
     return [row] if row else []
 
 
-async def fake_call_transactions(conn, *, org_id, environment, account_id, transport=None, timeout=15.0):
+async def fake_call_transactions(conn, *, org_id, environment, account_id, transport=None, timeout=15.0,
+                                 date_from=None, date_to=None):
+    # ALTREAD1 — the sync now walks the documented date window (≤ 1-month windows); rows are deduped by id there
     CALL_LOG["transactions"].append((org_id, environment, account_id))
     return [dict(r) for r in TRANSACTIONS_BY_ALTRUIST_ACCOUNT.get(account_id, [])]
+
+
+async def fake_call_cost_basis(conn, *, org_id, environment, account_id, transport=None, timeout=15.0):
+    # ALTREAD1 — the sync now reads the cost-basis feed too; this fixture has no custodian lots (never the network)
+    return []
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1017,11 +1031,13 @@ async def main() -> int:
         original_fetch_accounts = altruist_identity.fetch_accounts_for_household
         original_call_positions = altruist_positions_sync.call_positions
         original_call_transactions = altruist_positions_sync.call_transactions
+        original_call_cost_basis = altruist_positions_sync.call_cost_basis
 
         altruist_identity.call_households = fake_call_households
         altruist_identity.fetch_accounts_for_household = fake_fetch_accounts_for_household
         altruist_positions_sync.call_positions = fake_call_positions
         altruist_positions_sync.call_transactions = fake_call_transactions
+        altruist_positions_sync.call_cost_basis = fake_call_cost_basis
 
         import main as app_main
         from starlette.testclient import TestClient
@@ -1040,6 +1056,7 @@ async def main() -> int:
             altruist_identity.fetch_accounts_for_household = original_fetch_accounts
             altruist_positions_sync.call_positions = original_call_positions
             altruist_positions_sync.call_transactions = original_call_transactions
+            altruist_positions_sync.call_cost_basis = original_call_cost_basis
     except Exception:  # noqa: BLE001
         R.bad("driver", "the run aborted", traceback.format_exc())
     finally:

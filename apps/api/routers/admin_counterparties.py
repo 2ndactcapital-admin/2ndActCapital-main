@@ -69,6 +69,7 @@ from cpsim import orders as SO
 from cpsim import ledger as LG
 from cpsim import registry as R
 from cpsim import transfers as ST
+from services import altruist_oauth as AO
 from services.authz import require_super_admin
 from services.custody.base import parse_text
 from services.database import get_pool
@@ -104,7 +105,7 @@ EDITABLE = ["name", "notes", "status", "key", "bank_details", "fix_session", "be
 #: a BOOK file, not a custodian export: refused before decoding (routers/custody_import.py's _read_upload shape)
 MAX_BOOK_BYTES = 2 * 1024 * 1024
 BOOK_KIND_LABELS = {"households": "Households", "accounts": "Accounts", "positions": "Positions (holdings and values)",
-                    "transactions": "Transactions"}
+                    "transactions": "Transactions", "lots": "Tax lots (cost basis)"}
 
 
 class _Body(BaseModel):
@@ -800,13 +801,20 @@ async def connections(request: Request, counterparty_id: UUID):
     async with pool.acquire() as conn:
         rows = [dict(r) for r in await conn.fetch(
             "SELECT o.id, o.name, o.is_test, (c.setting_value #>> '{}') AS counterparty_slug, "
-            "ac.status AS connection_status, ac.last_refreshed_at, ac.token_expires_at, ac.created_at AS connected_at "
+            "ac.status AS connection_status, ac.last_refreshed_at, ac.token_expires_at, ac.created_at AS connected_at, "
+            "ac.refresh_token_issued_at, ac.created_at "
             "FROM organizations o JOIN org_settings a ON a.org_id = o.id AND a.setting_key = $1 "
             "AND a.setting_value = 'true'::jsonb LEFT JOIN org_settings c ON c.org_id = o.id AND c.setting_key = $2 "
             "LEFT JOIN altruist_connections ac ON ac.org_id = o.id AND ac.environment = 'simulator' "
             "AND ac.system_to IS NULL ORDER BY o.is_test DESC, o.name", SETTING, SETTING_COUNTERPARTY)]
         for r in rows:
             r["points_here"] = r["counterparty_slug"] == cp["slug"]
+            # ALTREAD1 D1 — the refresh token's documented 28-day expiry (the connection status shows it)
+            has_conn = r["connection_status"] is not None
+            r["refresh_token_expires_at"] = AO.refresh_token_expires_at(r) if has_conn else None
+            r["refresh_token_expired"] = bool(has_conn and AO.refresh_token_expired(r))
+            r.pop("refresh_token_issued_at", None)
+            r.pop("created_at", None)
             last = await conn.fetchrow(
                 "SELECT payload, created_at FROM audit_log WHERE action = 'counterparty.connection_synced' AND "
                 "resource_type = 'counterparty' AND resource_id = $1::uuid AND payload->>'target_org_id' = $2 "
@@ -961,7 +969,8 @@ async def run_conformance(request: Request, counterparty_id: UUID, body: Conform
         cp = await R._require(c, counterparty_id)
         cid = await c.fetchval("SELECT id::text FROM cpsim.counterparty_credentials WHERE counterparty_id = $1::uuid "
                                "AND kind = 'api_key' AND rotated_at IS NULL AND revoked_at IS NULL", str(counterparty_id))
-        return {"slug": cp["slug"], "status": cp["status"], "client_id": cid}
+        return {"slug": cp["slug"], "status": cp["status"], "client_id": cid,
+                "clock": await R.business_date(c, counterparty_id)}
     principal, cp, types = await _sim(request, fn)
     if not cp["client_id"] or cp["status"] != "active":
         raise HTTPException(status_code=409, detail="the counterparty needs a live key and to be active")
@@ -969,7 +978,7 @@ async def run_conformance(request: Request, counterparty_id: UUID, body: Conform
     root = "https://cpsim.internal/cpsim/c/" + cp["slug"]
     transport = httpx.ASGITransport(app=Starlette(routes=[Mount("/cpsim", app=cpsim_app)]))
     out = await ACF.run(environment="simulator", hosts={"api_base": root, "login_base": root},
-                        credentials=(cp["client_id"], body.key), transport=transport)
+                        credentials=(cp["client_id"], body.key), transport=transport, today=cp["clock"])
 
     async def store(c):
         rid = await c.fetchval(

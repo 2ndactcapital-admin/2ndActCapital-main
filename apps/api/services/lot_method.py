@@ -70,6 +70,10 @@ CUSTODIAN_SOURCES = {"custodian": "As reported by the custodian", "adviser": "En
 SOURCE_LABELS = {"proposal": "Chosen on this proposal", "account": "Set on this account",
                  "household": "The household's default", "default": "No method set — today's rule"}
 STATUS_LABELS = {"draft": "Awaiting a second person's approval", "approved": "Approved", "rejected": "Rejected"}
+#: ALTREAD1 D4 — whose lots the tax engine reads for the account (services.custodian_lots holds the reader)
+LOT_SOURCES = ("hollisworks", "custodian")
+DEFAULT_LOT_SOURCE = "hollisworks"
+LOT_SOURCE_LABELS = {"hollisworks": "Hollisworks-computed lots (default)", "custodian": "The custodian's reported lots"}
 MISMATCH_CODE = "lot_method_mismatch"
 
 
@@ -121,6 +125,7 @@ def vocabularies() -> dict:
             "custodian_sources": [{"key": k, "label": v} for k, v in CUSTODIAN_SOURCES.items()],
             "sources": [{"key": k, "label": v} for k, v in SOURCE_LABELS.items()],
             "statuses": [{"key": k, "label": v} for k, v in STATUS_LABELS.items()],
+            "lot_sources": [{"key": k, "label": v} for k, v in LOT_SOURCE_LABELS.items()],
             "line_methods": [{"key": k, "label": v} for k, v in E.METHOD_LABELS.items()],
             "today_rule": E.TODAY_RULE,
             "precedence": "wash-sale holds and hard blocks > the short-term guard and the gain budget > the method"}
@@ -163,6 +168,8 @@ def compose(s: dict | None, h: dict | None) -> dict:
             "custodian_cost_basis_method": s["custodian_cost_basis_method"] if s else "unknown",
             "custodian_method_source": s["custodian_method_source"] if s else None,
             "average_cost_security_ids": sorted(str(x) for x in (s["average_cost_security_ids"] or [])) if s else [],
+            # ALTREAD1 D4 — whose lots the tax engine reads (no approved row → Hollisworks', today's behaviour)
+            "lot_source": (s.get("lot_source") or DEFAULT_LOT_SOURCE) if s else DEFAULT_LOT_SOURCE,
             "settings_id": _s(s["id"]) if s else None, "household_setting_id": _s(h["id"]) if h else None}
 
 
@@ -266,6 +273,8 @@ def method_out(eff: dict) -> dict:
             "custodian_cost_basis_method_label": CUSTODIAN_LABELS[eff["custodian_cost_basis_method"]],
             "custodian_method_source": eff["custodian_method_source"],
             "average_cost_security_ids": eff["average_cost_security_ids"],
+            "lot_source": eff.get("lot_source", DEFAULT_LOT_SOURCE),
+            "lot_source_label": LOT_SOURCE_LABELS[eff.get("lot_source", DEFAULT_LOT_SOURCE)],
             "today_rule": eff["lot_method_source"] == "default", "mismatch": mismatch(eff)}
 
 
@@ -368,7 +377,12 @@ async def request_household_change(pool, *, org_id, actor_id, household_id, lot_
 async def request_account_change(pool, *, org_id, actor_id, account_id, lot_method_override: str | None,
                                  gain_preference_override: str | None, realize_gains_target: Decimal | None,
                                  custodian_cost_basis_method: str, custodian_method_source: str | None,
-                                 average_cost_security_ids: list | None, reason: str) -> dict:
+                                 average_cost_security_ids: list | None, reason: str,
+                                 lot_source: str | None = None) -> dict:
+    """``lot_source`` (ALTREAD1 D4): 'hollisworks' | 'custodian'; None keeps the account's current effective value
+    (so an existing caller that never sends it changes nothing)."""
+    if lot_source is not None and lot_source not in LOT_SOURCES:
+        raise LotMethodError(f"lot_source is one of {list(LOT_SOURCES)}")
     if lot_method_override is not None and lot_method_override not in METHODS:
         raise LotMethodError(f"lot_method_override is one of {list(METHODS)} (or none, to follow the household)")
     if gain_preference_override is not None and gain_preference_override not in PREFERENCES:
@@ -387,6 +401,9 @@ async def request_account_change(pool, *, org_id, actor_id, account_id, lot_meth
     async with pool.acquire() as conn:
         actor = await HT.assert_human(conn, actor_id, org_id)
         acct = await _account(conn, org_id, account_id)
+        if lot_source is None:
+            cur = await account_in_effect(conn, org_id, acct["id"])
+            lot_source = (cur or {}).get("lot_source") or DEFAULT_LOT_SOURCE
         if await conn.fetchval(f"SELECT 1 FROM {T_ACC} WHERE account_id = $1 AND status = 'draft' "
                                "AND system_to IS NULL", acct["id"]):
             raise LotMethodConflict("a lot-method change for this account is already awaiting approval — decide "
@@ -406,7 +423,7 @@ async def request_account_change(pool, *, org_id, actor_id, account_id, lot_meth
         payload={"account": acct["account_number_masked"], "lot_method_override": lot_method_override,
                  "gain_preference_override": gain_preference_override,
                  "custodian_cost_basis_method": custodian_cost_basis_method, "average_cost": len(avg),
-                 "reason": reason.strip()},
+                 "lot_source": lot_source, "reason": reason.strip()},
         action_path=f"/portfolio/accounts/{acct['id']}")
     try:
         async with pool.acquire() as conn:
@@ -414,15 +431,16 @@ async def request_account_change(pool, *, org_id, actor_id, account_id, lot_meth
                 row = await conn.fetchrow(
                     f"""INSERT INTO {T_ACC} (id, org_id, account_id, lot_method_override, gain_preference_override,
                             realize_gains_target, custodian_cost_basis_method, custodian_method_source,
-                            average_cost_security_ids, reason, status, maker_id, approval_task_id)
+                            average_cost_security_ids, reason, status, maker_id, approval_task_id, lot_source)
                         VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9::uuid[], $10, 'draft', $11::uuid,
-                                $12::uuid) RETURNING *""",
+                                $12::uuid, $13) RETURNING *""",
                     rid, str(org_id), str(acct["id"]), lot_method_override, gain_preference_override,
                     realize_gains_target, custodian_cost_basis_method, custodian_method_source, avg, reason.strip(),
-                    str(actor["id"]), task["id"])
+                    str(actor["id"]), task["id"], lot_source)
                 await _audit(conn, org_id, actor["id"], "account_requested", rid,
                              {"account_id": str(acct["id"]), "lot_method_override": lot_method_override,
-                              "custodian_cost_basis_method": custodian_cost_basis_method, "task_id": task["id"]})
+                              "custodian_cost_basis_method": custodian_cost_basis_method, "lot_source": lot_source,
+                              "task_id": task["id"]})
     except Exception:
         await _withdraw_task(pool, task["id"], "the lot-method change could not be recorded")
         raise
@@ -540,7 +558,9 @@ def change_out(r: dict, subject: str) -> dict:
                      "custodian_cost_basis_method": r["custodian_cost_basis_method"],
                      "custodian_cost_basis_method_label": CUSTODIAN_LABELS[r["custodian_cost_basis_method"]],
                      "custodian_method_source": r["custodian_method_source"],
-                     "average_cost_security_ids": sorted(str(x) for x in (r["average_cost_security_ids"] or []))})
+                     "average_cost_security_ids": sorted(str(x) for x in (r["average_cost_security_ids"] or [])),
+                     "lot_source": r.get("lot_source") or DEFAULT_LOT_SOURCE,
+                     "lot_source_label": LOT_SOURCE_LABELS[r.get("lot_source") or DEFAULT_LOT_SOURCE]})
     return base
 
 

@@ -75,6 +75,7 @@ from routers.xray import router as xray_router
 from routers.authority import router as authority_router
 from routers.approvals import router as approvals_router  # BULKAPPROVE1
 from routers.lot_method import router as lot_method_router
+from routers.custodian_feed import router as custodian_feed_router
 from routers.custodians import router as custodians_router
 from routers.admin_counterparties import router as admin_counterparties_router  # CPSIM01
 from routers.human_tasks import router as human_tasks_router
@@ -727,6 +728,7 @@ app.include_router(xray_router, prefix="/api/v1")
 app.include_router(authority_router, prefix="/api/v1")
 app.include_router(approvals_router, prefix="/api/v1")  # BULKAPPROVE1
 app.include_router(lot_method_router, prefix="/api/v1")
+app.include_router(custodian_feed_router, prefix="/api/v1")  # ALTREAD1 — custodian balance, lots, reconciliation
 app.include_router(custodians_router, prefix="/api/v1")
 app.include_router(admin_counterparties_router, prefix="/api/v1")  # CPSIM01 — Admin → Counterparties (Super Admin)
 app.include_router(human_tasks_router, prefix="/api/v1")

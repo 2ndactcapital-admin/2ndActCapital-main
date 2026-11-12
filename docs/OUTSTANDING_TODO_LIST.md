@@ -379,6 +379,18 @@ out to build them. Check first.
 
 ## 8 · Build backlog ⬜
 
+**Altruist read path (ALTREAD1 follow-ups, 2026-11-11)** — (1) treasury's liquid balance to use the custodian's
+`account_balance` (`public.account_custodian_balances`) — ALTREAD1 stores and shows it but left
+`account_balances_daily` and every treasury reader unchanged; (2) remove `services/portfolio_altruist.py` (the Phase-B
+single-credential client, superseded by `altruist_oauth.py`; still behind `GET /api/v1/portfolio/altruist/status`);
+(3) the Realtime API track (events, money movement) — pending Altruist's beta approval; orders / transfers / inbound
+webhooks stay ASSUMED until then; (4) Altruist's flat-file profile as an alternative feed (the sandbox may be slow to
+arrive); (5) a ledger home for the documented `interest` / `transaction_description` / `transaction_subtype` (no
+column on `portfolio.transactions` today — carried on the sync result only); (6) verify_cpsim02 / 03 / 04 FULL-mode
+sections still call the simulator's cpsim02-era raw paths (`/oauth/token`, `/v2/positions?account_id=` …, flat
+envelopes) — re-pin them before the next `scripts/run_regressions.sh`; their fast-mode self-checks are updated.
+
+
 **LiteLLM** — Phase H (reporting), I (model recommender), J (voice),
 guardrails proper.
 

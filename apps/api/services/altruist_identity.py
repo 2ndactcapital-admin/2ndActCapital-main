@@ -53,7 +53,7 @@ import json
 from typing import Any
 
 from services.altruist_oauth import call_households, fetch_accounts_for_household
-from services.portfolio_assets import _OrgWrite, _require_org
+from services.portfolio_assets import PortfolioError, _OrgWrite, _require_org
 
 TABLE_EXTERNAL_REFERENCES = "portfolio.external_references"
 TABLE_ACCOUNT_IMPORT_BATCHES = "public.account_import_batches"
@@ -242,6 +242,9 @@ async def resolve_identity(
     org_id = _require_org(org_id)
     source = crosswalk_source(environment)
     simulated = environment == SIMULATOR_ENVIRONMENT
+    from services import custodian_lots as CL
+
+    ledger_tag = "altruist_simulator" if simulated else "altruist"
     unmatched_code = REASON_CODE_UNMATCHED_SIMULATOR if simulated else REASON_CODE_UNMATCHED
 
     households = await call_households(
@@ -281,11 +284,23 @@ async def resolve_identity(
                 })
             elif hollisworks_account_id:
                 await _touch_last_seen(conn, org_id, account["id"], source)
-                resolved.append({
+                entry = {
                     "altruist_account_id": account["id"],
                     "altruist_household_id": household["id"],
                     "hollisworks_account_id": hollisworks_account_id,
-                })
+                }
+                # ALTREAD1 D3 — the documented account_balance (+ its as_of_date) arrives on the accounts call: stored
+                # as the CUSTODIAN balance (never account_balances_daily — treasury is unchanged). A bad value is
+                # recorded on the entry, never guessed, and never stops resolution.
+                if account.get("account_balance") is not None:
+                    try:
+                        entry["balance"] = await CL.store_balance(
+                            conn, org_id=org_id, account_id=hollisworks_account_id, source_system=ledger_tag,
+                            environment=environment, balance=account.get("account_balance"),
+                            as_of=account.get("as_of_date"), status=account.get("status"))
+                    except (ValueError, PortfolioError) as exc:
+                        entry["balance"] = {"error": str(exc)}
+                resolved.append(entry)
             else:
                 if batch_id is None:
                     batch_id = await _get_or_create_batch(conn, org_id, source)

@@ -344,6 +344,33 @@ This file starts with the email item below.
 ---
 
 
+## ALTREAD1 — the Altruist READ client matches Altruist's PUBLISHED Open API (developer.altruist.com, read 2026-11-11); cost basis (tax lots) + account balance; simulator + conformance on the documented shapes
+
+STATUS: BUILT — branch altread1-work (2026-11-11), all 9 tasks committed. Notes `docs/altruist/ALTREAD1_NOTES.md`
+(findings, D1–D7 as built, 19 corrections old → new, diff review). Contract `docs/cpsim/ALTRUIST_CONTRACT.md` rewritten
+for the read path from the published docs (DOCUMENTED rows with their page; §10 corrections; §4 / §8 / §9 ASSUMED).
+
+- **Schema** `docs/altread1_part1.sql` APPLIED (`scripts/_apply_altread1.py --all`, 31/31 read back):
+  `public.account_custodian_balances`, `portfolio.custodian_tax_lots` (RLS, one policy per operation),
+  `account_lot_method_settings.lot_source` (default 'hollisworks'), `altruist_connections.refresh_token_issued_at`,
+  `cpsim.book_lots` (cpsim_app only) + book_uploads kind 'lots'. Snapshot refreshed.
+- **Client** documented OAuth (authorize /api/oauth2/authorize + openid; token on the API host, token_type=id; 28-day
+  refresh expiry shown on status and enforced — a sync refuses 409), V2 paths, X-API-Request-ID, paging (both bases,
+  empty page, ceiling), data.<key> envelope, YYYY/MM/DD, transactions windows (13 months, then last sync − 5 business
+  days). **Mapping**: transaction_date / settle / three fees summed / reversal close-or-skip; custodian balance on
+  resolve; cost-basis lots as custodian lots; the tax engine reads them only when the account's approved lot-method
+  row says 'custodian'; reconciliation; `GET /api/v1/custodian-feed/accounts/{id}` (view_proposals + family scope).
+- **Simulator + conformance** on the documented shapes; in-process conformance **55 PASS / 0 FAIL**; orders / transfers
+  labelled ASSUMED. **UI**: account custodian panel, lot-source on the lot-method change, refresh expiry on Admin →
+  Counterparties → Connections; `tests/altread1` 5/5, `node --test tests/` 0 fail.
+- **Verify** `apps/api/scripts/verify_altread1.py` (in scripts/regression_set.txt) — RUN in chunks, every section green after two fixes (a real bug: `minus_business_days` never moved; isolation set up its own rows); self-checks 50/0, cleanup 0 rows, route docs CURRENT, fast regressions 0 FAIL; the single full run and npm build NOT run (see ALTREAD1_NOTES §5). Treasury unchanged (follow-up),
+  `services/portfolio_altruist.py` untouched (slated for removal). Full regression: scripts/run_regressions.sh at the
+  end of the sprint cycle (verify_cpsim02 / 03 / 04 full sections need re-pinning to the documented simulator paths
+  first — OUTSTANDING_TODO_LIST §8).
+
+---
+
+
 ## CPSIM04 — the simulated custodian MOVES MONEY and the simulated BANKS answer: a person sends an approved payment to the simulator's transfers API and refreshes its status through the existing payment steps (counterparty simulator v1 COMPLETE)
 
 Branch cpsim04-work (2026-11-11). Notes: `docs/cpsim/CPSIM04_NOTES.md` (Task 1 findings, D1–D11 as built, reuse

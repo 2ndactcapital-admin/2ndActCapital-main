@@ -46,7 +46,8 @@ router = APIRouter(tags=["lot-method"])
 VIEW, MANAGE, APPROVE = LM.VIEW, LM.MANAGE, LM.APPROVE
 EDITABLE_HOUSEHOLD = ("lot_method", "gain_preference", "realize_gains_target", "reason")
 EDITABLE_ACCOUNT = ("lot_method_override", "gain_preference_override", "realize_gains_target",
-                    "custodian_cost_basis_method", "custodian_method_source", "average_cost_security_ids", "reason")
+                    "custodian_cost_basis_method", "custodian_method_source", "average_cost_security_ids", "lot_source",
+                    "reason")
 EDITABLE_PROPOSAL = ("lot_method", "gain_preference", "realize_gains_target", "lots")
 Method = Literal["tax_optimized", "hifo", "fifo", "lifo", "lowest_cost", "highest_cost", "specific"]
 Preference = Literal["prefer_long_term", "st_losses_first", "realize_gains"]
@@ -77,6 +78,8 @@ class AccountChangeIn(_Body):
     custodian_cost_basis_method: CustodianMethod = "unknown"
     custodian_method_source: Literal["custodian", "adviser"] | None = None
     average_cost_security_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    #: ALTREAD1 D4 — whose lots the tax engine reads; omitted → the account's current value is kept
+    lot_source: Literal["hollisworks", "custodian"] | None = None
     reason: str = Field(min_length=1, max_length=2000)
 
     @field_validator("realize_gains_target", mode="before")
@@ -222,7 +225,8 @@ async def request_account_change(request: Request, account_id: UUID, body: Accou
         lot_method_override=body.lot_method_override, gain_preference_override=body.gain_preference_override,
         realize_gains_target=body.realize_gains_target, custodian_cost_basis_method=body.custodian_cost_basis_method,
         custodian_method_source=body.custodian_method_source,
-        average_cost_security_ids=[str(x) for x in body.average_cost_security_ids], reason=body.reason))
+        average_cost_security_ids=[str(x) for x in body.average_cost_security_ids], reason=body.reason,
+        lot_source=body.lot_source))
     return {"change": {k: v for k, v in out.items() if k != "task"}, "task_id": (out.get("task") or {}).get("id")}
 
 

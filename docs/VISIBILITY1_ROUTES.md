@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 1064 · guarded 254 · sql-scope 53 · body-check 15 · legacy-rule 3
+Routes: 1065 · guarded 255 · sql-scope 54 · body-check 15 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -344,6 +344,7 @@ Routes: 1064 · guarded 254 · sql-scope 53 · body-check 15 · legacy-rule 3
 | GET | `/api/v1/config` | marketplace | scrub |
 | POST | `/api/v1/crm-relationships/{rel_id}/end` | crm_detail | guard:rel_id, scrub |
 | GET | `/api/v1/crm/vocabularies` | crm_detail | scrub |
+| GET | `/api/v1/custodian-feed/accounts/{account_id}` | custodian_feed | guard:account_id, sql-scope, scrub |
 | GET | `/api/v1/custodians/capabilities` | custodians | scrub |
 | PUT | `/api/v1/custodians/capabilities/{custodian_code}/{capability_key}` | custodians | scrub |
 | GET | `/api/v1/custodians/capabilities/{custodian_code}/{capability_key}/history` | custodians | scrub |

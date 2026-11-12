@@ -45,27 +45,38 @@ encryption remains the intended production path and should replace this layer
 without changing any caller — ``encrypt_secret``/``decrypt_secret`` are the
 only two functions that would need to change.
 
-OAUTH HOST / PATH ASSUMPTIONS — [FIND]
+OAUTH HOST / PATH — DOCUMENTED (ALTREAD1, developer.altruist.com read 2026-11-11)
 ────────────────────────────────────────────────────────────────────────────
-The sprint's CONFIRMED REAL FACTS give the sandbox/production API and login
-hosts but not the exact authorize/token path segments (no live spec doc exists
-in this repo — checked, see sprint log Task 1a). ``/oauth/authorize`` and
-``/oauth/token`` on the login-portal host are the standard OAuth2
-authorization-code convention and are used here as the best-available
-assumption; they are isolated to ``_OAUTH_PATHS`` below so a single edit
-corrects them once real sandbox docs/access are available.
+docs/open-api-authentication: authorize = the LOGIN host + ``/api/oauth2/authorize``
+(``client_id``, ``scope=openid``, ``redirect_uri``, ``state``); token = the API
+host + ``/oauth2/token`` (``api_base`` already ends in ``/altruist-open-api``),
+form body client_id, client_secret, code | refresh_token, redirect_uri,
+grant_type and ``token_type=id``. Access token 1 h, refresh token 28 days.
+The cpsim01-era assumptions (``/oauth/authorize`` + ``/oauth/token`` on the
+login host, scope ``accounts:read``) are listed as corrections in
+docs/altruist/ALTREAD1_NOTES.md §3.
+
+READ PATH — DOCUMENTED (docs/endpoints, docs/json-code-examples): V2 resources
+under ``api_base``, paged (``page`` / ``page_size``), enveloped
+``{"paging": {...}, "data": {"<key>": [...]}}``, dates ``YYYY/MM/DD``, an
+optional ``X-API-Request-ID`` per request. See ``fetch_pages`` below.
 """
 
 from __future__ import annotations
 
 import base64
+import calendar
 import json
+import logging
 import os
+import re
 import secrets
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+import uuid
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
@@ -75,7 +86,7 @@ from cryptography.fernet import Fernet, InvalidToken
 # openapi.stage1.altruistnet.tech/altruist-open-api/ (login portal
 # oauth.stage1.altruistnet.tech); production openapi.altruist.com/altruist-open-api/
 # (login portal oauth.altruist.com). Access token expires in 1 hour; refresh
-# token valid 30 days.
+# token valid 28 days (docs/open-api-authentication — ALTREAD1; was 30, unused).
 ALTRUIST_HOSTS: dict[str, dict[str, str]] = {
     "sandbox": {
         "api_base": "https://openapi.stage1.altruistnet.tech/altruist-open-api",
@@ -87,16 +98,34 @@ ALTRUIST_HOSTS: dict[str, dict[str, str]] = {
     },
 }
 
-# [FIND] path segments assumed per standard OAuth2 authorization-code
-# convention — not confirmed against a live spec (none exists in-repo).
+# DOCUMENTED (docs/open-api-authentication): authorize on the LOGIN host, token on the API host.
 _OAUTH_PATHS = {
-    "authorize": "/oauth/authorize",
-    "token": "/oauth/token",
+    "authorize": "/api/oauth2/authorize",
+    "token": "/oauth2/token",
 }
+#: which host each OAuth path lives on (the token endpoint moved to the API host — correction #3)
+_OAUTH_HOST = {"authorize": "login_base", "token": "api_base"}
+DEFAULT_SCOPE = "openid"
+#: sent on BOTH grants (docs/open-api-authentication)
+TOKEN_TYPE_PARAM = "id"
 
 ACCESS_TOKEN_LIFETIME = timedelta(hours=1)
-REFRESH_TOKEN_LIFETIME = timedelta(days=30)
+REFRESH_TOKEN_LIFETIME = timedelta(days=28)
 STATE_TTL = timedelta(minutes=10)
+
+log = logging.getLogger("altruist.client")
+
+#: test injection: a zero-argument callable returning an aware datetime (the refresh-expiry clock)
+_clock: Any = None
+
+
+def set_clock(fn) -> None:
+    global _clock
+    _clock = fn
+
+
+def utcnow() -> datetime:
+    return _clock() if _clock is not None else datetime.now(timezone.utc)
 
 ENVIRONMENTS = ("sandbox", "production", "simulator")
 
@@ -129,6 +158,16 @@ class AltruistConfigError(RuntimeError):
     encryption key) is missing. Distinct from AltruistOAuthError so a caller
     can tell "this deployment is not configured" from "the flow itself failed".
     """
+
+
+class AltruistPagingCeiling(RuntimeError):
+    """ALTREAD1 D1 — a paged read hit the page ceiling: the read STOPPED there. ``partial`` holds the rows read so far,
+    ``pages`` how many pages were requested. A caller records the ceiling (it never silently looks complete)."""
+
+    def __init__(self, message: str, *, partial: list, pages: int):
+        super().__init__(message)
+        self.partial = partial
+        self.pages = pages
 
 
 class AltruistSimulatorRefused(RuntimeError):
@@ -386,7 +425,7 @@ def client_credentials(environment: str) -> tuple[str, str]:
     return client_id, client_secret
 
 
-def build_authorize_url(*, environment: str, state: str, scope: str = "accounts:read",
+def build_authorize_url(*, environment: str, state: str, scope: str = DEFAULT_SCOPE,
                         hosts: dict | None = None, credentials: tuple[str, str] | None = None,
                         redirect_uri: str | None = None) -> str:
     """``hosts`` / ``credentials`` / ``redirect_uri`` are cpsim02 overrides (the simulator's per-org hosts; the
@@ -397,7 +436,8 @@ def build_authorize_url(*, environment: str, state: str, scope: str = "accounts:
     redirect_uri = redirect_uri or _redirect_uri()
     resolved = _static_hosts(environment, hosts)
     check_destination(environment, resolved, client_secret)
-    login_base = resolved["login_base"]
+    # DOCUMENTED parameters: client_id, scope (openid), redirect_uri, state. response_type=code is the OAuth 2.0
+    # authorization-code request's own parameter — not shown on the page, kept (a standard server requires it).
     params = {
         "response_type": "code",
         "client_id": client_id,
@@ -405,7 +445,12 @@ def build_authorize_url(*, environment: str, state: str, scope: str = "accounts:
         "state": state,
         "scope": scope,
     }
-    return f"{login_base}{_OAUTH_PATHS['authorize']}?{urlencode(params)}"
+    return f"{oauth_url(resolved, 'authorize')}?{urlencode(params)}"
+
+
+def oauth_url(hosts: dict, which: str) -> str:
+    """The documented OAuth URL: authorize on the login host, token on the API host."""
+    return f"{hosts[_OAUTH_HOST[which]]}{_OAUTH_PATHS[which]}"
 
 
 @dataclass(frozen=True)
@@ -414,6 +459,9 @@ class TokenResponse:
     refresh_token: str
     expires_in: int
     scope: str | None = None
+    #: ALTREAD1 — True when the response carried a refresh token (a NEW one: its 28-day clock restarts). False only for
+    #: a refresh response that omitted it (the stored one is kept, and so is its issue time).
+    refresh_issued: bool = True
 
 
 async def exchange_code_for_tokens(*, environment: str, code: str, timeout: float = 15.0,
@@ -430,8 +478,7 @@ async def exchange_code_for_tokens(*, environment: str, code: str, timeout: floa
     redirect_uri = redirect_uri or _redirect_uri()
     resolved = _static_hosts(environment, hosts)
     check_destination(environment, resolved, client_secret)
-    login_base = resolved["login_base"]
-    url = f"{login_base}{_OAUTH_PATHS['token']}"
+    url = oauth_url(resolved, "token")
 
     async with httpx.AsyncClient(timeout=timeout, transport=_transport_for(environment, transport)) as client:
         try:
@@ -443,6 +490,7 @@ async def exchange_code_for_tokens(*, environment: str, code: str, timeout: floa
                     "redirect_uri": redirect_uri,
                     "client_id": client_id,
                     "client_secret": client_secret,
+                    "token_type": TOKEN_TYPE_PARAM,
                 },
                 headers={"Accept": "application/json"},
             )
@@ -462,10 +510,11 @@ async def exchange_code_for_tokens(*, environment: str, code: str, timeout: floa
 
 async def refresh_access_token(*, environment: str, refresh_token: str, timeout: float = 15.0,
                                hosts: dict | None = None, transport: Any = None,
-                               credentials: tuple[str, str] | None = None) -> TokenResponse:
+                               credentials: tuple[str, str] | None = None,
+                               redirect_uri: str | None = None) -> TokenResponse:
     """Rotate the access token using the stored refresh token.
 
-    Altruist's 30-day refresh tokens may or may not rotate on use — [FIND]
+    Altruist's 28-day refresh tokens may or may not rotate on use — [FIND]
     this response shape has never been observed live (no sandbox credentials
     exist). Handled defensively via _parse_token_response: if the response
     includes a new refresh_token, the caller stores it; if not, the caller
@@ -474,19 +523,24 @@ async def refresh_access_token(*, environment: str, refresh_token: str, timeout:
     client_id, client_secret = credentials or client_credentials(environment)
     resolved = _static_hosts(environment, hosts)
     check_destination(environment, resolved, client_secret)
-    login_base = resolved["login_base"]
-    url = f"{login_base}{_OAUTH_PATHS['token']}"
+    url = oauth_url(resolved, "token")
+    data = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "token_type": TOKEN_TYPE_PARAM,
+    }
+    # the documented body lists redirect_uri for the refresh grant too — sent when one is configured / given
+    uri = redirect_uri or os.environ.get("ALTRUIST_REDIRECT_URI")
+    if uri:
+        data["redirect_uri"] = uri
 
     async with httpx.AsyncClient(timeout=timeout, transport=_transport_for(environment, transport)) as client:
         try:
             response = await client.post(
                 url,
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                },
+                data=data,
                 headers={"Accept": "application/json"},
             )
         except httpx.HTTPError as exc:
@@ -518,6 +572,7 @@ def _parse_token_response(body: dict[str, Any], fallback_refresh_token: str | No
         refresh_token=refresh_token,
         expires_in=expires_in,
         scope=body.get("scope"),
+        refresh_issued=bool(body.get("refresh_token")),
     )
 
 
@@ -529,7 +584,7 @@ async def get_active_connection(conn, *, org_id: str, environment: str) -> dict 
         SELECT id, org_id, environment, status, client_id, client_secret_last4,
                access_token_last4, refresh_token_last4, scope,
                token_expires_at, last_refreshed_at, connected_by,
-               created_at, updated_at
+               created_at, updated_at, refresh_token_issued_at
         FROM altruist_connections
         WHERE org_id = $1 AND environment = $2 AND system_to IS NULL
         """,
@@ -581,13 +636,15 @@ async def store_new_connection(
             client_secret_encrypted, client_secret_last4,
             access_token_encrypted, access_token_last4,
             refresh_token_encrypted, refresh_token_last4,
-            scope, token_expires_at, last_refreshed_at, connected_by
+            scope, token_expires_at, last_refreshed_at, connected_by,
+            refresh_token_issued_at
         ) VALUES (
             $1, $2, 'connected', $3,
             $4, $5,
             $6, $7,
             $8, $9,
-            $10, $11, now(), $12
+            $10, $11, now(), $12,
+            now()
         )
         RETURNING id
         """,
@@ -616,14 +673,36 @@ async def persist_refresh(conn, *, connection_id: str, tokens: TokenResponse) ->
             token_expires_at = $6,
             last_refreshed_at = now(),
             status = 'connected',
-            updated_at = now()
+            updated_at = now(),
+            refresh_token_issued_at = CASE WHEN $7 THEN now() ELSE refresh_token_issued_at END
         WHERE id = $1
         """,
         connection_id,
         encrypt_secret(tokens.access_token), last4(tokens.access_token),
         encrypt_secret(tokens.refresh_token), last4(tokens.refresh_token),
-        expires_at,
+        expires_at, bool(tokens.refresh_issued),
     )
+
+
+# ── ALTREAD1 D1 — the refresh token's documented 28-day lifetime ────────────
+def refresh_token_expires_at(connection: dict | None) -> datetime | None:
+    """When the stored refresh token expires: its issue time + 28 days. A connection made before ALTREAD1 has no issue
+    time; ``created_at`` is used — conservative, it can only flag EARLY (a reconnect fixes it), never late."""
+    if not connection:
+        return None
+    issued = connection.get("refresh_token_issued_at") or connection.get("created_at")
+    return issued + REFRESH_TOKEN_LIFETIME if issued else None
+
+
+def refresh_token_expired(connection: dict | None, now: datetime | None = None) -> bool:
+    exp = refresh_token_expires_at(connection)
+    return bool(exp is not None and exp <= (now or utcnow()))
+
+
+class AltruistRefreshExpired(RuntimeError):
+    """The connection's refresh token is past its documented 28-day lifetime — re-authorization is required. Raised by
+    ``require_active_connection`` before any call (a subclass of ``AltruistNotConnected`` is set below, so every
+    existing 409 handler answers it with this reason)."""
 
 
 async def get_decrypted_refresh_token(conn, *, connection_id: str) -> str:
@@ -657,6 +736,11 @@ class AltruistNotConnected(RuntimeError):
     API call can catch specifically "not configured" and refuse BEFORE ever
     reaching the network — see Task 4's proof of the pre-connection guard.
     """
+
+
+class AltruistRefreshExpiredError(AltruistNotConnected, AltruistRefreshExpired):
+    """ALTREAD1 — the refresh token expired: an ``AltruistNotConnected`` (every router already answers 409 with the
+    reason) that is also an ``AltruistRefreshExpired``."""
 
 
 async def close_connection(conn, *, org_id: str, environment: str) -> bool:
@@ -771,6 +855,12 @@ async def require_active_connection(
             f"Altruist connection exists but status={row['status']!r} "
             f"(environment={environment!r}) — re-authorization required."
         )
+    if refresh_token_expired(row):
+        exp = refresh_token_expires_at(row)
+        raise AltruistRefreshExpiredError(
+            f"The Altruist refresh token expired on {exp.date().isoformat()} (the documented 28-day lifetime, "
+            f"environment={environment!r}) — reconnect to authorize again. Nothing was fetched."
+        )
     if auto_refresh:
         row = await ensure_fresh_token(
             conn, org_id=org_id, environment=environment, connection=row, threshold=refresh_threshold
@@ -778,46 +868,132 @@ async def require_active_connection(
     return row
 
 
-# [FIND] Altruist Sprint 2 — path segments as documented, flagged inconsistent
-# in the source Guides (households under /api/v2/, accounts under /v2/,
-# neither confirmed against a live /reference page in this environment).
-# Isolated here for the same one-edit-fixes-it reason as _OAUTH_PATHS above.
+# ── ALTREAD1 D1 — the documented read path ──────────────────────────────────
 #
-# [FIND] Altruist Sprint 3 — ``positions``/``transactions`` are NOT confirmed
-# against any live spec either (checked this repo's docs/ for an existing
-# Altruist API reference — none exists, same absence Sprint 1/2 found for the
-# OAuth and households/accounts paths). No sandbox access exists to confirm
-# against a live /reference page. Falls back to the same ``/v2/<resource>``
-# convention ``accounts`` already uses, with the resource scoped by
-# ``account_id`` as a query parameter — a guess, not a confirmed fact, and
-# isolated here for the same one-edit-fixes-it reason as everything else in
-# this dict.
+# DOCUMENTED (developer.altruist.com docs/endpoints + resource pages, read 2026-11-11). V2 only — the V1 paths
+# (/api/v1/households, /api/v1/accounts/{household_id}, /api/v1/positions/{account_id}, /api/v1/cost-basis/{account_id})
+# are deprecating and never used. The households path is ONE constant: the endpoints index says /api/v2/households,
+# the households page itself shows /v2/households — the portal is inconsistent (ALTRUIST_CONTRACT.md §3.1).
+HOUSEHOLDS_PATH = "/api/v2/households"
 _API_PATHS = {
-    "households": "/api/v2/households",
+    "households": HOUSEHOLDS_PATH,
     "accounts": "/v2/accounts",
-    "positions": "/v2/positions",
-    "transactions": "/v2/transactions",
+    "positions": "/v2/accounts/{account_id}/positions/",
+    "cost_basis": "/v2/accounts/{account_id}/cost-basis/",
+    "transactions": "/v2/accounts/{account_id}/transactions",
 }
+#: the documented page_size maximum per resource (default 100 if not sent); the client always asks for the max
+PAGE_SIZE_MAX = {"households": 1000, "accounts": 1000, "positions": 1000, "cost_basis": 1000, "transactions": 500}
+#: the hard ceiling on pages for ONE paged read: hitting it STOPS the read and is recorded (never silently "complete")
+MAX_PAGES = 200
+REQUEST_ID_HEADER = "X-API-Request-ID"
+#: transactions: the first sync's look-back, the later syncs' overlap, the window walked (≤ 1 calendar month)
+LOOKBACK_MONTHS = 13
+OVERLAP_BUSINESS_DAYS = 5
+
+_DATE_RX = re.compile(r"^(\d{4})([/-])(\d{2})\2(\d{2})$")
+_TS_RX = re.compile(r"^(\d{4}-\d{2}-\d{2})[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$")
+
+
+def parse_altruist_date(value: Any) -> date | None:
+    """DOCUMENTED dates are ``YYYY/MM/DD`` (json-code-examples); ISO ``YYYY-MM-DD`` (and an ISO timestamp's date part)
+    is accepted too. ``None`` / blank → None. Anything else raises ``ValueError`` — a per-row error, never a guess."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"date {value!r} is not a string")
+    s = value.strip()
+    if not s:
+        return None
+    m = _DATE_RX.match(s)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(3)), int(m.group(4)))
+        except ValueError as exc:
+            raise ValueError(f"date {s!r} is not a real calendar date") from exc
+    m = _TS_RX.match(s)
+    if m:
+        return date.fromisoformat(m.group(1))
+    raise ValueError(f"date {s!r} is neither YYYY/MM/DD nor YYYY-MM-DD")
+
+
+def to_decimal(value: Any, what: str = "value") -> Decimal | None:
+    """A JSON number or decimal string → Decimal (exact; a float goes through repr). None / blank → None."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{what} {value!r} is not a number")
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, int):
+        return Decimal(value)
+    if isinstance(value, float):
+        return Decimal(repr(value))
+    try:
+        return Decimal(str(value).strip().replace(",", ""))
+    except InvalidOperation as exc:
+        raise ValueError(f"{what} {value!r} is not a number") from exc
+
+
+def sum_parts(raw: dict, keys: tuple[str, ...], what: str) -> Decimal | None:
+    """The documented split amounts (e.g. transaction_fees + broker_fees + other_fees), summed EXACTLY. None when none
+    of the keys is present (so an old fixture's single field can stand in); a missing / blank part counts as 0."""
+    if not any(k in raw for k in keys):
+        return None
+    total = Decimal(0)
+    for k in keys:
+        v = to_decimal(raw.get(k), f"{what}.{k}")
+        total += v or Decimal(0)
+    return total
+
+
+def mask_number(value: Any) -> str | None:
+    """An account number reduced to its last four (never stored, logged or returned whole)."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s[-4:] if s else None
+
+
+def _extract_envelope(body: Any, key: str) -> tuple[list[dict], dict | None, str, dict]:
+    """``(items, paging, form, data_object)`` from one response body.
+
+    DOCUMENTED (json-code-examples): ``{"paging": {page, page_size, total_pages}, "data": {"<key>": [...], …}}``.
+    Tolerated for old fixtures: a bare list, ``{"<key>": [...]}``, ``{"data": [...]}``, ``{"results": [...]}``.
+    Anything else → ``AltruistOAuthError`` naming what was expected."""
+    if isinstance(body, list):
+        return body, None, "list", {}
+    if isinstance(body, dict):
+        paging = body.get("paging") if isinstance(body.get("paging"), dict) else None
+        data = body.get("data")
+        if isinstance(data, dict):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value, paging, "documented", data
+            raise AltruistOAuthError(
+                f"Unexpected response shape from Altruist: data.{key} is "
+                f"{'missing' if key not in data else type(value).__name__}, expected a list (documented envelope "
+                f"{{\"paging\": …, \"data\": {{\"{key}\": [...]}}}})")
+        if isinstance(data, list):
+            return data, paging, "data_list", {}
+        value = body.get(key)
+        if isinstance(value, list):
+            return value, paging, "flat", {}
+        if isinstance(body.get("results"), list):
+            return body["results"], paging, "results", {}
+    raise AltruistOAuthError(
+        f"Unexpected response shape from Altruist: expected the documented envelope "
+        f"{{\"paging\": …, \"data\": {{\"{key}\": [...]}}}} (or a list), got {type(body).__name__}"
+        + (f" with keys {sorted(body)[:8]}" if isinstance(body, dict) else ""))
 
 
 def _extract_list(body: Any, *keys: str) -> list[dict]:
-    """Altruist's real list-envelope shape has never been observed (no sandbox
-    access — see module docstring). Defensively accept a bare JSON list, or
-    the first of ``keys`` present on an object body, mirroring
-    ``_parse_token_response``'s defensive field lookups above. [FIND] to
-    correct once a real response is observed.
-    """
-    if isinstance(body, list):
-        return body
-    if isinstance(body, dict):
-        for key in keys:
-            value = body.get(key)
-            if isinstance(value, list):
-                return value
-    raise AltruistOAuthError(
-        f"Unexpected response shape from Altruist (expected a list or one of "
-        f"{keys!r} to be a list): {type(body).__name__}"
-    )
+    """Kept for callers of the cpsim02-era name: the items of ``keys[0]`` (envelope rules as above)."""
+    return _extract_envelope(body, keys[0])[0]
 
 
 def _normalize_household(raw: dict) -> dict:
@@ -829,72 +1005,252 @@ def _normalize_household(raw: dict) -> dict:
 
 
 def _normalize_account(raw: dict) -> dict:
+    """DOCUMENTED account fields: id, rep_code, account_number, account_type, account_name, status, date_open,
+    date_closed, as_of_date, account_balance. The account number is reduced to its last four HERE — the normalized row
+    (and its ``raw``) never carries the full number."""
+    safe = dict(raw)
+    if "account_number" in safe:
+        safe["account_number"] = f"***{mask_number(safe['account_number']) or ''}"
     return {
         "id": str(raw.get("id") or raw.get("account_id") or ""),
-        "name": raw.get("name") or raw.get("account_name") or raw.get("nickname") or "",
-        "raw": raw,
+        "name": raw.get("account_name") or raw.get("name") or raw.get("nickname") or "",
+        "account_type": raw.get("account_type"),
+        "status": raw.get("status"),
+        "rep_code": raw.get("rep_code"),
+        "account_number_last4": mask_number(raw.get("account_number")),
+        "account_balance": raw.get("account_balance"),
+        "as_of_date": raw.get("as_of_date"),
+        "date_open": raw.get("date_open"),
+        "date_closed": raw.get("date_closed"),
+        "raw": safe,
     }
 
 
 def _normalize_position(raw: dict) -> dict:
-    """A single Altruist position, in the documented-or-best-guess shape.
-
-    Field names are unconfirmed (same [FIND] as the path itself) — every
-    candidate key is a defensive guess, exactly as ``_normalize_account``
-    already does for ``id``/``name``. ``raw`` is kept whole so a caller can
-    recover a field this function did not anticipate.
-    """
+    """DOCUMENTED position fields: id, cusip, symbol, description, long_short_indicator, currency_code, quantity,
+    as_of_date, security_type, market_value. The cpsim01-era aliases (ticker, name, asset_type, …) stay as fallbacks
+    for old fixtures; ``raw`` is kept whole."""
     return {
         "id": raw.get("id") or raw.get("position_id"),
         "cusip": raw.get("cusip"),
         "isin": raw.get("isin"),
-        "ticker": raw.get("ticker") or raw.get("symbol"),
-        "name": raw.get("name") or raw.get("security_name") or raw.get("description"),
-        "asset_type": raw.get("asset_type") or raw.get("security_type"),
-        "quantity": raw.get("quantity") or raw.get("units"),
-        "market_value": raw.get("market_value") or raw.get("value"),
+        "ticker": raw.get("symbol") or raw.get("ticker"),
+        "name": raw.get("description") or raw.get("name") or raw.get("security_name"),
+        "asset_type": raw.get("security_type") or raw.get("asset_type"),
+        "long_short_indicator": raw.get("long_short_indicator"),
+        "quantity": raw.get("quantity") if raw.get("quantity") is not None else raw.get("units"),
+        "market_value": raw.get("market_value") if raw.get("market_value") is not None else raw.get("value"),
         "cost_basis": raw.get("cost_basis"),
         "currency_code": raw.get("currency_code") or raw.get("currency"),
+        "as_of_date": raw.get("as_of_date") or raw.get("as_of"),
         "raw": raw,
     }
+
+
+def _normalize_lot(raw: dict) -> dict:
+    """DOCUMENTED cost-basis fields (one row per TAX LOT): id, cusip, symbol, description, quantity, market_value,
+    cost_basis_unadjusted, cost_basis_adjusted, unrealized_gain_loss, as_of_date, open_date."""
+    return {
+        "id": raw.get("id"),
+        "cusip": raw.get("cusip"),
+        "ticker": raw.get("symbol"),
+        "name": raw.get("description"),
+        "quantity": raw.get("quantity"),
+        "market_value": raw.get("market_value"),
+        "cost_basis_unadjusted": raw.get("cost_basis_unadjusted"),
+        "cost_basis_adjusted": raw.get("cost_basis_adjusted"),
+        "unrealized_gain_loss": raw.get("unrealized_gain_loss"),
+        "as_of_date": raw.get("as_of_date"),
+        "open_date": raw.get("open_date"),
+        "raw": raw,
+    }
+
+
+FEE_FIELDS = ("transaction_fees", "broker_fees", "other_fees")
+TAX_FIELDS = ("TEFRA_withheld", "state_tax_withheld")
 
 
 def _normalize_transaction(raw: dict) -> dict:
-    """A single Altruist transaction, in the documented-or-best-guess shape.
-
-    Same defensive-field-lookup approach as ``_normalize_position`` — see its
-    docstring. ``type`` is left as whatever string Altruist sends; mapping it
-    onto this codebase's ``transaction_type_code`` vocabulary is the caller's
-    job (``altruist_positions_sync``), not this normalizer's.
-    """
+    """DOCUMENTED transaction fields: id, cusip, symbol, security_type, quantity, price, amount, interest,
+    currency_code, transaction_type, transaction_subtype, transaction_description, cancellation_reversal_flag,
+    transaction_fees, broker_fees, other_fees, TEFRA_withheld, state_tax_withheld, as_of_date, transaction_date,
+    settle_date. Values stay as sent (strings / numbers); dates and amounts are parsed by the sync so a bad one is a
+    per-row error. ``fees`` / ``taxes`` are the documented parts summed exactly (an old fixture's single field when
+    none of the parts is present). ``type`` is left as Altruist sends it — mapping is the caller's job."""
+    fees = sum_parts(raw, FEE_FIELDS, "fees")
+    taxes = sum_parts(raw, TAX_FIELDS, "taxes")
     return {
         "id": raw.get("id") or raw.get("transaction_id"),
-        "type": raw.get("type") or raw.get("transaction_type") or raw.get("activity_type"),
+        "type": raw.get("transaction_type") or raw.get("type") or raw.get("activity_type"),
+        "subtype": raw.get("transaction_subtype"),
+        "description": raw.get("transaction_description") or raw.get("description"),
         "cusip": raw.get("cusip"),
         "isin": raw.get("isin"),
-        "ticker": raw.get("ticker") or raw.get("symbol"),
-        "name": raw.get("name") or raw.get("security_name") or raw.get("description"),
-        "trade_date": raw.get("trade_date") or raw.get("date"),
+        "ticker": raw.get("symbol") or raw.get("ticker"),
+        "name": raw.get("name") or raw.get("security_name"),
+        "security_type": raw.get("security_type"),
+        "trade_date": raw.get("transaction_date") or raw.get("trade_date") or raw.get("date"),
         "settle_date": raw.get("settle_date"),
-        "quantity": raw.get("quantity") or raw.get("units"),
+        "as_of_date": raw.get("as_of_date"),
+        "quantity": raw.get("quantity") if raw.get("quantity") is not None else raw.get("units"),
         "price": raw.get("price"),
-        "gross_amount": raw.get("gross_amount") or raw.get("amount"),
-        "fees": raw.get("fees"),
-        "taxes": raw.get("taxes"),
+        "gross_amount": raw.get("amount") if raw.get("amount") is not None else raw.get("gross_amount"),
+        "interest": raw.get("interest"),
+        "fees": fees if fees is not None else raw.get("fees"),
+        "taxes": taxes if taxes is not None else raw.get("taxes"),
         "net_amount": raw.get("net_amount"),
         "currency_code": raw.get("currency_code") or raw.get("currency"),
+        "cancellation_reversal_flag": raw.get("cancellation_reversal_flag"),
         "raw": raw,
     }
 
 
-#: resource → (path key, query parameter, envelope list key, normalizer) — the four resource calls share ONE request
-#: path (``fetch_resource``), so the conformance suite drives exactly the request-building and parsing the sync uses.
+#: resource → (path key, the query / path parameter, envelope list key, the data.<id> echo key, normalizer)
 _RESOURCES = {
-    "households": ("households", None, "households", _normalize_household),
-    "accounts": ("accounts", "household_id", "accounts", _normalize_account),
-    "positions": ("positions", "account_id", "positions", _normalize_position),
-    "transactions": ("transactions", "account_id", "transactions", _normalize_transaction),
+    "households": ("households", None, "households", None, _normalize_household),
+    "accounts": ("accounts", "household_id", "accounts", "household_id", _normalize_account),
+    "positions": ("positions", "{account_id}", "positions", "account_id", _normalize_position),
+    "cost_basis": ("cost_basis", "{account_id}", "cost_basis", "account_id", _normalize_lot),
+    "transactions": ("transactions", "{account_id}", "transactions", "account_id", _normalize_transaction),
 }
+
+
+@dataclass
+class FetchResult:
+    """One paged read: the normalized rows (deduped by id), how many pages were requested, the X-API-Request-ID of
+    each request, whether the ceiling stopped it, the page base the server used (0 / 1 / None unknown) and the
+    envelope form it answered in ('documented' | 'flat' | 'list' | 'data_list' | 'results')."""
+    items: list[dict] = field(default_factory=list)
+    pages: int = 0
+    request_ids: list[str] = field(default_factory=list)
+    ceiling_hit: bool = False
+    page_base: int | None = None
+    envelope: str | None = None
+    url: str = ""
+
+
+def resource_url(api_base: str, resource: str, param: str | None) -> tuple[str, dict]:
+    """(url, base query) for one resource. An account id is a PATH segment (URL-quoted), a household id a query."""
+    path_key, param_spec, _key, _echo, _norm = _RESOURCES[resource]
+    path = _API_PATHS[path_key]
+    if param_spec == "{account_id}":
+        if not param:
+            raise ValueError(f"{resource} needs an account id")
+        return f"{api_base}{path.format(account_id=quote(str(param), safe=''))}", {}
+    if param_spec is None:
+        return f"{api_base}{path}", {}
+    return f"{api_base}{path}", ({param_spec: param} if param is not None else {})
+
+
+def _item_key(item: dict) -> str:
+    raw = item.get("raw") if isinstance(item.get("raw"), dict) else item
+    rid = raw.get("id") if isinstance(raw, dict) else None
+    return f"id:{rid}" if rid not in (None, "") else "row:" + json.dumps(raw, sort_keys=True, default=str)
+
+
+async def fetch_pages(
+    *,
+    api_base: str,
+    resource: str,
+    access_token: str,
+    param: str | None = None,
+    query: dict | None = None,
+    page_size: int | None = None,
+    max_pages: int = MAX_PAGES,
+    timeout: float = 15.0,
+    transport: Any = None,
+) -> FetchResult:
+    """GET every page of one resource (D1).
+
+    Each request: ``Authorization: Bearer <token>``, ``Accept: application/json``, a fresh ``X-API-Request-ID`` (uuid4,
+    logged with method / path / status — never a token), ``page`` + ``page_size`` (the documented max unless given).
+    Stops on: an empty page; the server's ``paging.total_pages`` reached in ITS OWN page base (the first
+    ``paging.page`` echo decides 0 or 1 — the docs' example says 1 while the parameter defaults to 0); a page that adds
+    no new id (a server ignoring ``page``; one such page right after the first is allowed — the base-1 probe); the
+    ``max_pages`` ceiling (``ceiling_hit``). A base-1 server answering page 0 empty is retried at page 1. ``≥ 400`` and
+    transport failures raise ``AltruistOAuthError``; a body that is not the documented envelope (or a tolerated old
+    form) raises it too, naming what was expected."""
+    path_key, _spec, list_key, echo_key, normalize = _RESOURCES[resource]
+    url, base_q = resource_url(api_base, resource, param)
+    size = int(page_size or PAGE_SIZE_MAX[path_key])
+    if size < 1 or size > PAGE_SIZE_MAX[path_key]:
+        raise ValueError(f"page_size {size} is outside 1..{PAGE_SIZE_MAX[path_key]} for {resource}")
+    out = FetchResult(url=url)
+    seen: set[str] = set()
+    page = 0
+    retried_zero = False
+    dup_probe_used = False
+    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+        while True:
+            if out.pages >= max_pages:
+                out.ceiling_hit = True
+                log.warning("altruist GET %s stopped at the page ceiling (%s pages)", url, out.pages)
+                break
+            rid = str(uuid.uuid4())
+            params = {**base_q, **(query or {}), "page": page, "page_size": size}
+            try:
+                response = await client.get(url, params=params, headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json",
+                    REQUEST_ID_HEADER: rid,
+                })
+            except httpx.HTTPError as exc:
+                raise AltruistOAuthError(
+                    f"GET {url} failed at the transport layer: {type(exc).__name__} (request id {rid})") from exc
+            out.pages += 1
+            out.request_ids.append(rid)
+            log.info("altruist GET %s page=%s status=%s request_id=%s", url, page, response.status_code, rid)
+            if response.status_code >= 400:
+                raise AltruistOAuthError(
+                    f"GET {url} was refused: HTTP {response.status_code} (request id {rid})")
+            try:
+                body = response.json()
+            except ValueError as exc:
+                raise AltruistOAuthError(f"GET {url} answered a body that is not JSON (request id {rid})") from exc
+            items, paging, form, data = _extract_envelope(body, list_key)
+            out.envelope = out.envelope or form
+            if echo_key and param is not None and data.get(echo_key) not in (None, "") \
+                    and str(data.get(echo_key)) != str(param):
+                raise AltruistOAuthError(
+                    f"GET {url}: the response names {echo_key} {data.get(echo_key)!r}, not the one requested "
+                    f"(request id {rid})")
+            echoed = paging.get("page") if paging else None
+            echoed = echoed if isinstance(echoed, int) and not isinstance(echoed, bool) else None
+            total = paging.get("total_pages") if paging else None
+            total = total if isinstance(total, int) and not isinstance(total, bool) else None
+            if out.page_base is None and echoed is not None:
+                out.page_base = 1 if (page == 0 and echoed == 1) else (0 if page == 0 and echoed == 0 else None)
+            if not items:
+                if page == 0 and not retried_zero and (total or 0) >= 1 and not seen:
+                    retried_zero = True       # a base-1 server that answers page 0 empty
+                    out.page_base = 1
+                    page = 1
+                    continue
+                break
+            new = 0
+            for it in items:
+                if not isinstance(it, dict):
+                    raise AltruistOAuthError(f"GET {url}: a {list_key} entry is not an object (request id {rid})")
+                n = normalize(it)
+                k = _item_key(n)
+                if k in seen:
+                    continue
+                seen.add(k)
+                out.items.append(n)
+                new += 1
+            if new == 0:
+                if out.pages == 2 and not dup_probe_used:
+                    dup_probe_used = True     # page 0 and page 1 were the same page: a base-1 server, no echo
+                    page += 1
+                    continue
+                break
+            current = echoed if echoed is not None else page
+            if total is not None and echoed is not None:
+                base = out.page_base if out.page_base is not None else 0
+                if current >= total - 1 + base:
+                    break
+            page = current + 1
+    return out
 
 
 async def fetch_resource(
@@ -905,53 +1261,32 @@ async def fetch_resource(
     param: str | None = None,
     timeout: float = 15.0,
     transport: Any = None,
+    query: dict | None = None,
+    page_size: int | None = None,
+    max_pages: int = MAX_PAGES,
 ) -> list[dict]:
-    """GET ``api_base`` + the resource path with Bearer + Accept only; one request (no pagination); ``>= 400`` and
-    transport failures raise ``AltruistOAuthError``; the list is read from the primary key, then ``data`` /
-    ``results`` (or a bare array) and normalized. Used by every ``call_*`` below and by the conformance suite."""
-    path_key, param_name, list_key, normalize = _RESOURCES[resource]
-    url = f"{api_base}{_API_PATHS[path_key]}"
-    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
-        try:
-            if param_name is None:
-                response = await client.get(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Accept": "application/json",
-                    },
-                )
-            else:
-                response = await client.get(
-                    url,
-                    params={param_name: param},
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Accept": "application/json",
-                    },
-                )
-        except httpx.HTTPError as exc:
-            raise AltruistOAuthError(
-                f"GET {url} failed at the transport layer: {type(exc).__name__}"
-            ) from exc
-
-    if response.status_code >= 400:
-        raise AltruistOAuthError(
-            f"GET {url} was refused: HTTP {response.status_code}"
-        )
-    body = response.json()
-    return [normalize(item) for item in _extract_list(body, list_key, "data", "results")]
+    """Every row of one resource (``fetch_pages``), normalized. Used by every ``call_*`` below and by the conformance
+    suite. A read stopped by the page ceiling raises ``AltruistPagingCeiling`` carrying the partial rows."""
+    res = await fetch_pages(api_base=api_base, resource=resource, access_token=access_token, param=param,
+                            query=query, page_size=page_size, max_pages=max_pages, timeout=timeout,
+                            transport=transport)
+    if res.ceiling_hit:
+        raise AltruistPagingCeiling(
+            f"GET {res.url} stopped at the page ceiling ({res.pages} pages, {len(res.items)} rows read) — the read is "
+            f"incomplete", partial=res.items, pages=res.pages)
+    return res.items
 
 
 async def _call(conn, *, org_id: str, environment: str, resource: str, param: str | None, timeout: float,
-                transport: Any) -> list[dict]:
+                transport: Any, query: dict | None = None) -> list[dict]:
     connection = await require_active_connection(conn, org_id=org_id, environment=environment)
     access_token = await get_decrypted_access_token(conn, connection_id=connection["id"])
     hosts = await resolve_hosts(conn, org_id=org_id, environment=environment)
     if environment == SIMULATOR:
         check_destination(environment, hosts)
     return await fetch_resource(api_base=hosts["api_base"], resource=resource, access_token=access_token,
-                                param=param, timeout=timeout, transport=_transport_for(environment, transport))
+                                param=param, timeout=timeout, transport=_transport_for(environment, transport),
+                                query=query)
 
 
 async def call_households(
@@ -961,20 +1296,16 @@ async def call_households(
     environment: str,
     timeout: float = 15.0,
     transport: Any = None,
+    name_pattern: str | None = None,
 ) -> list[dict]:
-    """GET /api/v2/households — the households visible to this connection.
+    """GET {api_base}/api/v2/households (every page) — the households visible to this connection. ``name_pattern`` is
+    the documented optional filter.
 
-    Runs ``require_active_connection`` first, exactly as the Sprint 1 stub
-    did, so a caller with no active connection never reaches the network.
-
-    ``transport`` is an optional ``httpx.BaseTransport`` — production callers
-    never pass it (a real ``httpx.AsyncClient`` opens a real socket); the
-    verify script passes an ``httpx.MockTransport`` so this exact code path
-    (URL construction, bearer header, JSON parsing) runs against a synthetic,
-    documented-shape response instead of a live call.
-    """
+    Runs ``require_active_connection`` first, so a caller with no active connection (or an expired refresh token)
+    never reaches the network. ``transport`` is an optional ``httpx`` transport — production callers never pass it."""
     return await _call(conn, org_id=org_id, environment=environment, resource="households", param=None,
-                       timeout=timeout, transport=transport)
+                       timeout=timeout, transport=transport,
+                       query={"name_pattern": name_pattern} if name_pattern else None)
 
 
 async def fetch_accounts_for_household(
@@ -986,11 +1317,8 @@ async def fetch_accounts_for_household(
     timeout: float = 15.0,
     transport: Any = None,
 ) -> list[dict]:
-    """GET /v2/accounts?household_id=... — the accounts under one household.
-
-    Same guard-first, injectable-transport shape as ``call_households`` — see
-    its docstring.
-    """
+    """GET {api_base}/v2/accounts?household_id=… (every page) — the accounts under one household, each with its
+    documented account_balance / as_of_date / status (the account number reduced to its last four)."""
     return await _call(conn, org_id=org_id, environment=environment, resource="accounts", param=household_id,
                        timeout=timeout, transport=transport)
 
@@ -1004,13 +1332,23 @@ async def call_positions(
     timeout: float = 15.0,
     transport: Any = None,
 ) -> list[dict]:
-    """GET /v2/positions?account_id=... — one account's current positions.
-
-    Sprint 3. Same guard-first, injectable-transport shape as
-    ``fetch_accounts_for_household`` — see its docstring. The path itself is
-    an unconfirmed [FIND]; see ``_API_PATHS``.
-    """
+    """GET {api_base}/v2/accounts/{account_id}/positions/ (every page) — one account's positions (prior business day,
+    end of day)."""
     return await _call(conn, org_id=org_id, environment=environment, resource="positions", param=account_id,
+                       timeout=timeout, transport=transport)
+
+
+async def call_cost_basis(
+    conn,
+    *,
+    org_id: str,
+    environment: str,
+    account_id: str,
+    timeout: float = 15.0,
+    transport: Any = None,
+) -> list[dict]:
+    """GET {api_base}/v2/accounts/{account_id}/cost-basis/ (every page) — one account's TAX LOTS (D4)."""
+    return await _call(conn, org_id=org_id, environment=environment, resource="cost_basis", param=account_id,
                        timeout=timeout, transport=transport)
 
 
@@ -1022,12 +1360,57 @@ async def call_transactions(
     account_id: str,
     timeout: float = 15.0,
     transport: Any = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> list[dict]:
-    """GET /v2/transactions?account_id=... — one account's transaction history.
-
-    Sprint 3. Same guard-first, injectable-transport shape as
-    ``fetch_accounts_for_household`` — see its docstring. The path itself is
-    an unconfirmed [FIND]; see ``_API_PATHS``.
-    """
+    """GET {api_base}/v2/accounts/{account_id}/transactions?date_from=…&date_to=… (every page, page_size 500). Without
+    a window the server's documented default applies (the past month) — the sync always sends one
+    (``transaction_windows``). Dates are sent ISO ``YYYY-MM-DD``."""
+    query = {}
+    if date_from is not None:
+        query["date_from"] = date_from.isoformat()
+    if date_to is not None:
+        query["date_to"] = date_to.isoformat()
     return await _call(conn, org_id=org_id, environment=environment, resource="transactions", param=account_id,
-                       timeout=timeout, transport=transport)
+                       timeout=timeout, transport=transport, query=query or None)
+
+
+def add_months(d: date, months: int) -> date:
+    """``d`` moved by whole calendar months (the day clamped to the target month's length)."""
+    m = d.month - 1 + months
+    y, m = d.year + m // 12, m % 12 + 1
+    return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+def transaction_windows(start: date, end: date) -> list[tuple[date, date]]:
+    """``[start, end]`` cut into consecutive windows of at most one calendar month each, oldest first, covering every
+    day exactly once."""
+    if start > end:
+        return []
+    out = []
+    lo = start
+    while lo <= end:
+        hi = min(add_months(lo, 1) - timedelta(days=1), end)
+        out.append((lo, hi))
+        lo = hi + timedelta(days=1)
+    return out
+
+
+def minus_business_days(d: date, n: int) -> date:
+    """``d`` moved back ``n`` US business days (services.us_business_days). Each step goes back at least one day:
+    ``prior_business_day`` returns its argument when that is already a business day, so it must be given the day
+    BEFORE (otherwise the loop never moves — found by verify_altread1)."""
+    from services.us_business_days import prior_business_day
+
+    out = d
+    for _ in range(n):
+        out = prior_business_day(out - timedelta(days=1))
+    return out
+
+
+def transactions_start(as_of: date, last_synced: date | None) -> date:
+    """D1: the first sync looks back LOOKBACK_MONTHS; a later one starts at the last synced date minus
+    OVERLAP_BUSINESS_DAYS business days (re-reading the overlap is harmless — rows are deduped by id)."""
+    if last_synced is None:
+        return add_months(as_of, -LOOKBACK_MONTHS)
+    return minus_business_days(last_synced, OVERLAP_BUSINESS_DAYS)
