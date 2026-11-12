@@ -1527,7 +1527,10 @@ async def y_auto(conn):
     indep = (LOT_LT[0] * (closes[str(SEC_EQ)][0] - Decimal(40)) + LOT_ST[0] * (closes[str(SEC_EQ)][0] - Decimal(55))
              ) if str(SEC_EQ) in closes else None
     check(pl.get("label") == "SIMULATED" and all(x.get("label") == "SIMULATED" for x in pl.get("trades") or [{}])
-          and t.get("realized_lt") == str(want_lt) and t.get("realized_st") == str(want_st),
+          # CPSIM05 FIX 1: compared as Decimals — fix_sim_pl._money renders 72.00 as "72" (trailing zeros stripped),
+          # so the first comparison of strings ("72" vs "72.00") failed on equal figures
+          and t.get("realized_lt") is not None and t.get("realized_st") is not None
+          and Decimal(t["realized_lt"]) == want_lt and Decimal(t["realized_st"]) == want_st,
           "the proposal page's P/L: realized ST / LT equal the tax engine's, every figure labelled SIMULATED",
           f"{t}")
     got_u = (pl.get("unrealized") or {}).get("total")
