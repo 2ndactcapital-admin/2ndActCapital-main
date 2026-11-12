@@ -798,9 +798,18 @@ async def run_job(pool, key: str, job: DR.Job) -> dict:
     return out
 
 
+def _j(v):
+    return json.loads(v) if isinstance(v, str) else v
+
+
 async def run_row(conn, run_id) -> dict | None:
     r = await platform(conn, "SELECT * FROM ai_daily_runs WHERE id = $1::uuid", str(run_id), fetch="fetchrow")
-    return dict(r) if r else None
+    if not r:
+        return None
+    d = dict(r)
+    for k in ("usage", "failed_items"):
+        d[k] = _j(d.get(k))
+    return d
 
 
 async def ledger(conn, dep) -> dict | None:
@@ -864,7 +873,7 @@ async def y_note_nocap(conn):
                                  "portfolio.note_extraction_runs WHERE ensemble_config_id = $1", CFG_IDS["note_run"])
     check(len(nrows) >= 1 and all(r["spend_cap_usd"] is None for r in nrows)
           and sum(int(r["notes_done"]) for r in nrows) == N_DOCS and all(r["status"] == "completed" for r in nrows)
-          and all(json.loads(r["config"]).get("daily_run_id") == str(row["id"]) for r in nrows),
+          and all((_j(r["config"]) or {}).get("daily_run_id") == str(row["id"]) for r in nrows),
           "its note_extraction_runs row is written with spend_cap_usd NULL and completes (the row that overflowed)",
           f"{[(r['status'], r['spend_cap_usd'], r['notes_done']) for r in nrows]}")
     staged = int(await platform(conn, "SELECT count(DISTINCT reference_filing_id) FROM portfolio.note_extraction_staging "

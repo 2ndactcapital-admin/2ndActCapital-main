@@ -41,10 +41,28 @@ Two production defects that stopped the platform's daily work. Branch `dailyops1
 
 ## 2. Fixes
 
-| Defect | Verdict | Fix |
-|---|---|---|
-| A2 palette raises on a large group | CODE | (Task 2) |
-| A3 catalog sends ~16,000 unselectable rows | CODE (design) | (Task 2) |
-| B2 no-cap sentinel overflows | CODE | (Task 4) |
-| B3 replica job never ran | NO-WORK | (Task 4) asserted in the verify |
-| Public-data guard at item selection | CODE (small) | (Task 4) |
+| Defect | Verdict | Fix | Where |
+|---|---|---|---|
+| A2 palette raises on a large group | CODE | `palette.ramp` never raises: the mkt03 distinct algorithm unchanged (every size that fitted keeps its exact colours); when the band is full it cycles deterministically through the largest distinct ramp that fits (≤ `CYCLE_MAX` = 256, halved until it fits) | `services/market_data/palette.py` |
+| A3 catalog sends ~16,000 unselectable rows | CODE (design) | `catalog_securities` = INNER JOIN on an ACTIVE series (selectable only); new `GET /market/securities/search?q=` (2–100 chars, name / short name contains, ticker / CUSIP prefix, ≤ 25 rows, priced first; same gate + envelope; extra / duplicate / short / long / control-character params refused without echo); colours shared by catalog and search (`security_colors`); the catalog publishes `vocabularies.search` | `read_repository.py`, `read_service.py`, `routers/market_data.py` |
+| A — the page | CODE | the existing SelectionPanel gains a search box (limits from `vocabularies.search`; no box without it — fail closed); priced results use the existing `SeriesRow`, unpriced ones the existing disabled row with `no price history`; errors show the server's message; forward `/api/market/securities/search` | `components/market/SelectionPanel.jsx`, `lib/market/catalogModel.mjs`, `lib/market/marketRoutes.mjs`, `app/api/market/securities/search/route.js` |
+| Other palette / catalog callers | none | only `build_catalog` calls the palette; grid / series / correlations / saved views never do | — |
+| B2 no-cap sentinel overflows | CODE + schema | `spend_cap()` returns None when unset; a configured cap is checked by `spend.checked_spend_cap` (finite, ≥ 0, ≤ 999999.999999) and the note job stops at its start with the reason; `store.create_run` checks every caller's cap before the INSERT; `SpendTracker(cap_usd=None)` = no dollar cap; `spend_cap_usd DROP NOT NULL` (docs/dailyops1_part1.sql, APPLIED 2026-11-12 via `_apply_dailyops1.py`) | `ai_daily_runs.py`, `note_extraction/spend.py`, `store.py`, `runner.py` |
+| Other `spend_cap_usd` writers | latent → fixed | prefill / pilot / eval go through `store.create_run` (checked); `edgar_inventory_runs.spend_cap_usd` is unbounded `numeric` and its CLI requires a cap — no change | — |
+| B3 replica job never ran | NO-WORK | asserted in the verify: no live registry fund in any real org → empty queue → `queue_empty`, no run row | — |
+| Public-data guard | CODE (small) | `ai_daily_runs.public_job_refusal`: `drive()` refuses any job not in `model_catalog.PUBLIC_DATA_TASK_KEYS` (or in `NEVER_SCHEDULED`) before it loads a config or selects an item; `daily_tick` skips it (`not_public_data`); the note queue keeps only `public_reference` 424B2 / FWP filings | `ai_daily_runs.py` |
+
+## 3. Verify-script changes in older verifies (none weakens an assertion)
+
+* `verify_mkt03` C5 / C7 — restated to the new contract (C5: the catalog lists exactly the selectable securities, count by SQL; C7: no unselectable security in the catalog). The old C5/C7 asserted the design that crashed; the `no_price_history` reason on every unselectable security is proved on the search route (verify_dailyops1 [C]).
+* `verify_mkt04a` / `tests/market/marketRoutes.test.mjs` — the exact route set is now twelve (the security search forward); only `series` and `securitySearch` pass a query string.
+* `verify_mkt04b` — its "nothing else in read_service.py changed" diff is pinned to mkt04b's OWN commit (dfd5fe2) instead of the working tree (the `_verify_self` rule; it was self-contaminating with any later sprint's edit).
+* `verify_mkt04c` — runs the new `dailyops1Render.test.mjs` suite too ("every suite on disk is run"); admits `searchUrl` only because SelectionPanel builds it with `securitySearchUrl`.
+* `verify_mkt03`, `03b`, `04a`, `04b`, `04c` — new `--self-checks-only` (static / pure sections, standard `TOTAL: N PASS, M FAIL` line) so the fast regression mode can run them; their full modes are unchanged.
+* `verify_aibudget1` — its fixture daily-job task keys are registered as public-data task keys for its own process (setup only), because the daily run now refuses non-public-data jobs.
+
+## 4. [FIND]s
+
+* `verify_mkt04a`'s three navigation checks (Sidebar `NAV_ITEMS` / `MENU_ITEMS` with `/market`) have failed since navregroup (e97718f, 2026-10-20) moved the menu to one definition; `/market` is still in the menu (`lib/menuVisibility.mjs` `main(50, "/market", "Market Indicators", …)`). Pre-existing, not touched here; reported by verify_dailyops1 [J] as pre-existing.
+* The catalog's cold first call took ~3.5 s from WSL against the remote database (series bounds over ~300k observations); warm ~0.2 s. The securities part is ~0.04 s now.
+* `ai_daily_runs` writes no row when a job's queue is empty (`queue_empty`), so an idle job is invisible in the run history — by design (aibudget1), and why B3 looked like a failure. The admin overview shows the queue size.
