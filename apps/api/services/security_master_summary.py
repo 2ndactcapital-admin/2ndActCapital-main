@@ -30,7 +30,9 @@ LIVE_S = "s.valid_to IS NULL AND s.system_to IS NULL AND s.merged_into_id IS NUL
 LIVE = "valid_to IS NULL AND system_to IS NULL"
 #: the list endpoint's filters (query parameter → its meaning); anything else is refused (422)
 FILTERS = ("security_type", "fund_structure", "id_type", "missing_id_type", "provider", "field", "missing_field",
-           "price_coverage", "has_price")
+           "price_coverage", "has_price",
+           # TRACK1 — the Tracked view's filters, in THIS builder so a bulk action's count and its list agree
+           "q", "exchange", "category", "tracked", "in_list")
 NOT_STATED = "not_stated"
 LIST_LIMIT_MAX = 500
 
@@ -78,6 +80,27 @@ def _where(filters: dict, args: list) -> list[str]:
             neg = "" if str(v).lower() in ("true", "1", "yes") else "NOT "
             w.append(f"{neg}EXISTS (SELECT 1 FROM portfolio.securities_global_prices p WHERE p.global_security_id = s.id "
                      f"AND p.org_id IS NULL AND p.{LIVE.replace(' AND ', ' AND p.')})")
+        elif k == "q":
+            # dailyops1's search predicate (market_data.read_repository.search_securities): name / short name
+            # contains, ticker / CUSIP starts with — case-insensitive, LIKE wildcards escaped
+            from services.market_data.read_repository import like_escape
+
+            esc = like_escape(str(v).strip())
+            a, b = arg(f"%{esc}%"), arg(esc.upper() + "%")
+            w.append(f"(s.name ILIKE {a} OR s.short_name ILIKE {a} OR EXISTS (SELECT 1 FROM "
+                     "portfolio.securities_global_identifiers i WHERE i.global_security_id = s.id AND i.id_type IN "
+                     f"('ticker', 'cusip') AND upper(i.id_value) LIKE {b} AND i.{LIVE.replace(' AND ', ' AND i.')}))")
+        elif k in ("exchange", "category"):
+            fld = "exchange" if k == "exchange" else "fund_category"
+            w.append("EXISTS (SELECT 1 FROM portfolio.security_reference_attributes a WHERE a.global_security_id = s.id "
+                     f"AND a.field = '{fld}' AND a.value = {arg(v)} AND a.{LIVE.replace(' AND ', ' AND a.')})")
+        elif k == "tracked":
+            neg = "" if str(v).lower() in ("true", "1", "yes") else "NOT "
+            w.append(f"{neg}EXISTS (SELECT 1 FROM portfolio.tracked_securities t WHERE t.global_security_id = s.id "
+                     f"AND t.status = 'tracked' AND t.{LIVE.replace(' AND ', ' AND t.')})")
+        elif k == "in_list":
+            w.append("EXISTS (SELECT 1 FROM portfolio.security_list_members m WHERE m.global_security_id = s.id AND "
+                     f"m.list_key = {arg(v)} AND m.{LIVE.replace(' AND ', ' AND m.')})")
         else:
             raise SummaryFilterError(f"unknown filter {k!r} (one of {', '.join(FILTERS)})")
     return w
@@ -187,7 +210,12 @@ async def securities(conn, *, filters: dict, scope: list | None = None, limit: i
         f"SELECT s.id, s.name, s.security_type, s.price_coverage, "
         "(SELECT json_object_agg(i.id_type, i.id_value) FROM (SELECT DISTINCT ON (id_type) id_type, id_value FROM "
         "portfolio.securities_global_identifiers WHERE global_security_id = s.id AND valid_to IS NULL AND system_to "
-        "IS NULL ORDER BY id_type, is_primary DESC, id_value) i) AS identifiers "
+        "IS NULL ORDER BY id_type, is_primary DESC, id_value) i) AS identifiers, "
+        # TRACK1 — per row: tracked on purpose? any platform close loaded?
+        "EXISTS (SELECT 1 FROM portfolio.tracked_securities t WHERE t.global_security_id = s.id AND t.status = "
+        "'tracked' AND t.valid_to IS NULL AND t.system_to IS NULL) AS tracked, "
+        "EXISTS (SELECT 1 FROM portfolio.securities_global_prices p WHERE p.global_security_id = s.id AND p.org_id IS "
+        "NULL AND p.valid_to IS NULL AND p.system_to IS NULL) AS has_price "
         f"FROM portfolio.securities_global s WHERE {where} ORDER BY s.name, s.id LIMIT {lim} OFFSET {off}", *args)
     out = []
     for r in rows:

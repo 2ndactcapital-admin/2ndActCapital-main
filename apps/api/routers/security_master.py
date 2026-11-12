@@ -16,6 +16,12 @@
     POST /admin/security-data/master/review/{review_id}/decision  resolve / dismiss an item (records the decision;
                                                                 changes NO security — the fix is made on the security
                                                                 itself, by a person)
+    GET  /admin/security-data/master/tracked                    TRACK1: the Tracked view — named lists, progress
+                                                                ("1,240 of 2,700 loaded"), filter vocabularies, caps
+    POST /admin/security-data/master/tracked/estimate           TRACK1: count + calls / days for ids | filter | list
+    POST /admin/security-data/master/tracked/track              TRACK1: track ids | filter (re-evaluated here, must
+                                                                equal the confirmed count) | a named list; audited
+    POST /admin/security-data/master/tracked/untrack            TRACK1: untrack ids | filter (a note is required)
 
 Envelopes: permissions (from the server, no client default) + vocabularies (labels). Org ids never come from a
 request: the platform org is a constant (services.security_master_jobs.PLATFORM_ORG_ID)."""
@@ -59,6 +65,22 @@ class CloseIn(_Body):
     note: str = Field(min_length=1, max_length=2000)
 
 
+class TrackSelectionIn(_Body):
+    """TRACK1 — exactly ONE of ids / filters / list_key. Never an org id (tracked securities are platform-wide)."""
+    ids: list[str] | None = Field(default=None, max_length=3000)
+    filters: dict[str, str] | None = None
+    list_key: str | None = Field(default=None, max_length=63)
+
+
+class TrackIn(TrackSelectionIn):
+    note: str | None = Field(default=None, max_length=2000)
+    expected_total: int | None = Field(default=None, ge=0)
+
+
+class EstimateIn(TrackSelectionIn):
+    removing: bool = False
+
+
 def _envelope(principal, body: dict) -> dict:
     su = bool(principal.is_super_admin)
     perms = {"can_read": su, "can_write": su, "can_run": su, "can_decide": su, "can_close_held": su,
@@ -91,27 +113,48 @@ async def master_summary(request: Request):
     return _envelope(principal, {"summary": out, "list_filters": list(SUM.FILTERS)})
 
 
-@router.get(f"{_P}/securities")
-async def master_securities(request: Request, security_type: str | None = None, fund_structure: str | None = None,
-                            id_type: str | None = None, missing_id_type: str | None = None,
-                            provider: str | None = None, field: str | None = None, missing_field: str | None = None,
-                            price_coverage: str | None = None, has_price: str | None = None, limit: int = 100,
-                            offset: int = 0):
-    """SECMASTER2 — the securities behind a summary count (the SAME predicates the count used). Super Admin."""
-    principal = require_super_admin(request)
+def _check_filters(filters: dict) -> dict:
+    """The master list's filters, each checked against its allowed values (422 names the filter, never the value).
+    TRACK1 adds q (2–100 chars, dailyops1's search), exchange / category (free values, ≤ 200 chars — they are bound
+    parameters), tracked (true / false), in_list (a list key)."""
     from services import securities_global as SG
 
-    filters = {"security_type": security_type, "fund_structure": fund_structure, "id_type": id_type,
-               "missing_id_type": missing_id_type, "provider": provider, "field": field,
-               "missing_field": missing_field, "price_coverage": price_coverage, "has_price": has_price}
     for k, allowed in (("security_type", SG.SECURITY_TYPES),
                        ("id_type", SG.IDENTIFIER_TYPES), ("missing_id_type", SG.IDENTIFIER_TYPES),
                        ("field", M.REFERENCE_FIELDS), ("missing_field", M.REFERENCE_FIELDS),
                        ("price_coverage", SG.PRICE_COVERAGES),
                        ("fund_structure", ("mutual_fund", "money_market", "etf", SUM.NOT_STATED)),
-                       ("has_price", ("true", "false"))):
-        if filters[k] is not None and filters[k] not in allowed:
+                       ("has_price", ("true", "false")), ("tracked", ("true", "false"))):
+        if filters.get(k) is not None and filters[k] not in allowed:
             raise HTTPException(status_code=422, detail=f"{k}: not one of the allowed values")
+    q = filters.get("q")
+    if q is not None and not (2 <= len(q.strip()) <= 100 and all(ord(c) >= 32 for c in q)):
+        raise HTTPException(status_code=422, detail="q: 2 to 100 characters, no control characters")
+    for k in ("exchange", "category", "in_list"):
+        v = filters.get(k)
+        if v is not None and not (0 < len(v) <= 200 and all(ord(c) >= 32 for c in v)):
+            raise HTTPException(status_code=422, detail=f"{k}: 1 to 200 characters, no control characters")
+    for k in filters:
+        if k not in SUM.FILTERS:
+            raise HTTPException(status_code=422, detail=f"unknown filter (one of {', '.join(SUM.FILTERS)})")
+    return filters
+
+
+@router.get(f"{_P}/securities")
+async def master_securities(request: Request, security_type: str | None = None, fund_structure: str | None = None,
+                            id_type: str | None = None, missing_id_type: str | None = None,
+                            provider: str | None = None, field: str | None = None, missing_field: str | None = None,
+                            price_coverage: str | None = None, has_price: str | None = None, q: str | None = None,
+                            exchange: str | None = None, category: str | None = None, tracked: str | None = None,
+                            in_list: str | None = None, limit: int = 100, offset: int = 0):
+    """SECMASTER2 — the securities behind a summary count (the SAME predicates the count used). Super Admin.
+    TRACK1 — also the Tracked view's filtered list (q / exchange / category / tracked / in_list)."""
+    principal = require_super_admin(request)
+    filters = _check_filters({
+        "security_type": security_type, "fund_structure": fund_structure, "id_type": id_type,
+        "missing_id_type": missing_id_type, "provider": provider, "field": field, "missing_field": missing_field,
+        "price_coverage": price_coverage, "has_price": has_price, "q": q, "exchange": exchange,
+        "category": category, "tracked": tracked, "in_list": in_list})
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with platform_scope(conn):
@@ -242,3 +285,155 @@ async def master_review_decision(request: Request, review_id: UUID, body: Decisi
                 cur["detail"] if isinstance(cur["detail"], str) else json.dumps(cur["detail"]), body.outcome,
                 str(principal.user_id), body.note, cur["run_id"], cur["created_at"])
     return _envelope(principal, {"id": new_id, "status": body.outcome})
+
+
+# ── TRACK1 — track any security ─────────────────────────────────────────────
+def _tracked_envelope(principal, body: dict) -> dict:
+    """The Tracked view's envelope: write controls only for a Super Admin (the gate already refused anyone else);
+    the editable list is EMPTY for anyone without it — never a client default."""
+    from services.security_data import tracking as TR
+
+    su = bool(principal.is_super_admin)
+    env = _envelope(principal, body)
+    env["permissions"].update({"can_track": su, "can_untrack": su, "write_permission": "super_admin"})
+    env["vocabularies"].update({"editable": ["track", "untrack", "note"] if su else [],
+                                "track_cap": TR.TRACK_CAP, "untrack_cap": TR.UNTRACK_CAP,
+                                "note_max": TR.NOTE_MAX, "filters": list(SUM.FILTERS)})
+    return env
+
+
+def _selection(body: TrackSelectionIn) -> str:
+    given = [k for k in ("ids", "filters", "list_key") if getattr(body, k) not in (None, [], {})]
+    if len(given) != 1:
+        raise HTTPException(status_code=422, detail="give exactly one of ids, filters or list_key")
+    if body.filters is not None:
+        _check_filters(dict(body.filters))
+    return given[0]
+
+
+def _tracking_refusal(exc: Exception):
+    from services.security_data import tracking as TR
+
+    status = 409 if isinstance(exc, TR.TrackingRefused) else 422
+    raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@router.get(f"{_P}/tracked")
+async def master_tracked(request: Request):
+    """TRACK1 — the Tracked view: the named lists (members, tracked, as-of, misses), the progress line, the filter
+    vocabularies the view offers (security types, exchanges, fund categories — the master's own values), the caps."""
+    principal = require_super_admin(request)
+    from services import securities_global as SG
+    from services.security_data import tracking as TR
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with platform_scope(conn):
+            lists = await TR.list_rows(conn)
+            prog = await TR.progress(conn)
+            vals = await conn.fetch(
+                "SELECT field, value, count(*) AS n FROM portfolio.security_reference_attributes WHERE field IN "
+                "('exchange', 'fund_category') AND valid_to IS NULL AND system_to IS NULL GROUP BY field, value "
+                "ORDER BY field, n DESC, value")
+    exchanges = [{"key": r["value"], "label": r["value"], "count": int(r["n"])} for r in vals if r["field"] == "exchange"]
+    categories = [{"key": r["value"], "label": r["value"], "count": int(r["n"])} for r in vals
+                  if r["field"] == "fund_category"]
+    env = _tracked_envelope(principal, {"lists": lists, "progress": prog})
+    env["vocabularies"].update({"security_types": [{"key": t, "label": t.replace("_", " ")} for t in
+                                                   sorted(SG.SECURITY_TYPES)],
+                                "exchanges": exchanges, "categories": categories,
+                                "lists": [{"key": x["list_key"], "label": x["name"]} for x in lists],
+                                "has_price": [{"key": "true", "label": "has prices"},
+                                              {"key": "false", "label": "no prices"}],
+                                "tracked": [{"key": "true", "label": "tracked"},
+                                            {"key": "false", "label": "not tracked"}]})
+    return env
+
+
+async def _resolve_ids(conn, body: TrackSelectionIn, kind: str, *, cap: int) -> tuple[list[str] | None, int, dict]:
+    from services.security_data import tracking as TR
+
+    if kind == "ids":
+        return list(body.ids), len(set(body.ids)), {}
+    if kind == "list_key":
+        ids = await TR.list_member_ids(conn, body.list_key)
+        return ids, len(ids), {}
+    sel = await TR.select_by_filter(conn, dict(body.filters), cap=cap)
+    return sel["ids"], sel["total"], sel["filters"]
+
+
+@router.post(f"{_P}/tracked/estimate")
+async def master_tracked_estimate(request: Request, body: EstimateIn):
+    """TRACK1 — the count a bulk action would touch and what it costs (calls, days at the daily budget, nights through
+    the nightly alone, the daily upkeep). Over the cap: the count and ``over_cap: true`` — never the ids. Writes nothing."""
+    principal = require_super_admin(request)
+    from services.security_data import tracking as TR
+
+    kind = _selection(body)
+    cap = TR.UNTRACK_CAP if body.removing else TR.TRACK_CAP
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            async with platform_scope(conn):
+                ids, total, filters = await _resolve_ids(conn, body, kind, cap=cap)
+                over = total > cap
+                est = await TR.estimate(conn, ids, removing=body.removing) if (ids and not over) else None
+    except TR.TrackingError as exc:
+        _tracking_refusal(exc)
+    return _tracked_envelope(principal, {"selection": kind, "total": total, "cap": cap, "over_cap": over,
+                                         "filters": filters, "estimate": est})
+
+
+@router.post(f"{_P}/tracked/track")
+async def master_tracked_track(request: Request, body: TrackIn):
+    """TRACK1 — track ids, every security a filter selects (re-evaluated here; must equal ``expected_total``), or a
+    named list's members. Audited (audit_log security_data.tracked). Nothing is fetched here: the prices backfill and
+    the nightly prices job load the history (reason 'tracked')."""
+    principal = require_super_admin(request)
+    from services.security_data import tracking as TR
+
+    kind = _selection(body)
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            async with platform_scope(conn):
+                if kind == "ids":
+                    if body.expected_total is not None and body.expected_total != len(set(body.ids)):
+                        raise TR.TrackingRefused("the selection changed — nothing was changed; confirm again")
+                    out = await TR.track(conn, body.ids, actor_id=principal.user_id, note=body.note)
+                elif kind == "filters":
+                    out = await TR.track_by_filter(conn, dict(body.filters), actor_id=principal.user_id, note=body.note,
+                                                   expected_total=body.expected_total)
+                else:
+                    out = await TR.track_list(conn, body.list_key, actor_id=principal.user_id, note=body.note,
+                                              expected_total=body.expected_total)
+                prog = await TR.progress(conn)
+    except TR.TrackingError as exc:
+        _tracking_refusal(exc)
+    return _tracked_envelope(principal, {"result": out, "progress": prog})
+
+
+@router.post(f"{_P}/tracked/untrack")
+async def master_tracked_untrack(request: Request, body: TrackIn):
+    """TRACK1 — untrack ids or a filter's selection (a note is required). Loaded prices stay (history kept)."""
+    principal = require_super_admin(request)
+    from services.security_data import tracking as TR
+
+    kind = _selection(body)
+    if kind == "list_key":
+        raise HTTPException(status_code=422, detail="untrack by ids or by a filter (in_list selects a list's members)")
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            async with platform_scope(conn):
+                if kind == "ids":
+                    if body.expected_total is not None and body.expected_total != len(set(body.ids)):
+                        raise TR.TrackingRefused("the selection changed — nothing was changed; confirm again")
+                    out = await TR.untrack(conn, body.ids, actor_id=principal.user_id, note=body.note)
+                else:
+                    out = await TR.untrack_by_filter(conn, dict(body.filters), actor_id=principal.user_id,
+                                                     note=body.note, expected_total=body.expected_total)
+                prog = await TR.progress(conn)
+    except TR.TrackingError as exc:
+        _tracking_refusal(exc)
+    return _tracked_envelope(principal, {"result": out, "progress": prog})

@@ -136,8 +136,8 @@ SELECT g::text AS gsid, array_agg(DISTINCT src ORDER BY src) AS sources FROM (
   UNION ALL SELECT * FROM opt UNION ALL SELECT * FROM bench) u(g, src)
  GROUP BY g ORDER BY g
 """
-#: tables some environments may not have yet (rep11 note replicas, rep9 substitutions, rep7 backtests): read when
-#: present, each with its own org's is_test rule
+#: tables some environments may not have yet (rep11 note replicas, rep9 substitutions, rep7 backtests, track1 tracked
+#: securities): read when present, each with its own org's is_test rule
 OPTIONAL_SOURCES = (
     ("public.note_replicas", "note", "SELECT x.g::text FROM (SELECT global_security_id AS g, org_id FROM "
      "public.note_replicas WHERE valid_to IS NULL AND system_to IS NULL UNION ALL SELECT underlying_global_security_id, "
@@ -146,6 +146,10 @@ OPTIONAL_SOURCES = (
     ("public.substitution_set_candidates", "substitution", "SELECT c.replacement_security_id::text FROM "
      "public.substitution_set_candidates c JOIN public.organizations o ON o.id = c.org_id WHERE "
      "c.replacement_security_id IS NOT NULL AND c.valid_to IS NULL AND c.system_to IS NULL AND ($1 OR NOT o.is_test)"),
+    # TRACK1 — a Super Admin tracked it on purpose (portfolio.tracked_securities). Platform-wide, not org data: the
+    # test-org rule does not apply ($1 is read only to keep the one call shape).
+    ("portfolio.tracked_securities", "tracked", "SELECT global_security_id::text FROM portfolio.tracked_securities "
+     "WHERE status = 'tracked' AND valid_to IS NULL AND system_to IS NULL AND ($1 OR TRUE)"),
     ("public.backtests", "backtest", "SELECT b.fund_security_id::text FROM public.backtests b JOIN "
      "public.organizations o ON o.id = b.org_id WHERE b.fund_security_id IS NOT NULL AND b.valid_to IS NULL AND "
      "b.system_to IS NULL AND ($1 OR NOT o.is_test)"),
@@ -501,7 +505,7 @@ async def backfill(pool, provider: EodPriceProvider, items: list[Item], *, years
         await W.record_calls(pool, provider.key, out.calls, data_type=DATA_TYPE, ok=not out.errors,
                              error="; ".join(out.errors)[:2000] or None, run_id=run_id, day=today)
     status = "failed" if out.errors and not out.found else ("partial" if out.errors or out.deferred else "success")
-    summary = {**plan, **out.summary(), "run_id": str(run_id)}
+    summary = {**plan, **out.summary(), "run_id": str(run_id), "tracked_progress": await _tracked_progress(pool)}
     await record_run(pool, job="prices_backfill", trigger=trigger, status=status, started=started, summary=summary,
                      run_id=run_id)
     return {"dry_run": False, "status": status, **summary}
@@ -530,12 +534,16 @@ async def nightly(pool, *, today: date | None = None, run_id=None, include_test_
         prov = fetcher(key, providers=providers)
         async with pool.acquire() as conn:
             last = await latest_dates(conn, key, [it.gsid for it in pending])
-        old = [it for it in pending if it.gsid in last]
+        # TRACK1: stalest first — with a deadline the old gsid order refreshed the SAME first securities every night
+        old = sorted((it for it in pending if it.gsid in last), key=lambda it: (last[it.gsid], it.gsid))
         new = [it for it in pending if it.gsid not in last]
         new_now, new_later = new[:max_new], new[max_new:]
         budget = await _budget(pool, key, today)
+        # TRACK1: while new members wait, the gap fill takes at most half of what is left of the deadline, so new
+        # history is never starved by a coverage set larger than one night's capacity
+        gap_deadline = (time.monotonic() + (deadline - time.monotonic()) / 2) if new_now else deadline
         res_old = await ingest(pool, prov, old, today - timedelta(days=gap_days), today, today=today, run_id=run_id,
-                               budget_left=budget, deadline=deadline) if old else IngestOutcome(key)
+                               budget_left=budget, deadline=gap_deadline) if old else IngestOutcome(key)
         left = None if budget is None else max(0, budget - res_old.calls)
         start = date(today.year - years, today.month, min(today.day, 28))
         res_new = await ingest(pool, prov, new_now, start, today, today=today, run_id=run_id, budget_left=left,
@@ -552,9 +560,22 @@ async def nightly(pool, *, today: date | None = None, run_id=None, include_test_
         nf = set(res_old.not_found_ids) | set(res_new.not_found_ids)
         pending = [it for it in pending if it.gsid in nf]      # the next adapter tries only what this one lacked
     summary["errors"] = errors
+    summary["tracked_progress"] = await _tracked_progress(pool)
     if errors:
         raise PricesJobError("end-of-day prices: " + "; ".join(errors[:5]))
     return summary
+
+
+async def _tracked_progress(pool) -> dict | None:
+    """TRACK1 — "1,240 of 2,700 loaded" for the job history (None where the table is not deployed)."""
+    from services.security_data import tracking as TR
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _platform(conn)
+            if not await conn.fetchval("SELECT to_regclass('portfolio.tracked_securities') IS NOT NULL"):
+                return None
+            return await TR.progress(conn)
 
 
 async def _aclose(prov) -> None:

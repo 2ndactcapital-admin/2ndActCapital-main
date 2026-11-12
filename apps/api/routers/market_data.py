@@ -70,7 +70,25 @@ async def market_securities_search(request: Request):
         body = await _read(svc.search_securities, q)
     except svc.MarketDataRequestError as exc:
         return _refusal(exc)
+    body["tracking"] = await _read(_tracking_block, reader, body["securities"])
     return {**body, "permissions": permissions_envelope(reader)}
+
+
+async def _tracking_block(conn, reader, securities: list) -> dict:
+    """TRACK1 — the per-security "Track" on an unpriced search result. Only a Super Admin may track (the write is
+    POST /admin/security-data/master/tracked/track, gated require_super_admin); everyone else gets the disabled
+    reason. ``tracked`` lists the results already tracked. Tracking loads the PRICE STORE — it does not by itself make
+    a security selectable here (that needs a linked market series); the note says so."""
+    ids = [s["id"] for s in securities]
+    tracked = [r[0] for r in await conn.fetch(
+        "SELECT global_security_id::text FROM portfolio.tracked_securities WHERE global_security_id = ANY($1::uuid[]) "
+        "AND status = 'tracked' AND valid_to IS NULL AND system_to IS NULL", ids)] if ids else []
+    su = bool(reader.is_super_admin)
+    return {"can_track": su,
+            "disabled_reason": None if su else "Only a Super Admin can track a security for prices.",
+            "tracked": tracked,
+            "note": "Tracking queues this security's 5-year daily price history for the prices job. It becomes "
+                    "selectable on this page once a market series is linked to it."}
 
 
 @router.get("/series")

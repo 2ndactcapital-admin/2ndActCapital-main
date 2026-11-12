@@ -11,6 +11,7 @@ import {
   securitySearchUrl,
 } from "@/lib/market/catalogModel.mjs";
 import { UNRESTRICTED_LICENSE_CLASS } from "@/lib/market/marketDefaults.mjs";
+import { TRACK_API, singleTrackBody, trackOffer } from "@/lib/track1.mjs";
 import {
   KIND_INDICATOR,
   KIND_SECURITY,
@@ -61,6 +62,21 @@ export default function SelectionPanel({ catalog, selection, onChange, initialSe
       clearTimeout(timer);
     };
   }, [searchUrl, initialSearch]);
+  // TRACK1 — a Super Admin tracks an unpriced result for prices (POST through the Security master's forward);
+  // everyone else sees the server's disabled reason. Tracked here this session = shown as tracked at once.
+  const [trackedNow, setTrackedNow] = useState(() => new Set());
+  const [trackMsg, setTrackMsg] = useState(null);
+  async function onTrack(sec) {
+    const label = sec.ticker ? `${sec.name} (${sec.ticker})` : sec.name;
+    if (!window.confirm(`Track ${label} for prices? Its 5-year daily history is queued for the prices job.`)) return;
+    const res = await requestJson(TRACK_API, { method: "POST", body: singleTrackBody(sec) });
+    if (res.ok) {
+      setTrackedNow((prev) => new Set([...prev, String(sec.id)]));
+      setTrackMsg(null);
+    } else {
+      setTrackMsg(res.body?.error || "The security could not be tracked.");
+    }
+  }
   const limit = selectionLimit(catalog);
   const groups = indicatorGroups(catalog);
   const secGroups = securityGroups(catalog);
@@ -197,10 +213,20 @@ export default function SelectionPanel({ catalog, selection, onChange, initialSe
                           key={sec.id}
                           name={sec.ticker ? `${sec.name} (${sec.ticker})` : sec.name}
                           reason={sec.unselectable_reason}
+                          offer={trackOffer(searchState.tracking, sec, trackedNow)}
+                          onTrack={() => onTrack(sec)}
                         />
                       ),
                     )}
                   </ul>
+                )}
+                {trackMsg && (
+                  <p className="mt-1 text-xs" style={{ color: ERROR_STYLE.color }} role="alert" data-market="track-error">
+                    {trackMsg}
+                  </p>
+                )}
+                {searchState.tracking?.note && searchState.securities.some((x) => x.selectable !== true) && (
+                  <p className={`${QUIET} mt-1`} data-market="track-note">{searchState.tracking.note}</p>
                 )}
               </div>
             )}
@@ -252,14 +278,25 @@ export default function SelectionPanel({ catalog, selection, onChange, initialSe
   );
 }
 
-function UnselectableRow({ name, reason }) {
+function UnselectableRow({ name, reason, offer = null, onTrack }) {
   return (
     <li className="flex items-start gap-2 py-0.5 text-sm text-[var(--2a-text-muted)]" data-market="unselectable">
       <input type="checkbox" disabled className="mt-1" aria-label={name} />
-      <span className="min-w-0">
+      <span className="min-w-0 flex-1">
         <span className="block truncate">{name}</span>
         <span className="block text-[11px]">{codeText(reason)}</span>
+        {offer?.kind === "tracked" && (
+          <span className="block text-[11px] text-[#2D6A4F]" data-market="tracked">tracked — prices queued</span>
+        )}
+        {offer?.kind === "disabled" && (
+          <span className="block text-[11px]" data-market="track-disabled">{offer.reason}</span>
+        )}
       </span>
+      {offer?.kind === "track" && (
+        <button type="button" className={`${BUTTON} shrink-0 text-xs`} onClick={onTrack} data-market="track">
+          Track
+        </button>
+      )}
     </li>
   );
 }

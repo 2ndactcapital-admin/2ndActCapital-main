@@ -1,0 +1,463 @@
+{
+  "version": 1,
+  "reviewed_on": null,
+  "drafted_on": "2026-11-12",
+  "drafted_by": "TRACK1 sprint (to be reviewed by the operator)",
+  "about": "The platform's named security lists (TRACK1). ONE reviewed data file: the operator edits it, then runs apps/api/scripts/security_lists_load.py. Curated lists name members by ticker with a one-line description; index lists name the fund whose holdings define them. A ticker missing from the security master is REPORTED by the loader, never created. Prices for these come from the free source (Yahoo: internal use only, never shown to members).",
+  "lists": [
+    {
+      "key": "sp500",
+      "name": "S&P 500",
+      "source": {
+        "kind": "index_holdings",
+        "fund_ticker": "SPY",
+        "holdings_source": "ssga_spdr"
+      },
+      "description": "The S&P 500's constituents, read from State Street's daily SPY holdings file (SPDR S&P 500 ETF Trust). As-of = the file's date.",
+      "overlap_note": "fred.sp500 (Market Indicators) is the index LEVEL; this list is its constituents."
+    },
+    {
+      "key": "russell2000",
+      "name": "Russell 2000",
+      "source": {
+        "kind": "index_holdings",
+        "fund_ticker": "IWM",
+        "holdings_source": "sec_nport"
+      },
+      "description": "The Russell 2000's constituents through iShares IWM's latest SEC N-PORT filing (iShares' own file is bot-gated). N-PORT is quarterly and published with a lag: the as-of is typically 2–5 months old and is shown.",
+      "overlap_note": "yahoo.rut (Market Indicators) is the index LEVEL; this list is its constituents."
+    },
+    {
+      "key": "core_etfs",
+      "name": "Core ETFs",
+      "source": {
+        "kind": "curated"
+      },
+      "description": "Broad US, international and emerging-market equity, the 11 Select Sector SPDRs, style / factor, REIT and dividend ETFs.",
+      "overlap_note": "yahoo.efa / yahoo.eem / yahoo.acwx in Market Indicators are index-level series; EFA and EEM here are the ETFs' own closes in the price store.",
+      "members": [
+        {
+          "ticker": "VTI",
+          "description": "Vanguard Total Stock Market ETF — broad US equity"
+        },
+        {
+          "ticker": "ITOT",
+          "description": "iShares Core S&P Total U.S. Stock Market ETF — broad US equity"
+        },
+        {
+          "ticker": "VOO",
+          "description": "Vanguard S&P 500 ETF — US large cap"
+        },
+        {
+          "ticker": "IVV",
+          "description": "iShares Core S&P 500 ETF — US large cap"
+        },
+        {
+          "ticker": "RSP",
+          "description": "Invesco S&P 500 Equal Weight ETF — US large cap, equal weight"
+        },
+        {
+          "ticker": "QQQ",
+          "description": "Invesco QQQ Trust — Nasdaq-100"
+        },
+        {
+          "ticker": "DIA",
+          "description": "SPDR Dow Jones Industrial Average ETF Trust — Dow 30"
+        },
+        {
+          "ticker": "IJH",
+          "description": "iShares Core S&P Mid-Cap ETF — US mid cap"
+        },
+        {
+          "ticker": "IJR",
+          "description": "iShares Core S&P Small-Cap ETF — US small cap"
+        },
+        {
+          "ticker": "VXUS",
+          "description": "Vanguard Total International Stock ETF — world ex-US"
+        },
+        {
+          "ticker": "VEA",
+          "description": "Vanguard FTSE Developed Markets ETF — developed ex-US"
+        },
+        {
+          "ticker": "IEFA",
+          "description": "iShares Core MSCI EAFE ETF — developed ex-US"
+        },
+        {
+          "ticker": "EFA",
+          "description": "iShares MSCI EAFE ETF — developed ex-US"
+        },
+        {
+          "ticker": "VWO",
+          "description": "Vanguard FTSE Emerging Markets ETF — emerging markets"
+        },
+        {
+          "ticker": "IEMG",
+          "description": "iShares Core MSCI Emerging Markets ETF — emerging markets"
+        },
+        {
+          "ticker": "EEM",
+          "description": "iShares MSCI Emerging Markets ETF — emerging markets"
+        },
+        {
+          "ticker": "XLB",
+          "description": "Materials Select Sector SPDR Fund — sector: materials"
+        },
+        {
+          "ticker": "XLC",
+          "description": "Communication Services Select Sector SPDR Fund — sector: communication services"
+        },
+        {
+          "ticker": "XLE",
+          "description": "Energy Select Sector SPDR Fund — sector: energy"
+        },
+        {
+          "ticker": "XLF",
+          "description": "Financial Select Sector SPDR Fund — sector: financials"
+        },
+        {
+          "ticker": "XLI",
+          "description": "Industrial Select Sector SPDR Fund — sector: industrials"
+        },
+        {
+          "ticker": "XLK",
+          "description": "Technology Select Sector SPDR Fund — sector: information technology"
+        },
+        {
+          "ticker": "XLP",
+          "description": "Consumer Staples Select Sector SPDR Fund — sector: consumer staples"
+        },
+        {
+          "ticker": "XLRE",
+          "description": "Real Estate Select Sector SPDR Fund — sector: real estate"
+        },
+        {
+          "ticker": "XLU",
+          "description": "Utilities Select Sector SPDR Fund — sector: utilities"
+        },
+        {
+          "ticker": "XLV",
+          "description": "Health Care Select Sector SPDR Fund — sector: health care"
+        },
+        {
+          "ticker": "XLY",
+          "description": "Consumer Discretionary Select Sector SPDR Fund — sector: consumer discretionary"
+        },
+        {
+          "ticker": "VUG",
+          "description": "Vanguard Growth ETF — style: US large growth"
+        },
+        {
+          "ticker": "VTV",
+          "description": "Vanguard Value ETF — style: US large value"
+        },
+        {
+          "ticker": "IWF",
+          "description": "iShares Russell 1000 Growth ETF — style: US large growth"
+        },
+        {
+          "ticker": "IWD",
+          "description": "iShares Russell 1000 Value ETF — style: US large value"
+        },
+        {
+          "ticker": "MTUM",
+          "description": "iShares MSCI USA Momentum Factor ETF — factor: momentum"
+        },
+        {
+          "ticker": "QUAL",
+          "description": "iShares MSCI USA Quality Factor ETF — factor: quality"
+        },
+        {
+          "ticker": "USMV",
+          "description": "iShares MSCI USA Min Vol Factor ETF — factor: minimum volatility"
+        },
+        {
+          "ticker": "VLUE",
+          "description": "iShares MSCI USA Value Factor ETF — factor: value"
+        },
+        {
+          "ticker": "VNQ",
+          "description": "Vanguard Real Estate ETF — US REITs"
+        },
+        {
+          "ticker": "SCHH",
+          "description": "Schwab U.S. REIT ETF — US REITs"
+        },
+        {
+          "ticker": "VIG",
+          "description": "Vanguard Dividend Appreciation ETF — dividend growth"
+        },
+        {
+          "ticker": "SCHD",
+          "description": "Schwab U.S. Dividend Equity ETF — dividend"
+        },
+        {
+          "ticker": "VYM",
+          "description": "Vanguard High Dividend Yield ETF — high dividend"
+        },
+        {
+          "ticker": "DVY",
+          "description": "iShares Select Dividend ETF — high dividend"
+        },
+        {
+          "ticker": "NOBL",
+          "description": "ProShares S&P 500 Dividend Aristocrats ETF — dividend aristocrats"
+        }
+      ]
+    },
+    {
+      "key": "fixed_income",
+      "name": "Fixed income",
+      "source": {
+        "kind": "curated"
+      },
+      "description": "Bond ETFs across Treasuries (bills, short, intermediate, long), TIPS, aggregate, investment-grade and high-yield corporate, munis, MBS, international and floating rate.",
+      "overlap_note": "Treasury YIELDS (fred.dgs2 / dgs10 / dgs30), the TIPS real yield (fred.dfii10), breakevens and the IG / HY credit SPREADS (fred.bamlc0a0cm / bamlh0a0hym2) already come from FRED via Market Indicators — not duplicated. These are the tradable funds' prices.",
+      "members": [
+        {
+          "ticker": "BIL",
+          "description": "SPDR Bloomberg 1-3 Month T-Bill ETF — Treasury bills"
+        },
+        {
+          "ticker": "SGOV",
+          "description": "iShares 0-3 Month Treasury Bond ETF — Treasury bills"
+        },
+        {
+          "ticker": "SHY",
+          "description": "iShares 1-3 Year Treasury Bond ETF — Treasuries, short"
+        },
+        {
+          "ticker": "VGSH",
+          "description": "Vanguard Short-Term Treasury ETF — Treasuries, short"
+        },
+        {
+          "ticker": "IEI",
+          "description": "iShares 3-7 Year Treasury Bond ETF — Treasuries, intermediate"
+        },
+        {
+          "ticker": "VGIT",
+          "description": "Vanguard Intermediate-Term Treasury ETF — Treasuries, intermediate"
+        },
+        {
+          "ticker": "IEF",
+          "description": "iShares 7-10 Year Treasury Bond ETF — Treasuries, intermediate"
+        },
+        {
+          "ticker": "TLT",
+          "description": "iShares 20+ Year Treasury Bond ETF — Treasuries, long"
+        },
+        {
+          "ticker": "VGLT",
+          "description": "Vanguard Long-Term Treasury ETF — Treasuries, long"
+        },
+        {
+          "ticker": "TIP",
+          "description": "iShares TIPS Bond ETF — TIPS"
+        },
+        {
+          "ticker": "SCHP",
+          "description": "Schwab U.S. TIPS ETF — TIPS"
+        },
+        {
+          "ticker": "VTIP",
+          "description": "Vanguard Short-Term Inflation-Protected Securities ETF — TIPS, short"
+        },
+        {
+          "ticker": "AGG",
+          "description": "iShares Core U.S. Aggregate Bond ETF — US aggregate"
+        },
+        {
+          "ticker": "BND",
+          "description": "Vanguard Total Bond Market ETF — US aggregate"
+        },
+        {
+          "ticker": "LQD",
+          "description": "iShares iBoxx $ Investment Grade Corporate Bond ETF — IG corporate"
+        },
+        {
+          "ticker": "VCIT",
+          "description": "Vanguard Intermediate-Term Corporate Bond ETF — IG corporate, intermediate"
+        },
+        {
+          "ticker": "VCSH",
+          "description": "Vanguard Short-Term Corporate Bond ETF — IG corporate, short"
+        },
+        {
+          "ticker": "HYG",
+          "description": "iShares iBoxx $ High Yield Corporate Bond ETF — high yield"
+        },
+        {
+          "ticker": "JNK",
+          "description": "SPDR Bloomberg High Yield Bond ETF — high yield"
+        },
+        {
+          "ticker": "MUB",
+          "description": "iShares National Muni Bond ETF — municipal"
+        },
+        {
+          "ticker": "VTEB",
+          "description": "Vanguard Tax-Exempt Bond ETF — municipal"
+        },
+        {
+          "ticker": "MBB",
+          "description": "iShares MBS ETF — agency MBS"
+        },
+        {
+          "ticker": "VMBS",
+          "description": "Vanguard Mortgage-Backed Securities ETF — agency MBS"
+        },
+        {
+          "ticker": "BNDX",
+          "description": "Vanguard Total International Bond ETF — international, USD hedged"
+        },
+        {
+          "ticker": "EMB",
+          "description": "iShares J.P. Morgan USD Emerging Markets Bond ETF — EM sovereign, USD"
+        },
+        {
+          "ticker": "FLOT",
+          "description": "iShares Floating Rate Bond ETF — IG floating rate"
+        },
+        {
+          "ticker": "USFR",
+          "description": "WisdomTree Floating Rate Treasury Fund — Treasury floating rate"
+        }
+      ]
+    },
+    {
+      "key": "commodities",
+      "name": "Commodities",
+      "source": {
+        "kind": "curated"
+      },
+      "description": "Commodity ETFs / ETPs: gold, silver, crude oil, natural gas, broad baskets, agriculture, copper and base metals.",
+      "overlap_note": "SPOT / front-month series — WTI and Brent crude (fred.dcoilwtico / dcoilbrenteu), Henry Hub gas (fred.dhhngsp), gold (yahoo.gc_f), copper (fred.pcoppusdm) — already come through Market Indicators; not duplicated. These are the exchange-traded products' own closes (futures-based products roll, so they differ from spot).",
+      "members": [
+        {
+          "ticker": "GLD",
+          "description": "SPDR Gold Shares — gold"
+        },
+        {
+          "ticker": "IAU",
+          "description": "iShares Gold Trust — gold"
+        },
+        {
+          "ticker": "SLV",
+          "description": "iShares Silver Trust — silver"
+        },
+        {
+          "ticker": "USO",
+          "description": "United States Oil Fund — WTI crude futures"
+        },
+        {
+          "ticker": "BNO",
+          "description": "United States Brent Oil Fund — Brent crude futures"
+        },
+        {
+          "ticker": "UNG",
+          "description": "United States Natural Gas Fund — natural gas futures"
+        },
+        {
+          "ticker": "DBC",
+          "description": "Invesco DB Commodity Index Tracking Fund — broad commodities"
+        },
+        {
+          "ticker": "GSG",
+          "description": "iShares S&P GSCI Commodity-Indexed Trust — broad commodities"
+        },
+        {
+          "ticker": "PDBC",
+          "description": "Invesco Optimum Yield Diversified Commodity Strategy No K-1 ETF — broad commodities"
+        },
+        {
+          "ticker": "DBA",
+          "description": "Invesco DB Agriculture Fund — agriculture"
+        },
+        {
+          "ticker": "CPER",
+          "description": "United States Copper Index Fund — copper"
+        },
+        {
+          "ticker": "DBB",
+          "description": "Invesco DB Base Metals Fund — base metals"
+        }
+      ]
+    },
+    {
+      "key": "key_benchmarks",
+      "name": "Key benchmarks",
+      "source": {
+        "kind": "curated"
+      },
+      "description": "Index proxies for the platform's benchmarks: the three existing platform benchmarks (SPY, AGG, ACWI — prices.BENCHMARK_TICKERS, unchanged) plus the other major indexes through their most liquid ETF.",
+      "overlap_note": "The master's 13 'index' securities carry Bloomberg-style tickers (SPX, RTY, NDX …) that the free price source cannot price (Yahoo reads 'SPX' as a different symbol), so the benchmarks are tracked through ETF proxies. Index LEVELS (fred.sp500, fred.nasdaq100, yahoo.rut) are in Market Indicators.",
+      "members": [
+        {
+          "ticker": "SPY",
+          "description": "SPDR S&P 500 ETF Trust — S&P 500 (platform benchmark)"
+        },
+        {
+          "ticker": "AGG",
+          "description": "iShares Core U.S. Aggregate Bond ETF — US aggregate bonds (platform benchmark)"
+        },
+        {
+          "ticker": "ACWI",
+          "description": "iShares MSCI ACWI ETF — world equity (platform benchmark)"
+        },
+        {
+          "ticker": "VT",
+          "description": "Vanguard Total World Stock ETF — FTSE Global All Cap"
+        },
+        {
+          "ticker": "IWB",
+          "description": "iShares Russell 1000 ETF — Russell 1000"
+        },
+        {
+          "ticker": "IWM",
+          "description": "iShares Russell 2000 ETF — Russell 2000"
+        },
+        {
+          "ticker": "IWV",
+          "description": "iShares Russell 3000 ETF — Russell 3000"
+        },
+        {
+          "ticker": "QQQ",
+          "description": "Invesco QQQ Trust — Nasdaq-100"
+        },
+        {
+          "ticker": "DIA",
+          "description": "SPDR Dow Jones Industrial Average ETF Trust — Dow Jones Industrial Average"
+        },
+        {
+          "ticker": "MDY",
+          "description": "SPDR S&P MidCap 400 ETF Trust — S&P MidCap 400"
+        },
+        {
+          "ticker": "EFA",
+          "description": "iShares MSCI EAFE ETF — MSCI EAFE"
+        },
+        {
+          "ticker": "EEM",
+          "description": "iShares MSCI Emerging Markets ETF — MSCI Emerging Markets"
+        },
+        {
+          "ticker": "ACWX",
+          "description": "iShares MSCI ACWI ex U.S. ETF — MSCI ACWI ex-US"
+        },
+        {
+          "ticker": "BNDX",
+          "description": "Vanguard Total International Bond ETF — global ex-US bonds, hedged"
+        },
+        {
+          "ticker": "GLD",
+          "description": "SPDR Gold Shares — gold"
+        },
+        {
+          "ticker": "DBC",
+          "description": "Invesco DB Commodity Index Tracking Fund — broad commodities"
+        }
+      ]
+    }
+  ]
+}

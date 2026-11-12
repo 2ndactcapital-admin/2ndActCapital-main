@@ -9,6 +9,8 @@
  * error state — never a default that quietly shows the controls anyway.
  */
 
+import { searchTracking } from "../track1.mjs";
+
 function isObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
@@ -123,5 +125,7 @@ export function interpretSecuritySearch({ ok, body }) {
   if (!grantsRead(body) || !Array.isArray(body.securities)) {
     return { kind: "error", message: NO_ENVELOPE_MESSAGE };
   }
-  return { kind: "results", query: typeof body.query === "string" ? body.query : "", securities: body.securities };
+  // TRACK1 — the per-result "Track" offer (null without the server's tracking block: fail closed)
+  return { kind: "results", query: typeof body.query === "string" ? body.query : "", securities: body.securities,
+    tracking: searchTracking(body) };
 }
