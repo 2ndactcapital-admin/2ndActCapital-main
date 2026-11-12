@@ -410,6 +410,16 @@ def secret_leaks(text: str) -> list[str]:
     return [v[:10] + "…" for v in S["issued"] if v and (v in text or v.split("_")[-1] in text)]
 
 
+RT_TOKEN_PATH = f"/cpsim/c/{SLUG_PREFIX}main/realtime/realms/altruist/protocol/openid-connect/token"
+RT_GRANTS = ("password", "refresh_token")
+_RT_SECRET = re.compile(r"cpsim_rt(?:at|rt|pw)_[0-9A-Za-z_\-]{16,}")
+
+
+def rt_secret_shapes(text: str) -> list[str]:
+    """Any Realtime token / password SHAPE (issued to this script or not) — 10-character prefixes only."""
+    return [m.group(0)[:10] + "…" for m in _RT_SECRET.finditer(text)]
+
+
 def sensitive_hits(text: str) -> list[str]:
     """Which of this run's fake tax ids (any form) or date-of-birth strings appear in ``text`` (labels only)."""
     out = []
@@ -662,6 +672,7 @@ class org_ctx:
 # ═══ App access ═════════════════════════════════════════════════════════════════════════════════════════════════
 CLAIMS_BY_TOKEN: dict[str, dict] = {}
 APP_T = None
+_ORIG_GRANT = None          # services.altruist_realtime_sim._grant, wrapped by install_stubs to record client grants
 
 
 def token_for(uid) -> str:
@@ -755,7 +766,17 @@ def install_stubs():
     S["sleeps"] = []
     RS.set_sleep(lambda sec: S["sleeps"].append(float(sec)))
     RS.clear_cache()
-    global APP_T
+    global APP_T, _ORIG_GRANT
+    if _ORIG_GRANT is None:
+        _ORIG_GRANT = RS._grant
+    S["client_grants"] = []
+
+    async def _recorded_grant(sess, form, transport):
+        S["client_grants"].append(form.get("grant_type"))
+        d = await _ORIG_GRANT(sess, form, transport)
+        S["issued"] += [v for v in (d.get("access"), d.get("refresh")) if v]     # scanned for everywhere, redacted
+        return d
+    RS._grant = _recorded_grant
     APP_T = FX.TimeoutASGITransport(app=main.app)
     AO.set_simulator_transport(APP_T)          # simulator environment ONLY (sandbox / production never read it)
     SW.set_transport(httpx.ASGITransport(app=main.app))
@@ -772,6 +793,8 @@ def set_clock(dt) -> None:
 
 
 def restore_stubs():
+    if _ORIG_GRANT is not None:
+        RS._grant = _ORIG_GRANT
     R.set_today(None)
     SM.set_now(None)
     set_clock(None)
@@ -1453,12 +1476,54 @@ async def y_sensitive(conn):
           "the Admin → Counterparties → Realtime tab shows contacts with last four only", f"{c2}")
     oh = sensitive_hits(OUTPUT.getvalue())
     check(not oh, "this script's own output never printed a tax id or a date of birth", f"{oh[:3]}")
-    for b in S["bodies"]:        # fix 2 discovery: which body (source) holds which leaked prefix — 10 characters only
+    # The Realtime TOKEN endpoint answers with tokens BY PROTOCOL (server-to-server, as Altruist's real endpoint does);
+    # it is exempt by EXACT path + grant, like the shown-once create answers. Every other body is scanned as before.
+    def token_ep(b) -> bool:
+        return (b["src"] == "sim" and b["method"] == "POST" and b["path"] == RT_TOKEN_PATH
+                and b["grant"] in RT_GRANTS)
+
+    for b in S["bodies"]:        # which body (source) holds which issued value — 10-character prefixes only
         for x in secret_leaks(b["text"]):
-            info(f"[leak-src] {b['src']} {b['method']} {b['path']} grant={b['grant']} {b['status']} → {x}")
-    leaks = [x for b in S["bodies"] for x in secret_leaks(b["text"])]
-    check(not leaks, "no response body carried a simulator key, password or token (the shown-once create answers "
-          "are the only place one appears, by design)", f"{leaks[:3]}")
+            info(f"body source: {b['src']} {b['method']} {b['path']} grant={b['grant']} {b['status']} → {x}"
+                 f"{' (token endpoint, exempt)' if token_ep(b) else ''}")
+    rest = [b for b in S["bodies"] if not token_ep(b)]
+    leaks = [x for b in rest for x in secret_leaks(b["text"]) + rt_secret_shapes(b["text"])]
+    check(bool(rest) and not leaks, f"no response body ({len(rest)} of them) carried a simulator key, password or "
+          "token (the shown-once create answers and the Realtime token endpoint's own answers — exact path, password / "
+          "refresh_token grant — are the only places one appears, by design)", f"{leaks[:3]}")
+    te = [b for b in S["bodies"] if token_ep(b)]
+    tok_bodies = [b for b in S["bodies"] if b["path"] == RT_TOKEN_PATH]
+    n_log = await sim(conn, "SELECT count(*) FROM cpsim.request_log WHERE counterparty_id = $1::uuid AND path = $2",
+                      S["cp"]["main"], RT_TOKEN_PATH, fetch="fetchval")
+    check(all(b["src"] == "sim" for b in tok_bodies) and int(n_log) == len(tok_bodies) + len(S["client_grants"])
+          and len(S["client_grants"]) > 0,
+          "(a) every token-endpoint answer went to a Realtime CLIENT — this script's direct grant tests or the "
+          "Realtime client (services.altruist_realtime_sim, which keeps them in its server-side cache): the logged "
+          "token calls equal those two counts exactly, so no person-facing route fetched or relayed one",
+          f"exempt {len(te)}; logged {n_log} = direct {len(tok_bodies)} + client {len(S['client_grants'])}?")
+    api_b = [b for b in S["bodies"] if b["src"] == "api"]
+    al = [f"{b['method']} {b['path']}: {x}" for b in api_b for x in secret_leaks(b["text"]) + rt_secret_shapes(b["text"])]
+    check(bool(api_b) and not al, f"(b) no Hollisworks /api/v1 body ({len(api_b)} of them) carried a cpsim_rt* token "
+          "(the script's OR the Realtime client's) or the simulator password", f"{al[:3]}")
+    aud = [x for r in audit for x in secret_leaks(r["p"] or "") + rt_secret_shapes(r["p"] or "")]
+    check(not aud, f"(b) no fixture audit row ({len(audit)}) carried a cpsim_rt* token or the simulator password",
+          f"{aud[:3]}")
+    logs = await sim(conn, f"SELECT t::text AS x FROM cpsim.request_log t WHERE {fixture_scope('cpsim.request_log')}")
+    ll = [x for r in logs for x in secret_leaks(r["x"]) + rt_secret_shapes(r["x"])]
+    check(bool(logs) and not ll, f"(b) no fixture cpsim.request_log row ({len(logs)}) stores a token or the simulator "
+          "password", f"{ll[:3]}")
+    out_now = OUTPUT.getvalue()
+    ol = secret_leaks(out_now) + rt_secret_shapes(out_now)
+    check(not ol, "(b) this script's own output never printed a cpsim_rt* token or the simulator password", f"{ol[:3]}")
+    trows = await sim(conn, "SELECT method, path, message_type, auth_outcome, status FROM cpsim.request_log WHERE "
+                            "counterparty_id = $1::uuid AND path = $2", S["cp"]["main"], RT_TOKEN_PATH)
+    secrets_ = [S["rt_user"]["main"]["username"], S["rt_user"]["main"]["password"], S["client_ids"]["main"],
+                S["keys"]["main"]]
+    bad = [dict(r) for r in trows if r["message_type"] not in {f"realtime.token.{g}" for g in RT_GRANTS}
+           or r["method"] != "POST" or any(v and v in json.dumps(dict(r), default=str) for v in secrets_)]
+    check(bool(trows) and not bad, f"(c) each token call's request_log row ({len(trows)}) records the grant type only "
+          "(message_type realtime.token.<grant>) — no token, password, user name, client id or client secret",
+          f"{len(bad)} bad")
 
 
 async def y_guard(conn):
@@ -1720,7 +1785,7 @@ FIXTURE_SECTIONS = (("token", y_token), ("open_a", y_open_a), ("open_b", y_open_
                     ("unchanged", y_unchanged), ("sensitive", y_sensitive), ("conformance", y_conformance),
                     ("safety", y_safety))
 ONLY_NEEDS = {"token": (), "open_a": (), "open_b": (), "refusals": (), "check_idem": (), "guard": (),
-              "ratelimit": (), "unchanged": (), "sensitive": ("refusals",), "conformance": (), "safety": ()}
+              "ratelimit": (), "unchanged": (), "sensitive": ("token", "refusals"), "conformance": (), "safety": ()}
 ONLY: list | None = None
 
 

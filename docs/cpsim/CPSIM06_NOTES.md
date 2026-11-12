@@ -292,3 +292,12 @@ other simulator answer carried a token, key or password. The two leaking answers
 the token endpoint in `y_token` (it plays the Realtime client to test the grant rules); the token endpoint returns
 tokens by protocol, server-to-server, exactly as Altruist's real endpoint does. **Verdict: VERIFY (the check scanned a
 by-protocol answer), not CODE.** No person-facing response carries a token.
+
+**Fix 2 change (VERIFY, `verify_cpsim06.py` only — no app code changed):** the token endpoint is exempt by EXACT path
+(`RT_TOKEN_PATH`) + grant (`password` / `refresh_token`); every other body is still scanned, now ALSO for any
+`cpsim_rt(at|rt|pw)_…` shape (not only the values this script was issued). The Realtime client's own grants are
+recorded (a wrapper around `services.altruist_realtime_sim._grant`, restored by `restore_stubs`) so its tokens join the
+scan list. New checks: (a) logged token calls = the script's direct grant tests + the Realtime client's grants, exactly;
+(b) no `/api/v1` body, fixture audit row, fixture `cpsim.request_log` row or this script's output carries a
+`cpsim_rt*` token or the simulator password; (c) each token call's request_log row records `realtime.token.<grant>`
+only (no token, password, user name, client id or secret). `--only=sensitive` now also runs `token`.
