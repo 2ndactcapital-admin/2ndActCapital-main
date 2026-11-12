@@ -380,12 +380,55 @@ def _plan() -> dict:
     }
 
 
+_FK_CHILDREN_SQL = """
+    SELECT cn.nspname AS s, cc.relname AS t, a.attname AS c
+      FROM pg_constraint k JOIN pg_class cc ON cc.oid = k.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
+      JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = ANY(k.conkey)
+     WHERE k.contype = 'f' AND k.confrelid = 'portfolio.securities_global'::regclass"""
+
+
+async def drop_fixture_master(op) -> int:
+    """The 10,000 fixture securities, fast. A plain DELETE fires ~40 FK checks per row (~70 ms/row, ~12 min). In ONE
+    transaction: (1) this script's own child rows (identifiers, series) are deleted normally; (2) EVERY FK child column
+    of securities_global (read from pg_constraint) is proven to hold NO reference to a fixture security — otherwise
+    nothing is deleted here and the normal FK-checked cleanup handles it; (3) only then are the fixture rows
+    (name prefix AND id) deleted with triggers off (SET LOCAL session_replication_role = replica — transaction-local,
+    never a session SET under the pooler). securities_global has no user triggers of its own."""
+    async with op.transaction():
+        await op.execute("SET LOCAL statement_timeout = '300s'")
+        await op.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        ids = [r["id"] for r in await op.fetch(
+            "SELECT id FROM portfolio.securities_global WHERE starts_with(name, $1)", SEC_PREFIX)]
+        if not ids:
+            return 0
+        await op.execute("DELETE FROM portfolio.securities_global_identifiers WHERE global_security_id = ANY($1::uuid[])",
+                         ids)
+        await op.execute("DELETE FROM market_data.indicator_series WHERE starts_with(series_key, $1) AND "
+                         "security_global_id = ANY($2::uuid[])", SERIES_PREFIX, ids)
+        own_trg = await op.fetchval("SELECT count(*) FROM pg_trigger WHERE tgrelid = "
+                                    "'portfolio.securities_global'::regclass AND NOT tgisinternal")
+        if int(own_trg):
+            return 0
+        for r in await op.fetch(_FK_CHILDREN_SQL):
+            if await op.fetchval(f'SELECT EXISTS (SELECT 1 FROM "{r["s"]}"."{r["t"]}" WHERE "{r["c"]}" = '
+                                 f'ANY($1::uuid[]))', ids):
+                print(f"[INFO] fixture securities still referenced by {r['s']}.{r['t']}.{r['c']} — normal cleanup")
+                return 0
+        await op.execute("SET LOCAL session_replication_role = replica")
+        status = await op.execute("DELETE FROM portfolio.securities_global WHERE id = ANY($1::uuid[]) AND "
+                                  "starts_with(name, $2)", ids, SEC_PREFIX)
+        return int(status.split()[-1])
+
+
 async def teardown() -> list[str]:
     dsn, how = await resolve_dsn(OPERATOR_DSN_VAR)
     if not dsn:
         raise RuntimeError(f"no operator DSN for the teardown: {how}")
     op = await connect(dsn)
     try:
+        n = await drop_fixture_master(op)
+        if n:
+            print(f"[INFO] fixture security master removed: {n} rows (FK children proven empty first)")
         res = await VC.cleanup(op, orgs=[ORG, ORG2], users=list(USERS), user_sub_like=f"%{TAG}%", plan=_plan(),
                                label="verify_dailyops1")
         return res["log"]
