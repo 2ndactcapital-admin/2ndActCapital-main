@@ -87,6 +87,8 @@ sys.path.insert(0, str(API_DIR))
 import _verify_self as VS  # noqa: E402
 
 SPRINT_KEY = "cpsim03"
+#: trade_blocks_route_chk as cpsim03 left it, and as cpsim05 widened it (manual + fix_sim — 'fix' never admitted)
+BLOCK_ROUTE_CHKS = ("CHECK ((route = 'manual'::text))", "CHECK ((route = ANY (ARRAY['manual'::text, 'fix_sim'::text])))")
 BEFORE_REF = "594b82d"   # cpsim03-work's base: 'merge cpsim02'
 _P = "/api/v1/admin/counterparties"
 _X = "/api/v1/execution"
@@ -762,6 +764,11 @@ def install_stubs():
     SW.set_sleep(lambda s: asyncio.sleep(0))
     S["cap_saved"] = CX.SIMULATOR_CAPABILITY_CUSTODIAN
     CX.SIMULATOR_CAPABILITY_CUSTODIAN = FIX_CAP  # the fixture code (the real altruist_simulator has no row)
+    # cpsim05: the adapter now routes a simulated account over FIX by default — THIS verify proves cpsim03's REST
+    # orders route (person Send / Import), which stays callable with simulator_protocol 'rest'
+    from services.custody.trading import AltruistTradeAdapter as _ATA
+    S["protocol_saved"] = _ATA.simulator_protocol
+    _ATA.simulator_protocol = "rest"
     os.environ[AO.CPSIM_BASE_URL_ENV] = SIM_BASE
     os.environ["ALTRUIST_REDIRECT_URI"] = REDIRECT
     os.environ.setdefault("ALTRUIST_TOKEN_ENCRYPTION_KEY", "cpsim03verify-" + secrets.token_hex(16))
@@ -781,6 +788,9 @@ def restore_stubs():
     SW.set_sleep(None)
     if "cap_saved" in S:
         CX.SIMULATOR_CAPABILITY_CUSTODIAN = S["cap_saved"]
+    if "protocol_saved" in S:
+        from services.custody.trading import AltruistTradeAdapter as _ATA
+        _ATA.simulator_protocol = S["protocol_saved"]
 
 
 def set_sim_creds(key="main") -> None:
@@ -968,13 +978,18 @@ async def y_schema(conn):
     ev = cons["public.execution_instruction_events"].get("execution_instruction_events_action_chk") or ""
     old14 = ("create", "edit", "submit", "approve", "reject", "mark_sent", "fill", "reconcile", "close", "cancel",
              "expire", "carry", "ask", "letter")
-    check(all(f"'{a}'" in ev for a in old14) and ev.count("'::text") == 16,
-          "the events action CHECK keeps rep2's 14 actions and adds exactly custodian_reject / custodian_cancel")
+    later = sum(f"'{a}'" in ev for a in ("approve_upstream", "automatic_failed"))   # cpsim05's two (cpsim05_part1)
+    check(all(f"'{a}'" in ev for a in old14) and "'custodian_reject'" in ev and "'custodian_cancel'" in ev
+          and ev.count("'::text") == 16 + later,
+          "the events action CHECK keeps rep2's 14 actions and adds exactly custodian_reject / custodian_cancel "
+          "(+ cpsim05's approve_upstream / automatic_failed once applied)")
     check("sent_channel" not in " ".join(d for k, d in ei.items() if k != "execution_instructions_sent_chk" and
-                                         k != "execution_instructions_custodian_order_chk"),
+                                         k != "execution_instructions_custodian_order_chk" and
+                                         k != "execution_instructions_fix_sim_chk"),   # cpsim05's D5 backstop
           "no other CHECK names sent_channel (the new channel needed no CHECK change)")
-    check(cons["public.trade_blocks"].get("trade_blocks_route_chk") == "CHECK ((route = 'manual'::text))",
-          "trade_blocks_route_chk unchanged: blocks route manual only")
+    check(cons["public.trade_blocks"].get("trade_blocks_route_chk") in BLOCK_ROUTE_CHKS,
+          "trade_blocks_route_chk unchanged by cpsim03: blocks route manual only (cpsim05 later admits fix_sim, "
+          "never fix)")
     pols = await platform(conn, "SELECT tablename, cmd FROM pg_policies WHERE schemaname = 'public' AND tablename = "
                                 "ANY($1::text[])", ["execution_instructions", "execution_fills",
                                                     "execution_instruction_events"])
@@ -1839,7 +1854,8 @@ async def y_unchanged(conn):
             "applied")
     d = await platform(conn, "SELECT pg_get_constraintdef(k.oid) FROM pg_constraint k WHERE k.conrelid = (" + REL +
                        ") AND k.conname = 'trade_blocks_route_chk'", "public", "trade_blocks", fetch="fetchval")
-    check(d == "CHECK ((route = 'manual'::text))", "trade_blocks_route_chk (re-read): blocks route manual only", f"{d}")
+    check(d in BLOCK_ROUTE_CHKS, "trade_blocks_route_chk (re-read): blocks route manual (cpsim05: + fix_sim, never "
+          "fix)", f"{d}")
     fix = XR.registry().get("fix")
     check(fix is not None and isinstance(fix, XR.NotConnectedRouter) and XR.any_connected() is False and
           XR.route_refusal("fix") is not None and XR.route_refusal("manual") is None,

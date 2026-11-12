@@ -1459,10 +1459,13 @@ async def y_fix(conn):
     section("[Y] FIX router interface: registered, NOT connected; route fix refused; no network")
     c, o = await api(U_ADMIN1, "GET", "/api/v1/execution/blocks/routers")
     rows = o.get("rows") or []
-    check(c == 200 and bool(rows) and all(r["connected"] is False and r["status"] == "not_connected" for r in rows),
-          "every registered router is 'not connected'", f"{rows}")
+    # cpsim05: the registry also holds the SIMULATED counterparty's router (fix_sim, connected, simulated) — the pin is
+    # on every REAL router (the real 'fix' entry): still not connected, every call refused
+    real = [r for r in rows if not r.get("simulated")]
+    check(c == 200 and bool(real) and all(r["connected"] is False and r["status"] == "not_connected" for r in real),
+          "every registered REAL router is 'not connected'", f"{rows}")
     refused = []
-    for r in RT.registry().values():
+    for r in [x for x in RT.registry().values() if not getattr(x, "simulated", False)]:
         for call in (r.submit_block({}, []), r.cancel_block({}, "x"), r.execution_reports({}), r.send_allocations({}, [])):
             try:
                 await call
@@ -1473,7 +1476,10 @@ async def y_fix(conn):
           "RouterNotConnected (no client code)", f"{refused}")
     d = await platform(conn, "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = "
                              "'trade_blocks_route_chk'", fetch="fetchval")
-    check(d == "CHECK ((route = 'manual'::text))", "the database admits route 'manual' only", f"{d}")
+    # cpsim05 (docs/cpsim05_part1.sql) widened it to manual + fix_sim — 'fix' is still not admitted
+    check(d in ("CHECK ((route = 'manual'::text))",
+                "CHECK ((route = ANY (ARRAY['manual'::text, 'fix_sim'::text])))"),
+          "the database admits route 'manual' (and, since cpsim05, 'fix_sim') — never 'fix'", f"{d}")
     check(RT.route_refusal("manual") is None and "not connected" in (RT.route_refusal("fix") or ""),
           "manual is always available; fix is refused with the reason", "")
     # rep9 fix 1 — the spy is live (rep2's setup path DID reach Altruist's adapter for A1) and nothing outside setup

@@ -307,7 +307,9 @@ class AltruistTradeAdapter(TradeAdapter):
     REAL Altruist trading client exists in this build, so it routes manual even
     then. cpsim03 (D4): an account of a SIMULATED Altruist-compatible custodian
     that meets every D2 condition gets the same DRAFT instructions routed
-    ``custodian_api`` — nothing is sent here."""
+    ``custodian_api`` — nothing is sent here. cpsim05 (D3): by default such an
+    account's instructions are routed ``fix_sim`` instead (``simulator_protocol``)
+    — still nothing is sent HERE; services.fix_sim_auto sends after approval."""
 
     custodian_key = "altruist"
     #: The capabilities row this adapter reads. Fixed, not the registry key: a
@@ -318,6 +320,10 @@ class AltruistTradeAdapter(TradeAdapter):
     #: cpsim03 — the SIMULATED custodian's capability code: None → services.custodian_execution
     #: .SIMULATOR_CAPABILITY_CUSTODIAN ('altruist_simulator', D3), the ONE place a verify substitutes its fixture code
     simulator_capability_custodian: str | None = None
+    #: cpsim05 (D3) — how a simulated-custodian account is traded: 'fix' (the default — FIX 4.4 over HTTP, routed
+    #: 'fix_sim', sent / booked / reconciled AUTOMATICALLY after the proposal's approval) or 'rest' (cpsim03's orders
+    #: API, routed 'custodian_api', Send / Import by a person — still callable: a subclass sets 'rest')
+    simulator_protocol: str = "fix"
 
     async def declared(self, conn):
         from services.custodian_capabilities import capability
@@ -336,14 +342,29 @@ class AltruistTradeAdapter(TradeAdapter):
             per_trade = CX.trade_refusal(trade_list.trades)
             if per_trade:
                 sim = {**sim, "ok": False, "condition": "trade", "reason": per_trade}
-        if sim["ok"]:      # D4 — the SAME draft instructions, the route recorded; nothing is sent at submit
-            why = (f"custodian API route — simulated custodian {sim['slug']} (SIMULATED): after approval a person "
-                   "presses Send to custodian, then imports the fills")
-            result = await ManualTradeAdapter().submit(ctx, trade_list, reason=why, notes=notes,
-                                                       routed_via=CX.ROUTE)
+        if sim["ok"] and self.simulator_protocol == "fix":
+            from services import execution_routers as RT
+
+            if RT.simulated_router() is None:
+                sim = {**sim, "ok": False, "condition": "router",
+                       "reason": "the simulated FIX router is not registered / connected"}
+        if sim["ok"]:      # D4 — the SAME instructions, the route recorded; nothing is sent at submit
+            if self.simulator_protocol == "fix":     # cpsim05 D3 / D4
+                from services import execution_routers as RT
+
+                route = RT.SIM_ROUTE
+                why = (f"simulated FIX route — simulated counterparty {sim['slug']} (SIMULATED): once approved (the "
+                       "proposal's maker-checker, or rep2's approval for a system proposal) the trade is sent as a FIX "
+                       "NewOrderSingle automatically, its fills booked, synced and reconciled — demo only")
+            else:
+                route = CX.ROUTE
+                why = (f"custodian API route — simulated custodian {sim['slug']} (SIMULATED): after approval a person "
+                       "presses Send to custodian, then imports the fills")
+            result = await ManualTradeAdapter().submit(ctx, trade_list, reason=why, notes=notes, routed_via=route)
             result.adapter = self.simulator_capability_custodian or CX.SIMULATOR_CAPABILITY_CUSTODIAN
-            result.routed_to = CX.ROUTE
-            result.simulator = {"route": True, "condition": None, "reason": sim["reason"]}
+            result.routed_to = route
+            result.simulator = {"route": True, "condition": None, "reason": sim["reason"],
+                                "protocol": self.simulator_protocol}
             return result
         if not available(cap):
             why = (f"Altruist {self.capability_key} is '{cap.value}' (evidence: {cap.evidence}) — unknown is "
