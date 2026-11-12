@@ -1,6 +1,7 @@
 """Query-level functions for the market data read API (mkt03).
 
     build_catalog(conn)                         → GET  /market/catalog
+    search_securities(conn, query)              → GET  /market/securities/search  (dailyops1)
     read_series(conn, query)                    → GET  /market/series
     build_grid(conn, body, today)               → POST /market/grid
     build_correlations(conn, body, today)       → POST /market/correlations
@@ -60,6 +61,10 @@ MAX_POINTS_PER_SERIES = 30_000
 MAX_TOTAL_POINTS = 300_000
 MAX_GRID_ROWS = 2_000
 MAX_DAILY_GRID_DAYS = 400
+# dailyops1 — the security search (the catalog lists only selectable securities).
+SEARCH_MIN_CHARS = 2
+SEARCH_MAX_CHARS = 100
+MAX_SEARCH_RESULTS = 25
 MAX_BODY_BYTES = 64 * 1024
 LAG_RANGE = (-24, 24)
 MIN_PERIODS_RANGE = (12, 120)
@@ -329,6 +334,48 @@ def _iso(d: date | None) -> str | None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Securities: colours and the row shape (catalog + search)
+# ═══════════════════════════════════════════════════════════════════════════
+SECURITY_BASE = {"index": palette.INDEX_SECURITY_BASE, "structured_note": palette.NOTE_SECURITY_BASE}
+
+
+def security_base(security_type: str) -> str:
+    return SECURITY_BASE.get(security_type, palette.NEUTRAL)
+
+
+def security_colors(selectable: list[dict]) -> dict[str, str]:
+    """{id: colour} over the SELECTABLE securities (catalog_securities order),
+    one ramp per security_type — the same colour in the catalog and in a
+    search result. Deterministic; palette.ramp never raises."""
+    groups: dict[str, list[str]] = {}
+    for g in selectable:
+        groups.setdefault(g["security_type"], []).append(str(g["id"]))
+    return palette.assign(groups, security_base)
+
+
+def security_out(g: dict, colors: dict[str, str]) -> dict:
+    linked = g["series_key"] is not None
+    sid = str(g["id"])
+    out = {
+        "id": sid,
+        "name": g["name"],
+        "short_name": g["short_name"],
+        "security_type": g["security_type"],
+        "price_source": "indicator_series" if linked else "none",
+        "series_key": g["series_key"],
+        "selectable": linked,
+        "unselectable_reason": None if linked else "no_price_history",
+        # A selectable security has its catalog colour; one with no price
+        # history is never plotted and carries its type's base colour.
+        "color": colors.get(sid) or security_base(g["security_type"]),
+    }
+    if "ticker" in g:
+        out["ticker"] = g["ticker"]
+        out["cusip"] = g["cusip"]
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # GET /market/catalog
 # ═══════════════════════════════════════════════════════════════════════════
 async def build_catalog(conn) -> dict:
@@ -371,30 +418,62 @@ async def build_catalog(conn) -> dict:
             "sort_order": s["sort_order"],
         })
 
-    sec_groups: dict[str, list[str]] = {}
-    for g in securities:
-        sec_groups.setdefault(g["security_type"], []).append(str(g["id"]))
-    sec_base = {"index": palette.INDEX_SECURITY_BASE, "structured_note": palette.NOTE_SECURITY_BASE}
-    sec_colors = palette.assign(sec_groups, lambda t: sec_base.get(t, palette.NEUTRAL))
-    out_secs = []
-    for g in securities:
-        linked = g["series_key"] is not None
-        out_secs.append({
-            "id": str(g["id"]),
-            "name": g["name"],
-            "short_name": g["short_name"],
-            "security_type": g["security_type"],
-            "price_source": "indicator_series" if linked else "none",
-            "series_key": g["series_key"],
-            "selectable": linked,
-            "unselectable_reason": None if linked else "no_price_history",
-            "color": sec_colors[str(g["id"])],
-        })
+    sec_colors = security_colors(securities)
+    out_secs = [security_out(g, sec_colors) for g in securities]
 
     vocab = base_vocabularies()
     vocab["license_classes"] = sorted({s["license_class"] for s in series})
     vocab["source_providers"] = sorted({s["source_provider"] for s in series})
+    vocab["search"] = search_vocabulary()
     return {"categories": categories, "indicators": indicators, "securities": out_secs,
+            "vocabularies": vocab}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GET /market/securities/search  (dailyops1)
+# ═══════════════════════════════════════════════════════════════════════════
+def search_vocabulary() -> dict:
+    """The security search's limits — served, never hard-coded in the page."""
+    return {"min_chars": SEARCH_MIN_CHARS, "max_chars": SEARCH_MAX_CHARS, "max_results": MAX_SEARCH_RESULTS}
+
+
+def parse_search_query(multi_items: list[tuple[str, str]]) -> str:
+    """``q`` only, once, SEARCH_MIN_CHARS..SEARCH_MAX_CHARS after trimming.
+    Refusals never echo the value."""
+    names = [k for k, _ in multi_items]
+    if any(n != "q" for n in names):
+        raise MarketDataRequestError("Request validation failed", errors=[{
+            "loc": ["query"], "type": "extra_forbidden",
+            "msg": "The request contains a query parameter this endpoint does not accept"}])
+    if len(names) > 1:
+        raise MarketDataRequestError("Request validation failed", errors=[{
+            "loc": ["query"], "type": "duplicate", "msg": "Each query parameter may appear once"}])
+    q = (dict(multi_items).get("q") or "").strip()
+    if len(q) < SEARCH_MIN_CHARS:
+        raise MarketDataRequestError("Request validation failed", errors=[{
+            "loc": ["query", "q"], "type": "too_short",
+            "msg": f"Type at least {SEARCH_MIN_CHARS} characters"}])
+    if len(q) > SEARCH_MAX_CHARS:
+        raise MarketDataRequestError("Request validation failed", errors=[{
+            "loc": ["query", "q"], "type": "too_long",
+            "msg": f"At most {SEARCH_MAX_CHARS} characters"}])
+    if any(ord(c) < 32 for c in q):
+        raise MarketDataRequestError("Request validation failed", errors=[{
+            "loc": ["query", "q"], "type": "invalid_characters",
+            "msg": "The search text contains a control character"}])
+    return q
+
+
+async def search_securities(conn, q: str) -> dict:
+    """Up to MAX_SEARCH_RESULTS security-master rows matching ``q`` — priced
+    (selectable) rows first, the rest ``selectable: false`` with the reason."""
+    rows = await repo.search_securities(conn, q, MAX_SEARCH_RESULTS)
+    colors = security_colors(await repo.catalog_securities(conn)) if any(
+        r["series_key"] is not None for r in rows) else {}
+    vocab = base_vocabularies()
+    vocab["search"] = search_vocabulary()
+    return {"query": q, "securities": [security_out(r, colors) for r in rows],
+            "result_count": len(rows), "max_results": MAX_SEARCH_RESULTS,
             "vocabularies": vocab}
 
 

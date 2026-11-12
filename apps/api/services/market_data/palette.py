@@ -17,6 +17,15 @@ on L = 0.68 — which breaks "distinct within a category". If two shades still
 round to the same #RRGGBB, the later one steps its lightness by 1/510 at a time
 (alternating up and down, inside the clamp) until it is unique; that is
 deterministic, so every call returns identical colours.
+
+dailyops1: an 8-bit colour has only about 300 distinct shades of one hue and
+saturation inside the clamp (measured: 297–309 across the bases here). A
+larger group used to raise RuntimeError — and the security master's equity /
+fund groups (thousands of rows) took the whole catalog down with it. ``ramp``
+now NEVER raises: when the distinct shades run out it cycles through the
+largest distinct ramp that fits (``CYCLE_MAX`` shades, halved until it fits),
+so the same input always gives the same colours. Every size that fitted before
+gets exactly the colours it got before.
 """
 from __future__ import annotations
 
@@ -60,13 +69,12 @@ def _hls_hex(h: float, l: float, s: float) -> str:
     return _rgb_to_hex(colorsys.hls_to_rgb(h, l, s))
 
 
-def ramp(base_hex: str, count: int) -> list[str]:
-    """``count`` distinct shades of ``base_hex``, in order. count==1 → [base]."""
-    if count <= 0:
-        return []
-    base = "#" + base_hex.lstrip("#").upper()
-    if count == 1:
-        return [base]
+class _Exhausted(Exception):
+    """Internal: no distinct shade is left for the next member."""
+
+
+def _distinct_ramp(base: str, count: int) -> list[str]:
+    """The mkt03 algorithm, unchanged: ``count`` distinct shades or _Exhausted."""
     h, l, s = colorsys.rgb_to_hls(*_hex_to_rgb(base))
     lo = min(max(l - L_BELOW, L_MIN), L_MAX)
     hi = min(max(l + L_ABOVE, L_MIN), L_MAX)
@@ -82,11 +90,40 @@ def ramp(base_hex: str, count: int) -> list[str]:
             if L_MIN <= candidate_l <= L_MAX:
                 color = _hls_hex(h, candidate_l, s)
             k += 1
-            if k > 4000:  # cannot happen inside a 0.40-wide band; never loop forever
-                raise RuntimeError("palette: could not find a distinct shade")
+            if k > 4000:  # the band is full: no distinct shade left
+                raise _Exhausted
         used.add(color)
         out.append(color)
     return out
+
+
+CYCLE_MAX = 256
+
+
+def ramp(base_hex: str, count: int) -> list[str]:
+    """``count`` shades of ``base_hex``, in order. count==1 → [base].
+
+    Distinct while the band has room (every size that fitted before keeps its
+    exact colours); past that, a deterministic cycle. Never raises."""
+    if count <= 0:
+        return []
+    base = "#" + base_hex.lstrip("#").upper()
+    if count == 1:
+        return [base]
+    try:
+        return _distinct_ramp(base, count)
+    except _Exhausted:
+        pass
+    n = min(count - 1, CYCLE_MAX)
+    while n > 1:
+        try:
+            pool = _distinct_ramp(base, n)
+            break
+        except _Exhausted:
+            n //= 2
+    else:
+        pool = [base]
+    return [pool[i % len(pool)] for i in range(count)]
 
 
 def assign(groups: dict[str, list[str]], base_of) -> dict[str, str]:

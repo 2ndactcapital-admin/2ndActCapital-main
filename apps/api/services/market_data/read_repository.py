@@ -2,8 +2,9 @@
 
 Every function takes the REQUEST connection (``services.database.get_pool()``
 → ``acquire()``), which already carries the caller's RLS context. The three
-tables read here — market_data.indicator_series, indicator_observations and
-portfolio.securities_global — all have a global SELECT policy, so no
+tables read here — market_data.indicator_series, indicator_observations,
+portfolio.securities_global and (dailyops1) portfolio.securities_global_identifiers
+— all have a global SELECT policy, so no
 platform_scope() is needed and none is used: this module must never import it
 (verify_mkt03 checks that statically). indicator_ingest_runs is platform-only
 and is not read.
@@ -131,15 +132,64 @@ async def observations(
 
 
 async def catalog_securities(conn) -> list[dict]:
-    """Active, non-merged security-master rows, with the series that prices
-    each one (if any). Read only — this sprint never writes portfolio.*."""
+    """The SELECTABLE securities: active, non-merged security-master rows
+    priced by an ACTIVE indicator series (dailyops1 — the catalog used to list
+    the whole master, ~16,000 rows, nearly all unselectable; the rest are
+    reached through ``search_securities``). Read only."""
     rows = await conn.fetch(
         """SELECT g.id, g.name, g.short_name, g.security_type, s.series_key
              FROM portfolio.securities_global g
-             LEFT JOIN market_data.indicator_series s
+             JOIN market_data.indicator_series s
                ON s.security_global_id = g.id AND s.ingest_status = 'active'
             WHERE g.valid_to IS NULL AND g.system_to IS NULL
               AND g.merged_into_id IS NULL
             ORDER BY g.security_type, g.name, g.id"""
+    )
+    return [dict(r) for r in rows]
+
+
+def like_escape(text: str) -> str:
+    """``text`` with LIKE's wildcards and escape character taken literally."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def search_securities(conn, q: str, limit: int) -> list[dict]:
+    """Active, non-merged security-master rows whose name or short name
+    contains ``q``, or whose ticker or CUSIP starts with it (case-insensitive),
+    with the series that prices each one (if any). Priced rows first, then an
+    exact ticker match, then by name. At most ``limit`` rows. Read only."""
+    esc = like_escape(q.strip())
+    rows = await conn.fetch(
+        """WITH hits AS (
+               SELECT g.id FROM portfolio.securities_global g
+                WHERE g.valid_to IS NULL AND g.system_to IS NULL AND g.merged_into_id IS NULL
+                  AND (g.name ILIKE $1 OR g.short_name ILIKE $1)
+               UNION
+               SELECT i.global_security_id FROM portfolio.securities_global_identifiers i
+                WHERE i.valid_to IS NULL AND i.system_to IS NULL
+                  AND i.id_type IN ('ticker', 'cusip') AND upper(i.id_value) LIKE $2
+           )
+           SELECT g.id, g.name, g.short_name, g.security_type, s.series_key,
+                  (SELECT i.id_value FROM portfolio.securities_global_identifiers i
+                    WHERE i.global_security_id = g.id AND i.id_type = 'ticker'
+                      AND i.valid_to IS NULL AND i.system_to IS NULL
+                    ORDER BY i.is_primary DESC NULLS LAST, i.id_value LIMIT 1) AS ticker,
+                  (SELECT i.id_value FROM portfolio.securities_global_identifiers i
+                    WHERE i.global_security_id = g.id AND i.id_type = 'cusip'
+                      AND i.valid_to IS NULL AND i.system_to IS NULL
+                    ORDER BY i.is_primary DESC NULLS LAST, i.id_value LIMIT 1) AS cusip
+             FROM hits h
+             JOIN portfolio.securities_global g
+               ON g.id = h.id AND g.valid_to IS NULL AND g.system_to IS NULL AND g.merged_into_id IS NULL
+             LEFT JOIN LATERAL (
+                  SELECT min(x.series_key) AS series_key FROM market_data.indicator_series x
+                   WHERE x.security_global_id = g.id AND x.ingest_status = 'active') s ON true
+            ORDER BY (s.series_key IS NULL),
+                     (SELECT bool_or(upper(i.id_value) = $3) FROM portfolio.securities_global_identifiers i
+                       WHERE i.global_security_id = g.id AND i.id_type = 'ticker'
+                         AND i.valid_to IS NULL AND i.system_to IS NULL) DESC NULLS LAST,
+                     g.name, g.id
+            LIMIT $4""",
+        f"%{esc}%", esc.upper() + "%", q.strip().upper(), limit,
     )
     return [dict(r) for r in rows]
