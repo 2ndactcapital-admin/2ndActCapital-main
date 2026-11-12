@@ -8686,6 +8686,45 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY security_factor_scores_pkey: (id)
 
+-- ===== portfolio.security_list_members =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   list_key                                 text NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   ticker                                   text
+--   description                              text
+--   matched_by                               text NOT NULL
+--   weight                                   numeric
+--   run_id                                   uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY security_list_members_pkey: (id)
+
+-- ===== portfolio.security_lists =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   list_key                                 text NOT NULL
+--   name                                     text NOT NULL
+--   description                              text
+--   source_kind                              text NOT NULL
+--   source_detail                            text
+--   as_of                                    date
+--   member_count                             integer NOT NULL DEFAULT 0
+--   misses                                   jsonb NOT NULL DEFAULT '[]'::jsonb
+--   run_id                                   uuid
+--   actor_id                                 uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY security_lists_pkey: (id)
+
 -- ===== portfolio.security_master_checkpoints =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   load_id                                  uuid NOT NULL
@@ -8845,6 +8884,22 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY tax_lots_pkey: (id)
+
+-- ===== portfolio.tracked_securities =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   global_security_id                       uuid NOT NULL
+--   status                                   text NOT NULL
+--   list_key                                 text
+--   note                                     text
+--   actor_id                                 uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY tracked_securities_pkey: (id)
 
 -- ===== portfolio.transactions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
