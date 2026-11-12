@@ -258,3 +258,17 @@ Still owed: one uninterrupted full run of `verify_cpsim06.py`, which needs more 
 this tool's foreground cap. Also owed: the cycle-end FULL regression pass (`VERIFY_REGRESSIONS=full`), including a full
 `verify_portentry2.py` over the `add_account` `on_created` hook. This run covered the hook's default path through
 `--only=unchanged` (a manual add: same response keys, no crosswalk).
+
+## Fix 1 — interrupted verify
+
+The machine rebooted at ~10:31 UTC on 2026-11-12, mid-way through the full `verify_cpsim06.py` (the log stops in the
+NO-list account-type section; every line so far PASS, no FAIL, no TOTAL), before its end teardown. No code or assertion
+changed in this fix.
+
+- `logs/cpsim_conformance_20261112.json`: its diff was only the interrupted run's output (`run_at`, `passed` 75 → 110,
+  the appended R01–R35 results) — restored with `git checkout`.
+- `--cleanup-only` (before → after): 634 fixture rows across 35 tables → 0 in every counted table (public + cpsim);
+  every real-row fingerprint (counterparty_sim settings, demo-tagged entities, accounts, crosswalks, entity tax ids,
+  Altruist connections, counterparties, book accounts, realtime contacts / drafts) unchanged. 12 PASS / 0 FAIL.
+- `--self-checks-only`: 27 PASS / 0 FAIL.
+- The full verify is re-run by the runner.
