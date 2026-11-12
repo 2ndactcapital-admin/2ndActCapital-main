@@ -812,28 +812,27 @@ async def _slice(pool, *, today, run_id, include_test_orgs, only_gsids, keys, ye
         gap_start = today - timedelta(days=gap_days)
         hist_start = date(today.year - years, today.month, min(today.day, 28))
         stop = False
-        for i in range(0, len(work), SLICE_CHUNK):
-            chunk = work[i:i + SLICE_CHUNK]
+        # the order is kept EXACTLY: consecutive runs of the same kind (gap fill / new history — different date
+        # ranges) are asked in turn, each in chunks of SLICE_CHUNK; never "all gap fills of a chunk first"
+        runs: list[tuple[bool, list]] = []
+        for it in work:
+            old_ = it.gsid in last
+            if not runs or runs[-1][0] != old_ or len(runs[-1][1]) >= SLICE_CHUNK:
+                runs.append((old_, []))
+            runs[-1][1].append(it)
+        for old_, part in runs:
+            res, start_ = (res_old, gap_start) if old_ else (res_new, hist_start)
             if stop:
-                res_old.deferred += [it.gsid for it in chunk if it.gsid in last]
-                res_new.deferred += [it.gsid for it in chunk if it.gsid not in last]
+                res.deferred += [it.gsid for it in part]
                 continue
-            for part, start_, res in (([it for it in chunk if it.gsid in last], gap_start, res_old),
-                                      ([it for it in chunk if it.gsid not in last], hist_start, res_new)):
-                if not part:
-                    continue
-                if stop:
-                    res.deferred += [it.gsid for it in part]
-                    continue
-                left = None if budget is None else max(0, budget - res_old.calls - res_new.calls)
-                asked += [it.gsid for it in part]
-                # a multi-symbol source asks a whole batch in ONE request: the batch is at least its per-call size
-                r = await ingest(pool, prov, part, start_, today, today=today, run_id=run_id, budget_left=left,
-                                 deadline=deadline, clock=clock,
-                                 batch=max(BATCH, int(prov.spec.max_symbols_per_call or 1)))
-                _merge(res, r)
-                if r.errors or r.deferred:
-                    stop = True
+            left = None if budget is None else max(0, budget - res_old.calls - res_new.calls)
+            asked += [it.gsid for it in part]
+            # a multi-symbol source asks a whole batch in ONE request: the batch is at least its per-call size
+            r = await ingest(pool, prov, part, start_, today, today=today, run_id=run_id, budget_left=left,
+                             deadline=deadline, clock=clock, batch=max(BATCH, int(prov.spec.max_symbols_per_call or 1)))
+            _merge(res, r)
+            if r.errors or r.deferred:
+                stop = True
         calls = res_old.calls + res_new.calls
         if calls:
             await W.record_calls(pool, key, calls, data_type=DATA_TYPE, ok=not (res_old.errors or res_new.errors),
