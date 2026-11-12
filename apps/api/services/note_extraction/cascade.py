@@ -18,6 +18,7 @@ to the security master.
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 
 from dataclasses import asdict
@@ -102,6 +103,31 @@ def _reading_from_evidence(doc, e: cmp.Evidence, spec_key: str, *, run_id, origi
     return r
 
 
+REREAD_MODEL_2 = "reread_model_2"     # readerfix1: metadata marker on a Model-2-only re-read
+
+
+async def prior_model_1_call(conn, reference_filing_id: str, deployment: str) -> readers.ReaderCall | None:
+    """readerfix1: Model 1's LATEST successful call on this note, rebuilt from
+    its stored readings (the call row + its per-field rows, by call_id). Its
+    cost is 0 here — the spend is already recorded on the original rows."""
+    row = await conn.fetchrow(
+        "SELECT * FROM portfolio.note_term_readings WHERE reference_filing_id = $1::uuid AND field_key = $2 "
+        "AND source = 'model_1' AND deployment_name = $3 AND status = 'ok' ORDER BY created_at DESC LIMIT 1",
+        str(reference_filing_id), CALL_FIELD, deployment)
+    if row is None:
+        return None
+    fields = {}
+    for r in await conn.fetch(
+            "SELECT field_key, value, source_quote FROM portfolio.note_term_readings WHERE call_id = $1 "
+            "AND source = 'model_1' AND field_key <> $2", row["call_id"], CALL_FIELD):
+        v = r["value"]
+        fields[r["field_key"]] = {"value": json.loads(v) if isinstance(v, str) else v, "quote": r["source_quote"]}
+    return readers.ReaderCall(slot="model_1", deployment=deployment, status="ok", fields=fields,
+                              provider_model=row["provider_model"], proxy_model_id=row["proxy_model_id"],
+                              prefix_hash=row["prompt_prefix_hash"], call_id=str(row["call_id"]),
+                              reasoning_effort=row["reasoning_effort"], cost_usd=0.0)
+
+
 def _call_row(doc, call: readers.ReaderCall, *, run_id, origin, ensemble_config_id, extra=None) -> ReadingRow:
     return ReadingRow(
         reference_filing_id=doc.reference_filing_id, field_key=CALL_FIELD, source=call.slot,
@@ -114,7 +140,8 @@ def _call_row(doc, call: readers.ReaderCall, *, run_id, origin, ensemble_config_
         latency_ms=call.latency_ms, call_id=call.call_id,
         metadata={"response_format": call.response_format, "prompt_chars": call.prompt_chars,
                   "filings_in_call": call.filings_in_call,
-                  "attempted_fallbacks": call.attempted_fallbacks, **(extra or {})},
+                  "attempted_fallbacks": call.attempted_fallbacks,
+                  **({"allowance_retry": call.retry} if call.retry else {}), **(extra or {})},
     )
 
 
@@ -129,7 +156,8 @@ def run_static_sources(doc: FilingDocument, specs: list[FieldSpec]):
 async def run_note(doc: FilingDocument, specs: list[FieldSpec], slots: EnsembleSlots, *,
                    catalog: dict, spend: SpendTracker | None, run_id=None, origin: str = "cascade",
                    participant_rows: list[dict] | None = None, static=None,
-                   issuer_groups: dict[str, str] | None = None) -> NoteOutcome:
+                   issuer_groups: dict[str, str] | None = None,
+                   prior_model_1: readers.ReaderCall | None = None) -> NoteOutcome:
     """Run the full cascade on one note. Raises SpendCapReached before any call
     that would exceed the cap (the caller stops the run cleanly). The raised
     exception carries ``partial_readings`` — every call already MADE for this
@@ -139,12 +167,17 @@ async def run_note(doc: FilingDocument, specs: list[FieldSpec], slots: EnsembleS
     ``participants.load_issuer_groups`` — optional so existing callers that
     don't pass it keep working exactly as before (the affiliated-agent rule
     simply never fires for them, same as if the note's issuer_group were
-    unknown)."""
+    unknown).
+
+    ``prior_model_1`` (readerfix1): a MODEL-2-ONLY re-read — Model 1's earlier
+    call (rebuilt from its stored readings by ``prior_model_1_call``) is used
+    as-is: no Model 1 call is made (not even for the fuller-text retry), its
+    readings are not written again, and only Model 2 is reserved and read."""
     out = NoteOutcome(doc.reference_filing_id, "failed", None)
     try:
         return await _run_note(out, doc, specs, slots, catalog=catalog, spend=spend, run_id=run_id,
                                origin=origin, participant_rows=participant_rows, static=static,
-                               issuer_groups=issuer_groups)
+                               issuer_groups=issuer_groups, prior_model_1=prior_model_1)
     except SpendCapReached as exc:
         exc.partial_readings = list(out.readings)
         raise
@@ -183,7 +216,8 @@ async def _read_pair(out: NoteOutcome, doc, coros, *, run_id, origin, ens_id, ex
 async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec], slots: EnsembleSlots, *,
                     catalog: dict, spend: SpendTracker | None, run_id, origin: str,
                     participant_rows: list[dict] | None, static,
-                    issuer_groups: dict[str, str] | None = None) -> NoteOutcome:
+                    issuer_groups: dict[str, str] | None = None,
+                    prior_model_1: readers.ReaderCall | None = None) -> NoteOutcome:
     by_key = {s.key: s for s in specs}
     rspecs = reader_specs(specs)
     reader_keys = [s.key for s in rspecs]
@@ -228,13 +262,25 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
     tags = [f"note:{doc.reference_filing_id}"] + ([f"run:{run_id}"] if run_id else [])
     # aibudget1: both readers' calls are reserved against their daily budgets
     # at once — never a one-model reading (a no-op outside a budget scope).
-    async with ai_budget.pair(_pair_items(slots, rspecs, tr.text, doc)):
-        c1, c2 = await _read_pair(out, doc, [
-            readers.read(slots.model_1, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
-                         catalog=catalog, spend=spend, tags=tags),
-            readers.read(slots.model_2, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
-                         catalog=catalog, spend=spend, tags=tags),
-        ], run_id=run_id, origin=origin, ens_id=ens_id, extra={"trimmed_tokens_est": tr.trimmed_tokens_est})
+    if prior_model_1 is not None:
+        # readerfix1: Model-2-only re-read — reserve and call Model 2 alone.
+        async with ai_budget.pair(_pair_items(slots, rspecs, tr.text, doc)[1:]):
+            (c2,) = await _read_pair(out, doc, [
+                readers.read(slots.model_2, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
+                             catalog=catalog, spend=spend, tags=tags + ["reread:model_2"]),
+            ], run_id=run_id, origin=origin, ens_id=ens_id,
+               extra={"trimmed_tokens_est": tr.trimmed_tokens_est, REREAD_MODEL_2: True,
+                      "model_1_call_id": prior_model_1.call_id})
+        c1 = prior_model_1
+        out.reader_calls.insert(0, c1)
+    else:
+        async with ai_budget.pair(_pair_items(slots, rspecs, tr.text, doc)):
+            c1, c2 = await _read_pair(out, doc, [
+                readers.read(slots.model_1, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
+                             catalog=catalog, spend=spend, tags=tags),
+                readers.read(slots.model_2, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
+                             catalog=catalog, spend=spend, tags=tags),
+            ], run_id=run_id, origin=origin, ens_id=ens_id, extra={"trimmed_tokens_est": tr.trimmed_tokens_est})
     if not c1.usable and not c2.usable:
         out.status, out.status_reason = "failed", f"both readers failed: {c1.error} | {c2.error}"
         out.cost_usd = sum(c.cost_usd or 0 for c in (c1, c2))
@@ -256,19 +302,29 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
         out.fuller_text_retry = True
         fuller = trim.fuller_text(doc.text)
         sub = subset(specs, both_null)
-        async with ai_budget.pair(_pair_items(slots, sub, fuller, doc)):
-            r1, r2 = await _read_pair(out, doc, [
-                readers.read(slots.model_1, sub, fuller, filer=doc.filer_name, form_type=doc.form_type,
-                             catalog=catalog, spend=spend, tags=tags + ["retry:fuller_text"]),
-                readers.read(slots.model_2, sub, fuller, filer=doc.filer_name, form_type=doc.form_type,
-                             catalog=catalog, spend=spend, tags=tags + ["retry:fuller_text"]),
-            ], run_id=run_id, origin=origin, ens_id=ens_id, extra={"retry": "fuller_text"})
-        for rc, target in ((r1, m1), (r2, m2)):
+        m2_read = readers.read(slots.model_2, sub, fuller, filer=doc.filer_name, form_type=doc.form_type,
+                               catalog=catalog, spend=spend, tags=tags + ["retry:fuller_text"])
+        if prior_model_1 is not None:      # readerfix1: never spend Model 1 tokens on a Model-2 re-read
+            async with ai_budget.pair(_pair_items(slots, sub, fuller, doc)[1:]):
+                retried = await _read_pair(out, doc, [m2_read], run_id=run_id, origin=origin, ens_id=ens_id,
+                                           extra={"retry": "fuller_text", REREAD_MODEL_2: True})
+            pairs = ((retried[0], m2),)
+        else:
+            async with ai_budget.pair(_pair_items(slots, sub, fuller, doc)):
+                r1, r2 = await _read_pair(out, doc, [
+                    readers.read(slots.model_1, sub, fuller, filer=doc.filer_name, form_type=doc.form_type,
+                                 catalog=catalog, spend=spend, tags=tags + ["retry:fuller_text"]),
+                    m2_read,
+                ], run_id=run_id, origin=origin, ens_id=ens_id, extra={"retry": "fuller_text"})
+            pairs = ((r1, m1), (r2, m2))
+        for rc, target in pairs:
             if rc.usable:
                 for k in both_null:
                     target[k] = ev_for(rc, k)
 
     for calls_map, call in ((m1, c1), (m2, c2)):
+        if call is prior_model_1:
+            continue                       # readerfix1: Model 1's readings are already on record — kept, not rewritten
         for k, e in calls_map.items():
             if e is not None:
                 src_call = call

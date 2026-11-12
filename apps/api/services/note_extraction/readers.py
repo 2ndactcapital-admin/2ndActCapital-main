@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 
@@ -109,6 +110,131 @@ class ReaderConfig:
     deployment: str                # proxy deployment name, never a raw upstream id
     reasoning_effort: str | None = None
     max_tokens: int = 4000
+    # readerfix1: the larger output allowance for the ONE retry of an answer
+    # that came back empty because the allowance was used up (None = no retry).
+    retry_max_tokens: int | None = None
+
+
+# ── readerfix1: the ONE per-deployment reader setting (fund AND note readers) ──
+# A reasoning model (gpt-5 family / o-series) spends its output allowance on
+# hidden reasoning tokens first; at the provider's default (medium) effort
+# gpt-5-nano used all 3,000 tokens on IVV's prospectus and returned no text.
+# Evidence (live readings, docs/READERFIX1_NOTES.md): gpt-5-mini at medium
+# effort used 2,406 output tokens on IVV (answer ~513) and p50 8,266 / p90
+# 12,249 / max 15,426 on notes (answer median ~1,858, max ~4,808). So reasoning
+# models get an explicit LOW effort and the task's own answer allowance PLUS a
+# 12,000-token reasoning headroom (>= mini's medium-effort p90 on notes; the
+# low effort needs less); the one retry doubles it (notes: 32,000 — the gold
+# prefill's proven floor, MIN_MAX_TOKENS). Non-reasoning models: unchanged.
+REASONING_EFFORT = "low"
+REASONING_HEADROOM_TOKENS = 12_000
+RETRY_FACTOR = 2
+NOTE_ANSWER_TOKENS = 4000          # the note reader's answer allowance (unchanged for non-reasoning models)
+ALLOWANCE_EXHAUSTED = "the model used its whole output allowance"
+_REASONING_NAME = re.compile(r"(^|[/:])(gpt-5|o1|o3|o4)", re.I)
+
+
+def is_reasoning_model(deployment: str | None, dep=None) -> bool:
+    """True for a reasoning model: the proxy's ``supports_reasoning`` flag, or
+    a gpt-5 / o-series name on the deployment or its upstream."""
+    if getattr(dep, "supports_reasoning", None):
+        return True
+    return any(n and _REASONING_NAME.search(str(n)) for n in (deployment, getattr(dep, "upstream", None)))
+
+
+def reader_settings(slot: str, deployment: str, *, answer_tokens: int, catalog: dict | None = None,
+                    effort: str | None = None, max_tokens: int | None = None) -> ReaderConfig:
+    """The reader setting for one deployment — used by BOTH the note reader
+    (runner.reader_config) and the fund-terms reader (replica_terms).
+    ``effort`` / ``max_tokens`` are explicit operator overrides (pilot / eval
+    CLIs) and win when given."""
+    reasoning = is_reasoning_model(deployment, (catalog or {}).get(deployment))
+    first = int(max_tokens) if max_tokens else (
+        answer_tokens + REASONING_HEADROOM_TOKENS if reasoning else answer_tokens)
+    return ReaderConfig(slot=slot, deployment=deployment,
+                        reasoning_effort=effort or (REASONING_EFFORT if reasoning else None),
+                        max_tokens=first, retry_max_tokens=first * RETRY_FACTOR)
+
+
+def allowance_exhausted(body: dict | None, max_tokens: int | None) -> bool:
+    """An answer with NO text because the output allowance ran out: empty
+    content AND (finish_reason 'length' OR output tokens >= the allowance)."""
+    try:
+        choice = body["choices"][0]
+    except (KeyError, IndexError, TypeError):
+        return False
+    content = (choice.get("message") or {}).get("content")
+    if content is not None and str(content).strip():
+        return False
+    _tin, tout, _c = proxy.response_usage(body)
+    return choice.get("finish_reason") == "length" or (
+        tout is not None and max_tokens is not None and tout >= max_tokens)
+
+
+@dataclass
+class Sent:
+    resp: object                                  # the response whose content is used
+    exhausted: bool                               # the used response is still empty from the allowance
+    retry: dict | None                            # None = no retry was needed
+    input_tokens: int | None
+    output_tokens: int | None
+    cached_tokens: int | None
+    cost: float | None                            # summed over every attempt
+    latency_ms: int | None
+
+
+def _add(a, b):
+    return b if a is None else (a if b is None else a + b)
+
+
+async def send(cfg: ReaderConfig, body: dict, dep=None, *, before_retry=None) -> Sent:
+    """proxy.chat with the ONE empty-answer retry (readerfix1). Every attempt
+    goes through proxy.chat, so inside a budget scope each one is reserved and
+    settled against the daily budget. ``before_retry(body)`` (optional) runs
+    before the retry — the note reader reserves its dollar cap there. A retry
+    the budget / cap refuses is not made and the answer is recorded invalid."""
+    from services import ai_budget
+    from services.note_extraction.spend import SpendCapReached, recorded_cost
+
+    def usage(resp):
+        tin, tout, cached = proxy.response_usage(resp.body)
+        return tin, tout, cached, recorded_cost(dep, proxy.header_cost(resp), tin, tout, cached)
+
+    resp = await proxy.chat(body)
+    tin, tout, cached, cost = usage(resp)
+    out = Sent(resp, False, None, tin, tout, cached, cost, resp.latency_ms)
+    if resp.status != 200 or not allowance_exhausted(resp.body, body.get("max_tokens")):
+        return out
+    first_mt = body.get("max_tokens")
+    out.exhausted = True
+    out.retry = {"made": False, "first_max_tokens": first_mt, "first_output_tokens": tout,
+                 "first_finish_reason": (resp.body["choices"][0] or {}).get("finish_reason")}
+    if not cfg.retry_max_tokens or (first_mt and cfg.retry_max_tokens <= first_mt):
+        out.retry["reason"] = "no larger allowance configured"
+        return out
+    body2 = {**body, "max_tokens": cfg.retry_max_tokens}
+    try:
+        if before_retry is not None:
+            await before_retry(body2)
+        resp2 = await proxy.chat(body2)
+    except (ai_budget.BudgetReached, SpendCapReached) as exc:
+        out.retry["reason"] = f"not made: {type(exc).__name__}: {exc}"[:300]
+        return out
+    tin2, tout2, cached2, cost2 = usage(resp2)
+    out.retry.update(made=True, retry_max_tokens=cfg.retry_max_tokens, retry_output_tokens=tout2)
+    out.resp = resp2
+    out.exhausted = resp2.status == 200 and allowance_exhausted(resp2.body, cfg.retry_max_tokens)
+    out.input_tokens, out.output_tokens = _add(tin, tin2), _add(tout, tout2)
+    out.cached_tokens, out.cost = _add(cached, cached2), _add(cost, cost2)
+    out.latency_ms = _add(resp.latency_ms, resp2.latency_ms)
+    return out
+
+
+def exhausted_error(sent: Sent) -> str:
+    r = sent.retry or {}
+    if r.get("made"):
+        return f"{ALLOWANCE_EXHAUSTED} (retried once with {r.get('retry_max_tokens')} tokens)"
+    return f"{ALLOWANCE_EXHAUSTED} (retry {r.get('reason') or 'not made'})"
 
 
 @dataclass
@@ -131,6 +257,7 @@ class ReaderCall:
     response_format: str | None = None
     reasoning_effort: str | None = None
     attempted_fallbacks: str | None = None
+    retry: dict | None = None                         # readerfix1: the empty-answer retry, when one was needed
     prompt_chars: int = 0
     filings_in_call: int = 1
 
@@ -194,13 +321,22 @@ async def read(cfg: ReaderConfig, specs: list[FieldSpec], filing_text: str, *,
             call.cost_usd = await spend.settle(reservation, 0.0)
         return call
 
-    resp = await proxy.chat(request_body(cfg, messages, specs, supports_schema, tags=tags))
-    call.latency_ms = resp.latency_ms
+    async def reserve_retry(body2):
+        nonlocal reservation
+        if spend is not None:
+            reservation += await spend.reserve(
+                estimate_call_cost(dep, prompt_chars, body2["max_tokens"]), f"{cfg.slot}:{cfg.deployment}:retry")
+
+    sent = await send(cfg, request_body(cfg, messages, specs, supports_schema, tags=tags), dep,
+                      before_retry=reserve_retry)
+    resp = sent.resp
+    call.retry = sent.retry
+    call.latency_ms = sent.latency_ms
     call.proxy_model_id = resp.headers.get("x-litellm-model-id")
     call.attempted_fallbacks = resp.headers.get("x-litellm-attempted-fallbacks")
-    call.input_tokens, call.output_tokens, call.cached_tokens = proxy.response_usage(resp.body)
-    actual = recorded_cost(dep, proxy.header_cost(resp), call.input_tokens, call.output_tokens,
-                           call.cached_tokens)
+    call.input_tokens, call.output_tokens, call.cached_tokens = (sent.input_tokens, sent.output_tokens,
+                                                                 sent.cached_tokens)
+    actual = sent.cost
     if resp.status != 200:
         actual = actual if actual is not None else 0.0   # a refused call is not billed
     if spend is not None:
@@ -229,6 +365,10 @@ async def read(cfg: ReaderConfig, specs: list[FieldSpec], filing_text: str, *,
         call.error = (f"served by deployment {call.proxy_model_id}, not {dep.deployment_id}")
         return call
 
+    if sent.exhausted:
+        call.status = "invalid"
+        call.error = exhausted_error(sent)
+        return call
     try:
         content = resp.body["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):

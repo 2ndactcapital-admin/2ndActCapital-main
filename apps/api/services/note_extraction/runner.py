@@ -14,6 +14,7 @@ from services.note_extraction import documents, store
 from services.note_extraction.cascade import (
     TASK_KEY, EnsembleSlots, NoteOutcome, run_note, run_static_sources,
 )
+from services.note_extraction import readers
 from services.note_extraction.readers import ReaderConfig, build_messages
 from services.note_extraction.schema import FieldSpec
 from services.note_extraction.spend import (
@@ -81,7 +82,8 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
                     catalog: dict, spend_cap_usd: float | None, run_kind: str, config: dict,
                     participant_rows: list[dict], created_by=None, downloader=None,
                     keep_outcomes: bool = False, progress=None,
-                    issuer_groups: dict[str, str] | None = None, stop_when=None) -> RunSummary:
+                    issuer_groups: dict[str, str] | None = None, stop_when=None,
+                    prior_model_1: dict | None = None) -> RunSummary:
     """Sequential over notes (the two readers inside a note run concurrently).
     Stops CLEANLY when the next call would cross the cap: the note in flight is
     not staged; every finished note is.
@@ -108,12 +110,13 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
         return await _run_notes(conn, filing_ids, specs, slots, catalog=catalog, spend_cap_usd=spend_cap_usd,
                                 run_kind=run_kind, config=config, participant_rows=participant_rows,
                                 created_by=created_by, downloader=downloader, keep_outcomes=keep_outcomes,
-                                progress=progress, issuer_groups=issuer_groups, stop_when=stop_when)
+                                progress=progress, issuer_groups=issuer_groups, stop_when=stop_when,
+                                prior_model_1=prior_model_1)
 
 
 async def _run_notes(conn, filing_ids, specs, slots, *, catalog, spend_cap_usd, run_kind, config,
                      participant_rows, created_by, downloader, keep_outcomes, progress, issuer_groups,
-                     stop_when) -> RunSummary:
+                     stop_when, prior_model_1=None) -> RunSummary:
     spend = SpendTracker(cap_usd=spend_cap_usd)
     run_id = await store.create_run(conn, run_kind=run_kind, spend_cap_usd=spend_cap_usd,
                                     config=config, ensemble_config_id=slots.ensemble_config_id,
@@ -135,7 +138,8 @@ async def _run_notes(conn, filing_ids, specs, slots, *, catalog, spend_cap_usd, 
             try:
                 outcome = await run_note(doc, specs, slots, catalog=catalog, spend=spend, run_id=run_id,
                                          origin="evaluation" if run_kind == "evaluation" else "cascade",
-                                         participant_rows=participant_rows, issuer_groups=issuer_groups)
+                                         participant_rows=participant_rows, issuer_groups=issuer_groups,
+                                         prior_model_1=(prior_model_1 or {}).get(fid))
             except SpendCapReached as exc:
                 # Calls already made for the interrupted note cost money: record
                 # them (readings only — the note is not staged).
@@ -173,9 +177,12 @@ def bulk_deployments(slots: EnsembleSlots) -> list[str]:
 
 
 def reader_config(slot: str, deployment: str, efforts: dict[str, str] | None = None,
-                  max_tokens: int = 4000) -> ReaderConfig:
-    return ReaderConfig(slot=slot, deployment=deployment,
-                        reasoning_effort=(efforts or {}).get(deployment), max_tokens=max_tokens)
+                  max_tokens: int | None = None, *, catalog: dict | None = None) -> ReaderConfig:
+    """readerfix1: the shared per-deployment reader setting
+    (readers.reader_settings) for the note task's answer allowance. ``efforts``
+    / ``max_tokens`` are the pilot / eval CLIs' explicit overrides."""
+    return readers.reader_settings(slot, deployment, answer_tokens=readers.NOTE_ANSWER_TOKENS, catalog=catalog,
+                           effort=(efforts or {}).get(deployment), max_tokens=max_tokens)
 
 
 async def gather_docs(conn, filing_ids, *, downloader=None, limit_concurrency: int = 4):
