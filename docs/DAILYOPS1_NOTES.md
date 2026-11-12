@@ -66,3 +66,24 @@ Two production defects that stopped the platform's daily work. Branch `dailyops1
 * `verify_mkt04a`'s three navigation checks (Sidebar `NAV_ITEMS` / `MENU_ITEMS` with `/market`) have failed since navregroup (e97718f, 2026-10-20) moved the menu to one definition; `/market` is still in the menu (`lib/menuVisibility.mjs` `main(50, "/market", "Market Indicators", …)`). Pre-existing, not touched here; reported by verify_dailyops1 [J] as pre-existing.
 * The catalog's cold first call took ~3.5 s from WSL against the remote database (series bounds over ~300k observations); warm ~0.2 s. The securities part is ~0.04 s now.
 * `ai_daily_runs` writes no row when a job's queue is empty (`queue_empty`), so an idle job is invisible in the run history — by design (aibudget1), and why B3 looked like a failure. The admin overview shows the queue size.
+* **Operator-side incident during this sprint (found and fixed in the same session):** a throwaway read-only query helper ran `SET default_transaction_read_only = on` as a SESSION setting on the operator DSN, which goes through Supabase's transaction pooler (port 6543). The setting stuck to the pooled `postgres`-role backend, and a later operator connection got "cannot execute DELETE in a read-only transaction". It was reset (`SET … = off` on that backend, verified `off` across repeated connections; the `app_service` pool — the app — was checked `off` and is a separate pool). Exactly the CLAUDE.md warning about session GUCs under the pooler; use `transaction(readonly=True)` / `SET LOCAL` only.
+* Under the stub transport (answers with no values), every fixture note makes TWO reserved pairs: both readers return null on a critical field, so the cascade's fuller-text retry runs (cascade.py step (c)). The exact-budget proof places the budget over the whole per-document call sequence.
+
+## 5. Verify run (one-offs, `timeout 600`, 2026-11-12)
+
+| Section | Result |
+|---|---|
+| `--self-checks-only` | 28 PASS, 0 FAIL |
+| `--cleanup-only` | 1 PASS, 0 FAIL (zero fixture rows) |
+| a palette (13 / 187 / 917 / 6,133 / 20,000; base-commit crash reproduced) | 13 / 0 |
+| b catalog over a 10,000-row fixture master (25,970 rows total): 200, 1.17 s warm, exactly the 11 selectable, envelope present | 42 / 0 |
+| c search: 401 / 403 like the catalog, 7 refusals without echo, cap 25, priced first, reason, SQL-equal narrowing, two orgs identical | 48 / 0 |
+| d note run with no cap (real `_note_read`, stub transport): finished_queue_empty, 3 documents, run row spend_cap_usd NULL, usage = ledger; overflow reproduced; cap 1000001 refused at start | 46 / 0 |
+| e replica: B3 no-work asserted (live queue empty, tick `queue_empty`); with work the job reads under its own budgets | 33 / 0 |
+| f live budgets exact: note 1,500,000 / 500,000, replica 250,000 / 250,000 — each used to the token, the next call refused, no one-model reading | 63 / 0 |
+| g public-data guard both ways (real note queue all public EDGAR; DB CHECKs; non-public jobs refused before any item; statement_positions never on an OpenAI model) | 47 / 0 |
+| h read-only live: the real catalog builds; 8 selectable = SQL 8; real ensemble configs fingerprint unchanged | 32 / 0 |
+| i route matrices CURRENT, the new route has the catalog's gate | 5 / 0 |
+| j fast regressions: mkt03, mkt03b, mkt04a (3 pre-existing nav FAILs, [FIND]), mkt04b, mkt04c, secmaster2, prices1, aibudget1 | 8 / 0 |
+
+Owed: one uninterrupted full run; verify_aibudget1's full run; `npm run build`.
