@@ -1931,12 +1931,18 @@ async def y_unsupported(conn):
     check(bool(d and "'manual'" in d), "… and the database ties option terms to the manual route", f"{d}")
     o0 = await sim_count(conn, "orders")
     try:
+        # CPSIM05 FIX 1 (FAIL S): a VALID rep13 SELL SHORT line — it carries its short terms (position effect open),
+        # as TradeLine requires — so the model accepts it and only the ROUTE can refuse it.
         body = trade_list(ACC_SIM2, side="sell_short", quantity="1")
+        body["trades"][0]["short_terms"] = {"position_effect": "open"}
+        tl = TradeList(**body)
+        check(tl.trades[0].side == "sell_short" and tl.trades[0].short_terms == {"position_effect": "open"},
+              "the SELL SHORT line is a valid rep13 trade list (short terms carried) — the refusal below is the "
+              "route's, not the model's")
         async with org_ctx(ORG_A) as pool:
             async with pool.acquire() as c:
                 acct = await X.load_account(c, ORG_A, ACC_SIM2)
-            await route_trade_list(pool, org_id=str(ORG_A), actor_id=str(U_MK), account=acct,
-                                   trade_list=TradeList(**body))
+            await route_trade_list(pool, org_id=str(ORG_A), actor_id=str(U_MK), account=acct, trade_list=tl)
         check(False, "a SELL SHORT is refused at the adapter (no shorting declared)")
     except ShortSaleNotDeclared as exc:
         check("short_selling" in str(exc) and await sim_count(conn, "orders") == o0, "a SELL SHORT on a simulated "
