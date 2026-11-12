@@ -64,7 +64,9 @@ _authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: set before main is importe
 
 import asyncio
 import hashlib
+import importlib
 import inspect
+import types
 import json
 import os
 import pathlib
@@ -1782,7 +1784,55 @@ async def y_guard(conn):
     check(got == want, "the scan: each automatic entry point is called only from its documented site (the choke point; "
           "rep2 approval of a proposal-sourced instruction; the clock advance; the person Send / Import; block "
           "approval) — nothing else, no scheduler tick", f"{got}")
-    REGISTRY_KEYS = [a.key for a in REGISTRY.all()] if hasattr(REGISTRY, "all") else []
+    # CPSIM05 FIX 1 (FAIL N): the registry is filled by register_all() in the app's lifespan, which ASGITransport
+    # never runs — the first run enumerated an EMPTY registry (0). Enumerate it exactly as cpsim04 fix 1 does.
+    from services.assistant_actions import register_all as _register_all
+    if not REGISTRY.all():
+        _register_all()
+    acts = REGISTRY.all()
+    REGISTRY_KEYS = [a.key for a in acts]
+    auto_mods = ("services.fix_sim_auto", "services.fix_sim_blocks")
+    entry_rx = re.compile(r"\b(?:after_proposal_routed|after_instruction_approved|collect_after_advance|run_person|"
+                          r"after_block_approved|run_one|after_batch)\(|fix_sim_auto|fix_sim_blocks")
+
+    def _handler_hits(actions) -> list[str]:
+        out = []
+        for a in actions:
+            for h in (a.handler, a.draft_handler):
+                if h is None:
+                    continue
+                try:
+                    hs = _code_only(inspect.getsource(h))
+                except (OSError, TypeError):
+                    hs = ""
+                if getattr(h, "__module__", "") in auto_mods or entry_rx.search(hs):
+                    out.append(a.key)
+        return out
+    hits = _handler_hits(acts)
+    # positive control: a planted action whose handler IS the automatic sender must be caught by the same detector
+    planted = types.SimpleNamespace(key="zz.planted", handler=FA.run_one, draft_handler=None)
+    check(len(acts) >= 20 and not hits and _handler_hits([planted]) == ["zz.planted"],
+          f"every registered action ({len(acts)}) — handler and draft handler — neither lives in nor calls the "
+          "automatic sender (positive control: a planted action whose handler is fix_sim_auto.run_one IS caught)",
+          f"{hits[:5]}")
+    sweeps, sweep_hits = [], []
+    for sp in sorted((API_DIR / "services").glob("*.py")):
+        if sp.stem in ("fix_sim_auto", "fix_sim_blocks") or not re.search(
+                r"^(?:async )?def [A-Za-z_]*sweep[A-Za-z_]*\(", sp.read_text(encoding="utf-8"), re.M):
+            continue
+        mod = importlib.import_module(f"services.{sp.stem}")
+        for nm, f in inspect.getmembers(mod, inspect.isfunction):
+            if "sweep" in nm and f.__module__ == mod.__name__:
+                sweeps.append(f"{sp.stem}.{nm}")
+                if entry_rx.search(_code_only(inspect.getsource(f))):
+                    sweep_hits.append(f"{sp.stem}.{nm}")
+    tick = API_DIR / "workflow_scheduler_tick.py"
+    tsrc = _code_only(tick.read_text(encoding="utf-8")) if tick.exists() else ""
+    ctl = entry_rx.search(_code_only((API_DIR / "services" / "rebalance_proposals.py").read_text(encoding="utf-8")))
+    check(len(sweeps) >= 5 and not sweep_hits and tick.exists() and not entry_rx.search(tsrc) and ctl is not None,
+          f"every sweep ({len(sweeps)}: {', '.join(sweeps[:5])}…) and the scheduler tick name no automatic entry "
+          "point (positive control: the same pattern finds the choke point's call in rebalance_proposals)",
+          f"{sweep_hits[:5]} tick={tick.exists()} ctl={bool(ctl)}")
     check(bool(REGISTRY_KEYS) and not any("fix_sim" in k for k in REGISTRY_KEYS) and
           WA.VERB_AUTONOMY.get("execution.fix_sim_auto", {}).get("class") == WA.NEVER and
           sod.VERB_DUTIES.get("execution.fix_sim_auto") == "write" and
