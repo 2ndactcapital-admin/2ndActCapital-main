@@ -1397,12 +1397,14 @@ def transaction_windows(start: date, end: date) -> list[tuple[date, date]]:
 
 
 def minus_business_days(d: date, n: int) -> date:
-    """``d`` moved back ``n`` US business days (services.us_business_days)."""
+    """``d`` moved back ``n`` US business days (services.us_business_days). Each step goes back at least one day:
+    ``prior_business_day`` returns its argument when that is already a business day, so it must be given the day
+    BEFORE (otherwise the loop never moves — found by verify_altread1)."""
     from services.us_business_days import prior_business_day
 
     out = d
     for _ in range(n):
-        out = prior_business_day(out)
+        out = prior_business_day(out - timedelta(days=1))
     return out
 
 

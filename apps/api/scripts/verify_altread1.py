@@ -261,6 +261,7 @@ from services import extraction as EXT  # noqa: E402
 from services import portfolio_assets as PA  # noqa: E402
 from services import rbac  # noqa: E402
 from services import rebalance_engine as E  # noqa: E402
+from services.us_business_days import is_business_day  # noqa: E402
 from services import users as users_mod  # noqa: E402
 import services.database as DBM  # noqa: E402
 
@@ -325,7 +326,7 @@ SEED_CHECK_LITERALS = (
     ("public.delegate_grants", ("view_only",)),
     ("public.altruist_connections", ("sandbox",)),
     ("portfolio.external_references", ("account",)),
-    ("portfolio.securities_global", ("etf",)),
+    ("portfolio.securities_global", ("fund",)),
     ("cpsim.book_uploads", ("lots",)),
 )
 UNIQUES = ("account_custodian_balances_live_uq", "custodian_tax_lots_live_uq", "book_lots_live_uq",
@@ -962,7 +963,7 @@ async def seed(conn) -> None:
                            "effective_from, granted_by) VALUES ($1, $2, $3, 'view_only', now() - interval '1 hour', $4)",
                            ORG_A, E_A, U_M, U_SA)
         await conn.execute("INSERT INTO portfolio.securities_global (id, name, security_type, currency_code) "
-                           "VALUES ($1, $2, 'etf', 'USD')", SEC_F, NAME + "ETF")
+                           "VALUES ($1, $2, 'fund', 'USD')", SEC_F, NAME + "ETF")
         for typ, val, prim in (("cusip", CUSIP_F, True), ("ticker", TICKER_F, False)):
             await conn.execute("INSERT INTO portfolio.securities_global_identifiers (global_security_id, id_type, "
                                "id_value, is_primary) VALUES ($1, $2, $3, $4)", SEC_F, typ, val, prim)
@@ -1334,14 +1335,21 @@ async def y_transactions(conn):
     a2 = acct_result(res2, X_T)
     win2 = [(r["params"].get("date_from"), r["params"].get("date_to")) for r in REQUESTS
             if r["path"].endswith(f"/v2/accounts/{X_T}/transactions")]
-    want = AO.minus_business_days(D0, 5)
+    want, steps = D0, 0          # computed independently of the client's helper: 5 US business days back
+    while steps < 5:
+        want -= timedelta(days=1)
+        steps += 1 if is_business_day(want) else 0
+    check(want < D0 and AO.minus_business_days(D0, 5) == want, f"minus 5 business days from {D0} is {want} (the "
+          "client's helper agrees with an independent count)", f"{AO.minus_business_days(D0, 5)}")
     check(bool(win2) and win2[0][0] == want.isoformat() and win2[-1][1] == D1.isoformat(),
           f"later sync: from the last synced date ({D0}) minus 5 business days ({want}) to {D1}", f"{win2}")
     closed = await platform(conn, "SELECT valid_to FROM portfolio.transactions WHERE org_id = $1::uuid AND "
                                   "external_ref = 'ar1v-t-buy'", ORG_A, fetch="fetchval")
     check(a2 is not None and a2.transactions_reversed == 1 and closed is not None,
           "a flagged row whose transaction is recorded and current CLOSES it (valid_to set, no successor)",
-          f"{a2.transactions_reversed if a2 else None} {closed}")
+          f"{a2.transactions_reversed if a2 else None} {closed} skipped={a2.transactions_skipped_reversal if a2 else None} "
+          f"errors={[(e.external_id, e.reason[:80]) for e in (a2.transactions_errors if a2 else [])][:3]} "
+          f"windows={win2[:2]}")
 
 
 # ── balance ─────────────────────────────────────────────────────────────────────────────────────────────────────
