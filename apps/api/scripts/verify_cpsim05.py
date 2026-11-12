@@ -2133,6 +2133,7 @@ def regression():
 
 
 async def run(name, fn, *args):
+    t0 = time.monotonic()
     try:
         res = fn(*args)
         if asyncio.iscoroutine(res):
@@ -2142,6 +2143,8 @@ async def run(name, fn, *args):
     except Exception as exc:  # noqa: BLE001
         check(False, f"{name} raised", f"{type(exc).__name__}: {exc}")
         traceback.print_exc()
+    finally:
+        print(f"[INFO] {name}: {time.monotonic() - t0:.0f} s", flush=True)  # fix 2: where a one-off's 600 s go
 
 
 async def cleanup_only(conn) -> int:
@@ -2257,8 +2260,9 @@ async def main_async() -> int:
         try:
             if S.get("no_teardown"):
                 raise RuntimeError("teardown skipped — a reserved fixture prefix matches a real row")
+            t_td = time.monotonic()
             log = await teardown_retrying()
-            print(f"[INFO] teardown removed: {log}")
+            print(f"[INFO] teardown removed: {log} ({time.monotonic() - t_td:.0f} s)", flush=True)
             left = await leftovers(conn)
             check(left == 0, "zero fixture rows remain (orgs, users, grants, accounts, crosswalks, instructions, lots, "
                   "fills, events, approval tasks, sod decisions, to-dos, proposals, blocks, loss-bank entries, positions, "
