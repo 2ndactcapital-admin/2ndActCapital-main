@@ -163,3 +163,59 @@ Flagged-account document requests (ID / SSN card) are NOT simulated (published f
 | CRM reads | `entities` (`ENTITY_COLUMNS` read path), `entity_addresses`, `entity_tax_ids` (last four + hash only), `entity_relationships`, `entity_employment`, `household_memberships` | pre-fill (one query per table for all members — no N+1) |
 | Simulator | `cpsim.book_households` / `book_accounts`, `registry.live_by_slug`, `oauth._authenticate_client`, `request_log`, SIMULATED header | D1 |
 | Admin | `routers/admin_counterparties` (`require_super_admin` first, audit) | D6 |
+
+## 6. Differences from the prompt, and findings while building
+
+1. **[FIND] CRM tax ids cannot be read in full** (§1d-1). Pre-fill shows last four. At send time the server reads
+   `entities.tax_id` when it holds a 9-digit number; otherwise the opener types the number for that one request. The
+   typed value is checked against the CRM's own sha256 rows (`crm_mismatch` when it does not match, reported locally).
+   A Hollisworks-side problem refuses Open **before anything is sent** to the counterparty.
+2. **[FIND] `entities.tax_id` is plaintext and returned by every entity read** (§1d-2). It is pre-existing and not
+   changed here. A follow-up should move it behind the same last-four rule.
+3. **A refusal writes one audit row** (`household.custodian_account_refused`, problem fields + codes only, never a
+   value). "Creates nothing in Hollisworks" is read as: no account, no crosswalk, no position, no book row. The verify
+   asserts exactly those, and that the audit rows carry no sensitive value.
+4. **The counterparty household is named `<household name> · HW-<first 8 of its id>`.** "Create or reuse by name" can
+   then never merge two Hollisworks households, or two orgs' households, that share a name at one simulated custodian.
+5. **Check, then Open, reuse one draft.** Check returns a `draft_reference` (the draft's client reference). Open sends
+   it back, so the counterparty restates the same draft. Contacts are keyed `hw-<entity id>`, so a person is ONE
+   contact. A Check never makes a duplicate-email problem with itself.
+6. **Contact-level rules are evaluated when the contact is stored** (the full tax id is gone afterwards) and kept on
+   the contact (`problems`). Draft-level rules (types, roles, ages and visas against the clock, unique email,
+   beneficiaries, trusted contact) run on every validate / submit. The answer is the union.
+7. **Age, not date of birth, is stored** (`age_years` at `age_as_of`). On a later clock date the age is advanced by
+   whole years elapsed (a simplification; documented).
+8. **request_log outcome values**: a wrong password logs `bad_grant` and the injected 429 logs `behaviour_reject`.
+   Both are values cpsim02's `request_log_auth_chk` already admits. The first conformance run hit that CHECK with new
+   words, and mapping onto existing values avoided a DDL change.
+9. **The Realtime YES / NO lists live twice**, in `cpsim/realtime.py` (the counterparty) and
+   `services/custodian_account_opening.py` (the client). The cpsim boundary forbids sharing them. Conformance R30 /
+   R32 prove the two agree: every client NO type is refused by the simulator and every client YES type opens.
+10. **Conformance finding (fixed in the group, not the product):** the fix group advances the counterparty's business
+    date, so the realtime_open group reads the live business date when it starts. The token clock is reset before the
+    opening section because the Open API read token was issued on the real clock.
+11. `sync_resolved_accounts` gained `only_account_ids` (default None = unchanged). `add_account` gained `on_created`
+    (default None = unchanged; a manual add writes no crosswalk — the verify pins the response keys).
+12. Registration types are mapped through the org vocabulary (CPSIM06_NOTES §2 D4; `ACCOUNT_TYPES` in the client
+    module). A key the org lacks falls back to `other`, else UNKNOWN. Rollover IRA → `401k_rollover`, Solo 401(k) /
+    UTMA / UGMA → `other` (no closer key exists in the PORTENTRY2 vocabulary).
+
+## 7. What ran, and the verify (WRITTEN, NOT RUN)
+
+| Run (this sprint) | Result |
+|---|---|
+| `_apply_cpsim06.py --all` (operator DSN) | applied; catalog read-back **36 PASS**; public RLS policy count unchanged (581 → 581) |
+| `cpsim_boundary_check.py` | **OK**, 0 violations (after Tasks 3 and 7) |
+| `cpsim_altruist_conformance.py --target simulator` (in-process) | **110 PASS, 0 FAIL** — realtime_open R01–R35 all PASS, each labelled "ASSUMED — Realtime API paths not published"; C20 no network; 0 fixture rows left (`cpsimconf-`, all six realtime tables 0) |
+| `node --test tests/cpsim06/` | **10 / 10** |
+| `node --test` cpsim01–05, portentry2, perms1 | **67 / 67** (Counterparties.jsx / HouseholdManager.jsx changed) |
+| `authz1_routes.py`, `visibility1_routes.py` | regenerated; the six new app routes + seven simulator routes listed with their gates |
+| `refresh_schema.py` | `docs/schema_snapshot.sql` refreshed — additions only (six cpsim tables, two book_accounts columns) |
+
+`apps/api/scripts/verify_cpsim06.py` is WRITTEN and NOT RUN. Sections: task1 · schema · seed · token · open_a / open_b
+(the 14 supported types, each end to end) · refusals · check_idem · guard · ratelimit · unchanged · sensitive ·
+conformance · safety · routes · front end · teardown · regressions (fast). `--self-checks-only`, `--cleanup-only` and
+`--only=<section>` are supported.
+Honest limits, each printed by the script: the D2 date-of-birth-in-the-past and tax-id-format rules are proven at the
+counterparty by the conformance group (R13–R22). Through Hollisworks, a date of birth comes from the CRM or the
+opener's override. `npm run build` and the full verify are owed to the operator's run.
