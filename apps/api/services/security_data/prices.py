@@ -827,8 +827,10 @@ async def _slice(pool, *, today, run_id, include_test_orgs, only_gsids, keys, ye
                     continue
                 left = None if budget is None else max(0, budget - res_old.calls - res_new.calls)
                 asked += [it.gsid for it in part]
+                # a multi-symbol source asks a whole batch in ONE request: the batch is at least its per-call size
                 r = await ingest(pool, prov, part, start_, today, today=today, run_id=run_id, budget_left=left,
-                                 deadline=deadline, clock=clock)
+                                 deadline=deadline, clock=clock,
+                                 batch=max(BATCH, int(prov.spec.max_symbols_per_call or 1)))
                 _merge(res, r)
                 if r.errors or r.deferred:
                     stop = True
