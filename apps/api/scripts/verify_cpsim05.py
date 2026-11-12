@@ -1544,6 +1544,19 @@ async def y_auto(conn):
     check(c3 == HTTP_OK and fx.get("automatic") is True and {"NewOrderSingle", "ExecutionReport"} <= names,
           "the instruction page shows the FIX exchange (readable) and 'automatic — simulated counterparty' (a reader "
           "sees it)", f"{c3} {names}")
+    find("tilts / completion (rep10) are not a proposal kind — they adjust a MODEL proposal's target "
+         "(rebalance_proposals._rep10_adjust in target_for), so a tilted proposal takes exactly the model path proven "
+         "above (execute has no tilt branch)",
+         "static: 'tilt' does not appear in rebalance_proposals.execute" if "tilt" not in inspect.getsource(RP.execute)
+         else "execute names tilts — re-check")
+    S["auto_ok"] = True
+
+
+async def y_cash(conn):
+    # CPSIM05 FIX 1: split out of y_auto (its own account ACC_SIM3, its own behaviour) so each one-off fits the
+    # 600 s limit; it sets up everything it needs itself
+    section("[Y] Automatic path, cash proposal: the FUND line automatic; the PAR line refused by the simulator")
+    await behaviour(default_outcome="accept")
     # the cash proposal: the fund line automatic; the par line refused by the simulator (unsupported instrument)
     cpid, cids, (cc, co, _s) = await run_proposal(
         conn, "cash", ACC_SIM3, [{"security": SEC_FUND, "side": "buy", "quantity": "1", "price": PRICE_FUND,
@@ -1560,12 +1573,6 @@ async def y_auto(conn):
           "approved" and bool(await todos(conn, bond.get("id"))), "… its fixed-income PAR line is refused by the "
           "simulator ('unsupported instrument'): left approved for a person, with the reason and a to-do",
           f"{bond.get('status')} {rej}")
-    find("tilts / completion (rep10) are not a proposal kind — they adjust a MODEL proposal's target "
-         "(rebalance_proposals._rep10_adjust in target_for), so a tilted proposal takes exactly the model path proven "
-         "above (execute has no tilt branch)",
-         "static: 'tilt' does not appear in rebalance_proposals.execute" if "tilt" not in inspect.getsource(RP.execute)
-         else "execute names tilts — re-check")
-    S["auto_ok"] = True
 
 
 async def y_outcomes(conn):
@@ -2145,11 +2152,11 @@ async def cleanup_only(conn) -> int:
     return 0 if _n_fail == 0 else 1
 
 
-FIXTURE_SECTIONS = (("endpoint", y_endpoint), ("auto", y_auto), ("outcomes", y_outcomes),
+FIXTURE_SECTIONS = (("endpoint", y_endpoint), ("auto", y_auto), ("cash", y_cash), ("outcomes", y_outcomes),
                     ("idempotency", y_idempotency), ("system", y_system), ("guard", y_guard), ("blocks", y_blocks),
                     ("unsupported", y_unsupported), ("isolation", y_isolation), ("timing", y_timing),
                     ("unchanged", y_unchanged), ("conformance", y_conformance), ("safety", y_safety))
-ONLY_NEEDS = {"endpoint": (), "auto": (), "outcomes": ("auto",), "idempotency": ("auto",), "system": (),
+ONLY_NEEDS = {"endpoint": (), "auto": (), "cash": (), "outcomes": ("auto",), "idempotency": ("auto",), "system": (),
               "guard": (), "blocks": (), "unsupported": (), "isolation": ("auto",), "timing": ("auto",),
               "unchanged": (), "conformance": (), "safety": ()}
 
