@@ -582,8 +582,24 @@ async def y_live(conn):
     for it in items:
         for s_ in it.sources:
             tally[s_] = tally.get(s_, 0) + 1
-    check(len(items) == LIVE_COVERAGE, f"today's coverage set = {LIVE_COVERAGE} (unchanged by the sprint)",
-          f"{len(items)} {tally}")
+    # The prompt's 29 was counted on 2026-11-12 before 20:51 UTC; at 20:51 / 20:53 UTC 2nd Act's own Replication
+    # Studio added SPY (live snapshot, 505 rows) and IVV (draft) — real data, not this sprint — so the count moved.
+    # What the SPRINT must not change is proven directly: the BASE commit's coverage_set, run on today's database,
+    # returns exactly what the new code returns (same securities, same reasons), and no 'tracked' reason exists.
+    if len(items) != LIVE_COVERAGE:
+        find(f"today's coverage set is {len(items)}, not the {LIVE_COVERAGE} counted earlier today",
+             f"{tally} — replica / replica_constituent come from Replication Studio registry entries in a real org, "
+             "not from this sprint (it wrote no replica row)")
+    old_src = VS.git_show(BEFORE_REF, "apps/api/services/security_data/prices.py") or ""
+    import types
+    base = types.ModuleType("prices_base_track1")
+    sys.modules["prices_base_track1"] = base          # dataclasses look their module up while being defined
+    exec(compile(old_src, "prices@base", "exec"), base.__dict__)
+    base_items = await base.coverage_set(conn)
+    check(bool(old_src) and sorted((i.gsid, tuple(i.sources)) for i in base_items) ==
+          sorted((i.gsid, tuple(i.sources)) for i in items),
+          f"today's coverage set ({len(items)}) = the BASE commit's coverage_set on the same database: same securities, "
+          "same reasons — the sprint changed no existing coverage", f"base {len(base_items)} vs now {len(items)}")
     check("tracked" not in tally, "no real security is tracked: the reason 'tracked' does not appear", f"{tally}")
     n = await all_tracked_count(conn)
     check(n == 0, "portfolio.tracked_securities holds no row (the sprint tracked nothing real)", f"{n}")
@@ -1101,18 +1117,19 @@ async def main_async() -> int:
     if "--cleanup-only" in sys.argv:
         return await cleanup_only(conn)
     only = None
-    if "--section" in sys.argv:
-        only = sys.argv[sys.argv.index("--section") + 1].lower()
-        if only not in SECTIONS:
-            print(f"[FAIL] unknown section {only!r}; one of {sorted(SECTIONS)}")
+    if "--section" in sys.argv:      # one section, or several comma-separated ("l,g,f") sharing one seed + teardown
+        only = {x.strip() for x in sys.argv[sys.argv.index("--section") + 1].lower().split(",") if x.strip()}
+        if not only or not only <= set(SECTIONS):
+            print(f"[FAIL] unknown section(s) {sorted(only - set(SECTIONS))}; one of {sorted(SECTIONS)}")
             print("TOTAL: 0 PASS, 1 FAIL")
             return 1
-    want = (lambda k: True) if only is None else (lambda k: k == only or k in NEEDS.get(only, ()))
-    if only == "w":
+    need = set() if only is None else only | {n for k in only for n in NEEDS.get(k, ())}
+    want = (lambda k: True) if only is None else (lambda k: k in need)
+    if only is not None and "w" in only:
         y_render()
-    if only in ("w", "j"):
+    if only is not None and only <= {"w", "j"}:
         await close_conn(conn)
-        if only == "j":
+        if "j" in only:
             regression()
         print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
         return 0 if _n_fail == 0 else 1
@@ -1165,7 +1182,7 @@ async def main_async() -> int:
             check(False, "teardown raised", f"{type(exc).__name__}: {exc}")
             traceback.print_exc()
         await close_conn(conn)
-    if only is None:
+    if only is None or "j" in only:
         if os.environ.get("VERIFY_NESTED") == "1":
             print("[SKIP] nested run")
         else:

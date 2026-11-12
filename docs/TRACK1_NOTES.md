@@ -109,3 +109,55 @@ a bulk action's count and the list it acts on can never disagree.
   30 recovered. Replication Studio's own (stricter, replica-safe) rule is unchanged.
 - [FIND] the master's 13 `index` securities carry Bloomberg-style tickers (SPX, RTY, NDX …) the free source cannot
   price, so "Key benchmarks" tracks ETF proxies.
+
+## Task 4 — UI (2026-11-12)
+- Super Admin → Security data → Security master → "Tracked securities" (`?view=tracked`): the progress line, the named
+  lists (source, as-of, members, tracked, not found, **Track list…**), the filter (name / ticker / CUSIP, type, exchange,
+  fund category, prices, tracked, in list — the server's own vocabularies; only the server's filter names reach a URL or
+  a request), the matching securities with checkboxes, **Track / Untrack selected** and **Track / Untrack all N
+  matching…**. Every bulk action asks the server for the count + estimate first (`/tracked/estimate`), shows it, asks to
+  confirm, asks for the note, then writes with `expected_total` = the confirmed count (the server refuses if the
+  selection changed). Over the cap: a refusal, nothing to confirm. Pure logic in `apps/web/lib/track1.mjs`.
+- Market Indicators: an unpriced search result shows **Track** for a Super Admin ("tracked — prices queued" once done);
+  anyone else sees the server's disabled reason. The page states that tracking queues prices and does not by itself
+  make the security selectable there.
+- No new Next.js route: the existing `/api/admin/security-data/[...path]` forward carries the four new routes.
+- Render tests `apps/web/tests/track1/track1.test.mjs` 7/0; market + secmaster + catchall1 suites 273/0 (catchall1
+  caught a local busy flag → the shared `useBusy`). Route matrices regenerated (AUTHZ1 1,081 routes; VISIBILITY1).
+
+## Operator steps (in order)
+1. Review the curated file `docs/security_lists/security_lists_v1.json` (tickers, descriptions, the overlap notes); set
+   `reviewed_on` when done.
+2. `doppler run -- apps/api/venv/bin/python apps/api/scripts/security_lists_load.py --all --dry-run` — no network,
+   nothing written: per list the members resolved, the misses (reported, never created), the estimate. Expected today:
+   curated 97/97, S&P 500 503 + 1 miss (a contra line), Russell 2000 "would fetch IWM's holdings from sec_nport".
+3. `doppler run -- apps/api/venv/bin/python apps/api/scripts/security_lists_load.py --all` — fetches SPY's file (State
+   Street) and IWM's latest N-PORT (SEC; as-of 2–5 months old, shown), stores the six lists, tracks every member
+   (audited; one job-history row).
+4. `doppler run -- apps/api/venv/bin/python apps/api/scripts/prices_backfill.py --dry-run`, then without `--dry-run`
+   (and `--resume` on later days): it loads 5 years for the coverage set incl. 'tracked', within the 2,000-call daily
+   budget, resuming across days (≈ 2,600 securities with the Russell 2000 → 2 days).
+5. The nightly "Security data — prices" job (Run now / schedule switch on the Security master screen) keeps them
+   current — but see the throughput FIND: ~128 securities a night on the free source; with the full universe run the
+   backfill periodically or plug in a batch / licensed vendor. Yahoo is internal use only (never shown to members).
+
+## Task 5 — verify (2026-11-12) — RUN, section by section (one-offs, `timeout 600`)
+`apps/api/scripts/verify_track1.py` (in `scripts/regression_set.txt`): `--self-checks-only` 34/0 · `--cleanup-only` 1/0 ·
+`--section t` 38/0 · `--section l,g,f,e` 74 PASS + 1 FAIL (the live count — restated, below) · `--section l` (restated)
+26/0 · `--section l,d,b,n,m,r` 69 PASS (+ the same live FAIL before its loader fix) · `--section w,j` 4/0 — render tests and the
+FAST regressions verify_prices1 / verify_secmaster2 / verify_dailyops1 each 0 FAIL. Every run: teardown to zero fixture rows, every
+counted table at its pre-test count, real tracked / lists / members / coverage set unchanged (count + checksum), no network,
+no model call. Owed: one uninterrupted full run.
+- [FIND] **the live coverage set is 502, not 29.** At 20:51 / 20:53 UTC on 2026-11-12, 2nd Act's own Replication Studio
+  added SPY (a live snapshot, 505 rows) and IVV (draft) — real data, not this sprint — and their 477 constituents now
+  need prices too (reason `replica_constituent`). The live check now proves what the sprint owns: the BASE commit's
+  `coverage_set`, run on today's database, returns exactly what the new code returns (same 502 securities, same reasons),
+  and no 'tracked' reason exists. The S&P 500 list overlaps those constituents almost entirely.
+- Proven: every write 403 for an org admin and a member (nothing written); track → coverage reason 'tracked'; untrack →
+  excluded, history kept (closed + live 'untracked' row, who / why); re-track restates; bulk by filter count = list total
+  = the same predicate in SQL, inclusion AND exclusion, stale confirmed count → 409; the cap (every real equity, 8,000+ →
+  409, nothing written; a lowered cap; 3,001 ids → 422); estimate arithmetic by hand; the loader dry run (hits, a
+  missing and an AMBIGUOUS ticker, no network, nothing written), a real curated load, a re-run that restates nothing,
+  the index ticker fallback; backfill dry run counts tracked securities; the nightly loads tracked members' history
+  (stub provider) and reports "N of M loaded"; stalest-first REPRODUCED then FIXED; the Market Indicators tracking
+  block; RLS refuses writes without app.is_super_admin under a non-bypass role.
