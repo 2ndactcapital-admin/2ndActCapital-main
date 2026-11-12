@@ -333,3 +333,10 @@ external_references ×2, the connection, `counterparty_sim_may_connect`, the org
 |---|---|---|
 | `--only=timing` | **101 PASS, 0 FAIL** (482 s) | Section 10/0. Round-trips / seconds: manual_2 224 / 6.52 s; sim_2 239 / 6.99 s; manual_6 264 / 7.78 s; sim_6 279 / 8.80 s. Simulated extra 15 at both 2 and 6 lines (≤ 15); baseline 10 per line (≤ 10); after-response round-trips in window 0; sim/manual seconds 1.07 (2 lines), 1.13 (6 lines) (≤ 1.5); slowest 8.80 s < 15 s; the after-response gate PASS; FIX message log (87 rows) 0.98 s, one query. Teardown zero, every table at its pre-test count, real fingerprints unchanged |
 | `--only=auto` | **105 PASS, 0 FAIL** (310 s, teardown completed inside the cap) | Section: 14 PASS + 1 FIND (rep10 tilts not a proposal kind), 0 FAIL — every assertion fix 2's row lists is present and PASSES (model proposal → 2 instructions routed fix_sim; sell + buy: approval of record, sent automatically, fills via enter_fill, post-fill sync + auto-reconcile; tax engine LT 72.00 / ST −12.00; proposal-page P/L SIMULATED; unrealized = harvest.evaluate_lot; instruction page FIX exchange). Fix 2 recorded "17 / 0" for this section; this run's in-section count is 14 PASS + 1 FIND — the count difference is noted, not explained away; no assertion is missing from the list. The CODE change (batched restatement / security check) runs on this path: routing, lots and P/L unchanged |
+| `--self-checks-only` | **28 PASS, 0 FAIL** | task 1 + routes self-checks unchanged by the verify edit |
+| `--cleanup-only` | **17 PASS, 0 FAIL** | 0 fixture rows before; nothing removed |
+
+Not run (WSL memory, per the prompt): the full verify_cpsim05.py; `npm run build`; the full verify_rep5 / rep2
+regressions over the two batched statements — their paths ran green here inside timing (4 counted approvals, manual and
+fix_sim, 2 and 6 lines) and auto (lots, routing, P/L), but a full rep5 run is still owed on the next full pass.
+`apps/api/scripts/_probe_cpsim05_fix3.py` is kept as the one-off probe that produced runs 1–3 (fixtures only).
