@@ -146,8 +146,14 @@ def static_checks(check, find):
     cat = re.search(r"async def catalog_securities.*?return", rr, flags=re.S).group(0)
     check("LEFT JOIN" not in cat and "JOIN market_data.indicator_series s" in cat,
           "catalog_securities lists only securities priced by an ACTIVE series (INNER JOIN)")
-    check("platform_scope" not in rr and "platform_scope" not in rs,
-          "the market read modules still never import platform_scope (global SELECT policies only)")
+    import ast as _ast
+    refs = [f"{n}:{getattr(node, 'lineno', '?')}" for n, src in (("read_repository", rr), ("read_service", rs))
+            for node in _ast.walk(_ast.parse(src))
+            if any(x.split(".")[-1] == "platform_scope" for x in (
+                [a.name for a in node.names] if isinstance(node, (_ast.Import, _ast.ImportFrom)) else
+                [node.id] if isinstance(node, _ast.Name) else [node.attr] if isinstance(node, _ast.Attribute) else []))]
+    check(not refs, "the market read modules still never import or reference platform_scope (AST; docstrings "
+          "excluded) — global SELECT policies only", f"{refs}")
     check("MAX_SEARCH_RESULTS = 25" in rs and "SEARCH_MIN_CHARS = 2" in rs,
           "search limits: at least 2 characters, at most 25 results (published in vocabularies.search)")
 
