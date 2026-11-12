@@ -155,3 +155,12 @@ contract has been seen.
    after a clock advance Hollisworks asks for them.
 6. `routers/altruist_connection._run_sync` is a router helper. The automatic step calls the same service functions in
    the same order.
+7. **[FIND] The cpsim boundary check FAILED on main** — 14 B1 / B2 hits, all in `scripts/verify_altread1.py`. That
+   verify drives the simulator in-process exactly as `verify_cpsim0N` does, but ALTREAD1 never added it to
+   `B1_ALLOWED_RX`. Added (cpsim05 Task 3); the scan is now 0 violations.
+8. **Earlier verifies pinned "a FIX session only for the schwab type"** (`verify_cpsim01.py:924`, `:945-947`,
+   `:1408`). Re-pinned to the types whose field groups carry `fix` (schwab + altruist); the "no FIX session → 400"
+   example is now a bank type.
+9. **Two codecs, deliberately.** The boundary (B3) forbids the simulator importing a services codec, and services
+   never import `cpsim`. So `cpsim/fix.py` and `services/fix_sim_client.py` each build / parse / checksum on their own;
+   the conformance `fix` group proves the two agree.

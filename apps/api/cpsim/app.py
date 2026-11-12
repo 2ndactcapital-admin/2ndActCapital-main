@@ -26,6 +26,12 @@ cpsim03 — the orders API (contract §8, every field ASSUMED), same access-toke
     DELETE …/v2/orders/{order_id}     cancel while working; 409 once filled / rejected / cancelled
   The outcome comes from the behaviour row (cpsim/orders.py, D6); fills move the book (D7); order webhooks (D9).
 
+cpsim05 — FIX 4.4 over HTTP (docs/cpsim/CPSIM05_NOTES.md D1 / D2), same access-token auth:
+    POST   …/fix                          ONE tag=value message (SOH or '|'); the reply message(s), newline separated.
+                                          D NewOrderSingle / F OrderCancelRequest / H OrderStatusRequest /
+                                          J AllocationInstruction → 8 / 9 / P; malformed → 3 Reject (HTTP 200).
+                                          Outcomes are cpsim03's (cpsim/orders.py); every message logged (cpsim/fix.py).
+
 cpsim04 — the transfers API (contract §9, every field ASSUMED), same access-token auth:
     POST   …/v2/transfers                 201 a new transfer / 200 the SAME transfer on a repeat client_transfer_id
     GET    …/v2/transfers?account_id=     {"transfers": [...]} — either leg; events loaded in ONE query
@@ -460,6 +466,60 @@ def create_app() -> FastAPI:
             return 200, {"transfer": t}, [_tevent(t)]
         return await _orders(slug, request, "/v2/transfers/{transfer_id}", "altruist.transfers.cancel", work,
                              transfers=True)
+
+    # ── cpsim05: FIX 4.4 over HTTP (docs/cpsim/CPSIM05_NOTES.md D1 / D2) ───────────────────────────────────────
+    @sub.post("/c/{slug}/fix")
+    async def fix_message(slug: str, request: Request):
+        """ONE FIX message in (SOH or '|'), the reply message(s) out, newline separated, same delimiter. Access-token
+        auth as the orders API. A malformed message → a Reject (35=3), HTTP 200 — never a 500. Every message in and
+        out logged (cpsim.fix_messages). No webhooks: the reply carries the ExecutionReports."""
+        from cpsim import fix as FX
+
+        log = _log(request, slug, "/fix", "fix")
+        raw = (await request.body()).decode("utf-8", errors="replace")
+        try:
+            async with DB.tx() as conn:
+                cp = await R.live_by_slug(conn, slug)
+                if cp is None:
+                    log["auth_outcome"] = "unknown_counterparty"
+                    return _out(404, {"detail": "no such simulated counterparty"})
+                log["counterparty_id"] = cp["id"]
+                outcome = await O.check_access(conn, cp, A.bearer(request.headers.get("authorization")))
+                log["auth_outcome"] = outcome
+                if outcome != "ok":
+                    return _out(401, {"detail": REFUSALS.get(outcome, "not authorised")},
+                                {"WWW-Authenticate": 'Bearer realm="cpsim", error="invalid_token"'})
+                sess = await FX.session(conn, cp["id"])
+                beh = await R.behaviour(conn, cp["id"]) or {}
+                clock = await R.business_date(conn, cp["id"]) or R.today()
+                delim = FX.SOH if FX.SOH in raw else FX.PIPE
+                fields: list = []
+                valid, why = False, None
+                try:
+                    delim, fields = FX.parse(raw)
+                    log["message_type"] = f"fix.{FX.MSG_NAMES.get(FX.first(fields, 35) or '', 'unknown')}"
+                    FX.check_session(fields, sess)
+                    async with conn.transaction():      # a refusal mid-message rolls back everything it wrote
+                        out = await FX.handle(conn, cp, fields, clock=clock, behaviour=beh)
+                    valid = True
+                except FX.FixReject as exc:
+                    why = exc.text
+                    out = [FX.reject(exc.text, ref_seq=FX.first(fields, 34) if fields else None, ref_tag=exc.ref_tag,
+                                     ref_msg_type=FX.first(fields, 35) if fields else None, reason=exc.reason)]
+                me = sess["target_comp_id"] if sess else (FX.first(fields, 56) if fields else None) or slug.upper()
+                them = sess["sender_comp_id"] if sess else (FX.first(fields, 49) if fields else None) or "UNKNOWN"
+                base = int(await conn.fetchval("SELECT count(*) FROM cpsim.fix_messages WHERE counterparty_id = "
+                                               "$1::uuid AND direction = 'out'", str(cp["id"])))
+                replies = [FX.encode(mt, f, sender=me, target=them, seq=base + i, delim=delim)
+                           for i, (mt, f) in enumerate(out, 1)]
+                await FX.log_exchange(conn, counterparty_id=cp["id"], raw_in=raw or "[empty]", replies=replies,
+                                      valid=valid, reject_reason=why)
+        except Exception:  # noqa: BLE001 — a simulator fault (never a malformed message: that is a Reject above)
+            traceback.print_exc()
+            return _out(500, {"detail": "simulator error"})
+        log["shape_valid"] = valid
+        log["error_count"] = 0 if valid else 1
+        return Response("\n".join(replies), status_code=200, media_type="text/plain; charset=utf-8")
 
     return SimulatedMarker(sub)
 

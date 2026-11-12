@@ -252,7 +252,8 @@ async def _identifiers(conn, security_id) -> dict:
 
 
 async def _book_move(conn, counterparty_id, order, sec: dict, idents: dict, qty: Decimal, price: Decimal,
-                     clock: date, exec_id: str, settle: date) -> None:
+                     clock: date, exec_id: str, settle: date, *, txn_external_id: str | None = None) -> None:
+    """cpsim05: ``txn_external_id`` — an allocation leg's own id (sim-a-…); default the execution's sim-x-<exec_id>."""
     cid, acct, side = str(counterparty_id), order["account_external_id"], order["side"]
     ccy = (sec.get("currency_code") or B.DEFAULT_CCY).upper()
     gross = (qty * price).quantize(B.MONEY, rounding=ROUND_HALF_UP)
@@ -260,7 +261,7 @@ async def _book_move(conn, counterparty_id, order, sec: dict, idents: dict, qty:
         "INSERT INTO cpsim.book_transactions (counterparty_id, account_external_id, external_id, type, trade_date, "
         "settle_date, row_type, security_id, cusip, isin, ticker, name, quantity, price, gross_amount, fees, taxes, "
         "net_amount, currency_code) VALUES ($1::uuid, $2, $3, $4, $5, $6, 'security', $7::uuid, $8, $9, $10, $11, $12, "
-        "$13, $14, 0, 0, $14, $15)", cid, acct, "sim-x-" + exec_id, side, clock, settle, str(order["security_id"]),
+        "$13, $14, 0, 0, $14, $15)", cid, acct, txn_external_id or ("sim-x-" + exec_id), side, clock, settle, str(order["security_id"]),
         idents.get("cusip"), idents.get("isin"), idents.get("ticker"), sec.get("name") or "", qty, price, gross, ccy)
     snap = await conn.fetchval("SELECT max(as_of) FROM cpsim.book_positions WHERE counterparty_id = $1::uuid AND "
                                "account_external_id = $2 AND valid_to IS NULL AND as_of <= $3", cid, acct, clock)
@@ -326,7 +327,8 @@ async def _execute(conn, counterparty_id, row, qty: Decimal, price: Decimal, clo
     n = await conn.fetchval("SELECT count(*) FROM cpsim.order_executions WHERE order_row_id = $1::uuid", row["id"])
     exec_id = exec_id_for(counterparty_id, row["order_id"], int(n) + 1)
     settle = next_business_day(clock + timedelta(days=1))
-    await _book_move(conn, counterparty_id, row, sec, idents, qty, price, clock, exec_id, settle)
+    if not row.get("is_block"):      # cpsim05 D6: a block executes in no account; its allocation moves the accounts
+        await _book_move(conn, counterparty_id, row, sec, idents, qty, price, clock, exec_id, settle)
     e = await conn.fetchrow(
         "INSERT INTO cpsim.order_executions (counterparty_id, order_row_id, exec_id, quantity, price, executed_at, "
         "trade_date, settle_date, book_transaction_id) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9) "
@@ -357,7 +359,7 @@ async def _remaining_qty(conn, row, price: Decimal) -> Decimal:
 async def _fill_rest(conn, counterparty_id, row, price: Decimal, clock: date):
     """Fill everything still open at ``price`` (accept, or a delayed / limit order once it can). Returns (row, execs)."""
     qty = await _remaining_qty(conn, row, price)
-    if row["side"] == "sell" and qty > await _position_qty(conn, counterparty_id, row["account_external_id"],
+    if row["side"] == "sell" and not row.get("is_block") and qty > await _position_qty(conn, counterparty_id, row["account_external_id"],
                                                           row["security_id"], clock):
         return await _set_status(conn, row, "rejected", REJECT_INSUFFICIENT), []
     made = []
@@ -366,15 +368,22 @@ async def _fill_rest(conn, counterparty_id, row, price: Decimal, clock: date):
     return await _set_status(conn, row, "filled"), made
 
 
-async def submit(conn, cp: dict, body, *, clock: date, behaviour: dict | None) -> tuple[dict, bool, list[str]]:
+async def submit(conn, cp: dict, body, *, clock: date, behaviour: dict | None, protocol: str = "rest",
+                 block: bool = False) -> tuple[dict, bool, list[str]]:
     """POST /v2/orders. Returns (order, created, events): created False for a repeat client_order_id (the SAME order is
-    returned, whatever the repeated body says — never a second one); events = webhook event types to send."""
+    returned, whatever the repeated body says — never a second one); events = webhook event types to send.
+
+    cpsim05: ``protocol`` 'fix' for an order placed over FIX (cpsim/fix.py) — its partial remainder is re-evaluated on
+    clock advance (D2); ``block`` — a block order (FIX only): it executes in the firm's executing reference, no book
+    account is checked or moved until its AllocationInstruction (D6)."""
+    if protocol not in ("rest", "fix") or (block and protocol != "fix"):
+        raise OrderError("a block order is placed over FIX only")
     req = parse(body)
     cid = str(cp["id"])
     existing = await _live(conn, cid, client_order_id=req["client_order_id"])
     if existing is not None:
         return order_out(existing, await _executions(conn, existing["id"])), False, []
-    if not await B.account_exists(conn, cid, req["account_id"]):
+    if not block and not await B.account_exists(conn, cid, req["account_id"]):
         raise OrderNotFound("no such account in this simulated custodian's book")
     sec_id, why, detail = await B.resolve_security(conn, {"cusip": req["cusip"], "ticker": req["symbol"]})
     if sec_id is None:
@@ -386,11 +395,11 @@ async def submit(conn, cp: dict, body, *, clock: date, behaviour: dict | None) -
     row = await conn.fetchrow(
         "INSERT INTO cpsim.orders (counterparty_id, order_id, client_order_id, account_external_id, security_id, symbol, "
         "cusip, side, quantity, notional, order_type, limit_price, time_in_force, outcome, partial_pct, status, "
-        "trade_date) VALUES ($1::uuid, $2, $3, $4, $5::uuid, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'accepted', "
-        "$16) RETURNING *", cid, order_id_for(cid, req["client_order_id"]), req["client_order_id"], req["account_id"],
+        "trade_date, protocol, is_block) VALUES ($1::uuid, $2, $3, $4, $5::uuid, $6, $7, $8, $9, $10, $11, $12, $13, "
+        "$14, $15, 'accepted', $16, $17, $18) RETURNING *", cid, order_id_for(cid, req["client_order_id"]), req["client_order_id"], req["account_id"],
         sec_id, req["symbol"], req["cusip"], req["side"], req["quantity"], req["notional"], req["order_type"],
         req["limit_price"], req["time_in_force"], outcome,
-        None if beh.get("partial_pct") is None else Decimal(str(beh["partial_pct"])), clock)
+        None if beh.get("partial_pct") is None else Decimal(str(beh["partial_pct"])), clock, protocol, bool(block))
     sec = await B.security_row(conn, sec_id)
     price = await B.platform_price(conn, sec_id, clock)
     events = ["order.updated"]
@@ -402,8 +411,8 @@ async def submit(conn, cp: dict, body, *, clock: date, behaviour: dict | None) -
         price = Decimal(price)
         wanted = Decimal(row["quantity"]) if row["quantity"] is not None else \
             (Decimal(row["notional"]) / price).quantize(FRACTION, rounding=ROUND_DOWN)
-        if row["side"] == "sell" and wanted > await _position_qty(conn, cid, row["account_external_id"], sec_id,
-                                                                  clock):
+        if row["side"] == "sell" and not block and wanted > await _position_qty(conn, cid, row["account_external_id"],
+                                                                                sec_id, clock):
             row = await _set_status(conn, row, "rejected", REJECT_INSUFFICIENT)
         elif outcome == "reject":
             row = await _set_status(conn, row, "rejected", (beh.get("reject_reason") or "").strip() or REJECT_DEFAULT)
@@ -440,7 +449,8 @@ async def reevaluate(conn, counterparty_id, clock: date) -> list[dict]:
     executions: [exec_id …]}] — what the advance filled (the admin page shows it; webhooks are sent from it)."""
     rows = await conn.fetch(
         "SELECT * FROM cpsim.orders WHERE counterparty_id = $1::uuid AND system_to IS NULL AND status = ANY($2::text[]) "
-        "AND outcome <> 'partial' ORDER BY created_at, order_id FOR UPDATE", str(counterparty_id), list(WORKING))
+        "AND (outcome <> 'partial' OR protocol = 'fix') ORDER BY created_at, order_id FOR UPDATE", str(counterparty_id),
+        list(WORKING))
     out = []
     for row in rows:
         price = await B.platform_price(conn, str(row["security_id"]), clock)
@@ -450,5 +460,5 @@ async def reevaluate(conn, counterparty_id, clock: date) -> list[dict]:
         out.append({"order_id": new["order_id"], "client_order_id": new["client_order_id"],
                     "account_id": new["account_external_id"], "status": new["status"],
                     "reject_reason": new["reject_reason"], "executions": [e["exec_id"] for e in made],
-                    "price": B.fmt(price)})
+                    "price": B.fmt(price), "protocol": new["protocol"]})
     return out

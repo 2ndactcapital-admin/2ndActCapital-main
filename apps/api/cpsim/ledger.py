@@ -149,11 +149,18 @@ async def settle_fills(conn, counterparty_id, clock: date) -> list[dict]:
     """D3 — a cpsim03 execution's CASH on its settle date: a buy debits, a sell credits the account's cash row (only
     when its book has one). Runs at every clock advance; idempotent per execution (cash_movements UNIQUE)."""
     cid = str(counterparty_id)
+    # cpsim05 D6: a BLOCK order's executions move no account's cash (no account holds the block); each allocation leg
+    # (cpsim.fix_allocations, ref sim-a-…) moves its account's cash on its settle date exactly like an execution
     rows = await conn.fetch(
         "SELECT e.exec_id, e.quantity, e.price, e.settle_date, o.account_external_id, o.side FROM cpsim.order_executions e "
         "JOIN cpsim.orders o ON o.id = e.order_row_id WHERE e.counterparty_id = $1::uuid AND e.settle_date <= $2 "
-        "AND NOT EXISTS (SELECT 1 FROM cpsim.cash_movements m WHERE m.counterparty_id = e.counterparty_id "
-        "AND m.source_ref = e.exec_id) ORDER BY e.settle_date, e.exec_id", cid, clock)
+        "AND NOT o.is_block AND NOT EXISTS (SELECT 1 FROM cpsim.cash_movements m WHERE m.counterparty_id = "
+        "e.counterparty_id AND m.source_ref = e.exec_id) "
+        "UNION ALL "
+        "SELECT a.book_transaction_id, a.quantity, a.price, a.settle_date, a.account_external_id, o.side "
+        "FROM cpsim.fix_allocations a JOIN cpsim.orders o ON o.id = a.order_row_id WHERE a.counterparty_id = $1::uuid "
+        "AND a.settle_date <= $2 AND NOT EXISTS (SELECT 1 FROM cpsim.cash_movements m WHERE m.counterparty_id = "
+        "a.counterparty_id AND m.source_ref = a.book_transaction_id) ORDER BY 4, 1", cid, clock)
     out = []
     for r in rows:
         gross = cents(Decimal(r["quantity"]) * Decimal(r["price"]))

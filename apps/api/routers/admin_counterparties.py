@@ -20,6 +20,7 @@ the cpsim work runs AS role ``cpsim_app`` (cpsim.db.as_simulator) and the audit 
                                                              cpsim04: transfers acknowledged / settled / returned and
                                                              settled fills' cash, listed too
     GET  /admin/counterparties/{id}/orders                  cpsim03: the orders received (read-only)
+    GET  /admin/counterparties/{id}/fix/messages            cpsim05: the FIX session + message log (read-only)
     GET  /admin/counterparties/{id}/transfers               cpsim04: the transfers a custodian received (+ cash ledger)
     POST /admin/counterparties/{id}/transfers/{transfer_id}/consent   cpsim04 D8: "Record member consent"
     GET  /admin/counterparties/{id}/received                cpsim04: a BANK's received transfers (+ its links)
@@ -99,7 +100,8 @@ TRANSFERS_V1_LIMITS = ["USD only; journals, ACH and wires — no checks, no thir
 #: cpsim03 — what v1 of the simulated order book does NOT do (shown on the Orders tab, CPSIM_ADMIN.md)
 ORDERS_V1_LIMITS = ["Fills move positions and add buy / sell transactions; a fill's cash moves on its settle date "
                     "(cpsim04) — no corporate actions and no fees (v2).", "A later book upload replaces the account and so overwrites fills.",
-                    "Day orders are not expired; a partial fill's remainder stays working until it is cancelled."]
+                    "Day orders are not expired; a REST order's partial remainder stays working until it is cancelled (a FIX "
+                    "order's remainder fills at the next clock advance — cpsim05)."]
 EDITABLE = ["name", "notes", "status", "key", "bank_details", "fix_session", "behaviour", "clock", "org_access",
             "book", "connections", "webhooks", "conformance"]
 #: a BOOK file, not a custodian export: refused before decoding (routers/custody_import.py's _read_upload shape)
@@ -406,6 +408,28 @@ async def orders(request: Request, counterparty_id: UUID, limit: int = 100):
                 "status_labels": [{"key": k, "label": v} for k, v in SO.STATUS_LABELS.items()],
                 "outcome_labels": [{"key": k, "label": v} for k, v in OUTCOME_LABELS.items()],
                 "v1_limits": ORDERS_V1_LIMITS}
+    principal, out, types = await _sim(request, fn)
+    return _envelope(principal, out, types)
+
+
+@router.get(f"{_P}/{{counterparty_id}}/fix/messages")
+async def fix_messages(request: Request, counterparty_id: UUID, limit: int = 200):
+    """cpsim05 — the FIX tab (read-only): the live session fields and the message log (newest first, every message in
+    and out, readable tag / name / value). One query for the log (no per-row reads). No secret is ever stored."""
+    from cpsim import fix as FX
+
+    lim = max(1, min(int(limit), 1000))
+
+    async def fn(c):
+        await R._require(c, counterparty_id)
+        rows = await FX.list_messages(c, counterparty_id, lim)
+        for r in rows:
+            r["fields"] = FX.readable(r["raw"])
+        return {"session": await FX.session(c, counterparty_id), "rows": rows, "limit": lim,
+                "message_names": [{"key": k, "label": v} for k, v in FX.MSG_NAMES.items()],
+                "notes": ["SIMULATED — FIX 4.4 tag=value carried over HTTP: one message in, the reply message(s) out. "
+                          "No FIX session, logon, heartbeat or sequence recovery; MsgSeqNum is recorded, not enforced.",
+                          "No Altruist FIX contract has been seen — this is a simulated counterparty only."]}
     principal, out, types = await _sim(request, fn)
     return _envelope(principal, out, types)
 
