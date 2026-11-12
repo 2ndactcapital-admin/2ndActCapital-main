@@ -233,3 +233,4 @@ nothing else heavy alongside).
 | `--self-checks-only` | **28 PASS, 0 FAIL** (14 s) | git / route / changed-line self-checks |
 | verify_cpsim03 `--self-checks-only` | **37 PASS, 0 FAIL** (14 s) | incl. the R1 §8-by-number check |
 | verify_altread1 `--self-checks-only` | **50 PASS, 0 FAIL** (14 s) | incl. R2 "PROJECT_STATUS carries the ALTREAD1 STATUS line" |
+| `authz1_routes.py --check` / `visibility1_routes.py --check` | **CURRENT / CURRENT** | route tables up to date |
