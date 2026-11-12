@@ -1638,7 +1638,13 @@ async def y_outcomes(conn):
 async def y_idempotency(conn):
     section("[Y] Idempotency: a repeated NewOrderSingle → one order; a re-run of the automatic step books nothing twice")
     ids = await ids_of(conn, S["proposals"].get("model", ""))
-    iid = next((i for i in ids if (await instruction(conn, i)).get("side") == "sell"), None)
+    # CPSIM05 FIX 1 (FAIL I): a generator expression containing ``await`` is an ASYNC generator — next() cannot
+    # consume it (TypeError). Found by an explicit loop instead.
+    iid = None
+    for i in ids:
+        if (await instruction(conn, i)).get("side") == "sell":
+            iid = i
+            break
     if not iid:
         check(False, "the model proposal's sell instruction exists (from the auto section)")
         return
@@ -1668,9 +1674,11 @@ async def y_system(conn):
                                                    [{"security": SEC_FUND, "side": "sell", "quantity": "3",
                                                      "price": PRICE_FUND}], trigger="harvest", system=True)
     rows = [await instruction(conn, i) for i in ids]
+    # CPSIM05 FIX 1: the same async-generator shape as FAIL I (any() over a genexpr containing await) — a list
+    # comprehension is awaited inline
+    upstream = [ev1(await events_of(conn, r["id"]), "approve_upstream") for r in rows]
     check(code == HTTP_OK and bool(rows) and all(r.get("status") == "pending_approval" for r in rows) and
-          await sim_count(conn, "orders") == o0 and not any(ev1(await events_of(conn, r["id"]), "approve_upstream")
-                                                            for r in rows),
+          await sim_count(conn, "orders") == o0 and not any(upstream),
           "a system (harvest) proposal reviewed → its instructions wait for rep2's approval: nothing sent, no "
           "approval-of-record event", f"{code} {[r.get('status') for r in rows]}")
     for r in rows:
