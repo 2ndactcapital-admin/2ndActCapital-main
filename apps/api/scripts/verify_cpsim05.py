@@ -1290,6 +1290,19 @@ async def run_proposal(conn, label, account, lines, **kw) -> tuple[str, list[str
     return pid, await ids_of(conn, pid), res
 
 
+async def own_model_proposal(conn, label: str) -> str | None:
+    """CPSIM05 FIX 1 — a section run on its own (--only=<section>) sets up what it needs itself: an approved model
+    proposal on ACC_SIM (one share sold, accepted by the counterparty), executed automatically through the REAL path.
+    Records the approval's timing exactly as y_auto does. Returns the proposal id."""
+    await behaviour(default_outcome="accept")
+    pid, ids, (code, out, secs) = await run_proposal(conn, label, ACC_SIM,
+                                                     [{"security": SEC_EQ, "side": "sell", "quantity": "1"}])
+    S["timing"] = {"secs": secs, "code": code, "timings": list(FA.timings)}
+    check(code == HTTP_OK and len(ids) == 1, f"(own set-up) an approved model proposal executed automatically for "
+          f"this section", f"{code} {dumps(out)[:200]} {ids}")
+    return pid
+
+
 def ev1(evts, action):
     return next((e for e in evts if e["action"] == action), None)
 
@@ -1656,6 +1669,8 @@ async def y_outcomes(conn):
 
 async def y_idempotency(conn):
     section("[Y] Idempotency: a repeated NewOrderSingle → one order; a re-run of the automatic step books nothing twice")
+    if not S["proposals"].get("model"):          # run on its own: set up its own proposal (fix 1)
+        S["proposals"]["model"] = await own_model_proposal(conn, "idem_own")
     ids = await ids_of(conn, S["proposals"].get("model", ""))
     # CPSIM05 FIX 1 (FAIL I): a generator expression containing ``await`` is an ASYNC generator — next() cannot
     # consume it (TypeError). Found by an explicit loop instead.
@@ -2003,6 +2018,8 @@ async def y_isolation(conn):
 async def y_timing(conn):
     section("[Y] Timing: the approval request returns BEFORE the automatic step starts, well under the client timeout; "
             "the message-log list has no N+1")
+    if not S.get("timing"):                      # run on its own: set up its own proposal (fix 1)
+        await own_model_proposal(conn, "timing_own")
     t = S.get("timing") or {}
     gated = [x for x in t.get("timings") or [] if x.get("gated")]
     check(bool(gated) and all(x["response_finished_at"] is not None and x["started_at"] >= x["response_finished_at"]
@@ -2156,8 +2173,8 @@ FIXTURE_SECTIONS = (("endpoint", y_endpoint), ("auto", y_auto), ("cash", y_cash)
                     ("idempotency", y_idempotency), ("system", y_system), ("guard", y_guard), ("blocks", y_blocks),
                     ("unsupported", y_unsupported), ("isolation", y_isolation), ("timing", y_timing),
                     ("unchanged", y_unchanged), ("conformance", y_conformance), ("safety", y_safety))
-ONLY_NEEDS = {"endpoint": (), "auto": (), "cash": (), "outcomes": ("auto",), "idempotency": ("auto",), "system": (),
-              "guard": (), "blocks": (), "unsupported": (), "isolation": ("auto",), "timing": ("auto",),
+ONLY_NEEDS = {"endpoint": (), "auto": (), "cash": (), "outcomes": (), "idempotency": (), "system": (),
+              "guard": (), "blocks": (), "unsupported": (), "isolation": ("auto",), "timing": (),
               "unchanged": (), "conformance": (), "safety": ()}
 
 
