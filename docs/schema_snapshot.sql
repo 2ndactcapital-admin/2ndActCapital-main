@@ -5264,6 +5264,40 @@
 --   valid_to                                 timestamp with time zone
 --   PRIMARY KEY counterparty_fix_sessions_pkey: (id)
 
+-- ===== cpsim.fix_allocations =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid NOT NULL
+--   order_row_id                             uuid NOT NULL
+--   alloc_id                                 text NOT NULL
+--   account_external_id                      text NOT NULL
+--   quantity                                 numeric NOT NULL
+--   price                                    numeric NOT NULL
+--   trade_date                               date NOT NULL
+--   settle_date                              date NOT NULL
+--   book_transaction_id                      text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY fix_allocations_pkey: (id)
+
+-- ===== cpsim.fix_messages =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   counterparty_id                          uuid
+--   exchange_id                              uuid NOT NULL
+--   seq                                      integer NOT NULL
+--   direction                                text NOT NULL
+--   msg_type                                 text
+--   msg_seq_num                              integer
+--   sender_comp_id                           text
+--   target_comp_id                           text
+--   cl_ord_id                                text
+--   order_id                                 text
+--   exec_id                                  text
+--   alloc_id                                 text
+--   valid                                    boolean NOT NULL
+--   reject_reason                            text
+--   raw                                      text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY fix_messages_pkey: (id)
+
 -- ===== cpsim.institution_types =====
 --   key                                      text NOT NULL
 --   label                                    text NOT NULL
@@ -5343,6 +5377,8 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   archived_from_id                         uuid
+--   protocol                                 text NOT NULL DEFAULT 'rest'::text
+--   is_block                                 boolean NOT NULL DEFAULT false
 --   PRIMARY KEY orders_pkey: (id)
 
 -- ===== cpsim.real_bic_examples =====

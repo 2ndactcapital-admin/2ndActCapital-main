@@ -49,6 +49,8 @@ CPSIM_APP_WITHHELD = {
     "transfers": frozenset({"DELETE"}),                    # docs/cpsim04_part1.sql: system-axis, never deleted
     "transfer_events": frozenset({"UPDATE", "DELETE"}),    # docs/cpsim04_part1.sql: append-only
     "cash_movements": frozenset({"UPDATE", "DELETE"}),     # docs/cpsim04_part1.sql: the cash ledger, append-only
+    "fix_messages": frozenset({"UPDATE", "DELETE"}),       # docs/cpsim05_part1.sql: the FIX message log, append-only
+    "fix_allocations": frozenset({"UPDATE", "DELETE"}),    # docs/cpsim05_part1.sql: allocation legs, append-only
 }
 
 
