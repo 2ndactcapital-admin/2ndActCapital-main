@@ -87,7 +87,7 @@ class Selection(_Body):
 
 class BuildBlock(_Body):
     instruction_ids: list[UUID] = Field(min_length=1, max_length=500)
-    route: Literal["manual", "fix"] = "manual"
+    route: Literal["manual", "fix", "fix_sim"] = "manual"
     manual_reason: str | None = Field(default=None, max_length=2000)
     execution_account_id: UUID | None = None
     executor_name: str | None = Field(default=None, max_length=300)
@@ -537,6 +537,26 @@ async def sent(request: Request, block_id: str, body: Sent):
     pool = await get_pool()
     return await _act(BK.mark_sent(pool, org_id=org_id, block_id=block_id, actor_id=principal.user_id,
                                    channel=body.channel, note=body.note))
+
+
+@router.post("/execution/blocks/{block_id}/fix-sim")
+async def run_fix_sim(request: Request, block_id: str):
+    """cpsim05 D6 — (re-)run an APPROVED fix_sim block's simulated FIX steps from wherever it stands (send, collect
+    fills, allocate, AllocationInstruction, settle, reconcile). Idempotent. A person's action (manage_blocks); the
+    steps also run automatically after the block's approval. Simulated counterparty only."""
+    principal = require_permission(request, MANAGE)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    from services import fix_sim_blocks as FB
+
+    async def go():
+        async with pool.acquire() as conn:
+            actor = await BK._human(conn, principal.user_id, org_id)
+            blk = await BK.load(conn, org_id, block_id)
+        if blk["route"] != "fix_sim":
+            raise BK.BlockConflict("this block is on the manual route — carry it out with the order execution sheet")
+        return await FB.run(pool, org_id=org_id, block_id=blk["id"], actor_id=actor["id"])
+    return await _act(go())
 
 
 @router.post("/execution/blocks/{block_id}/fills")

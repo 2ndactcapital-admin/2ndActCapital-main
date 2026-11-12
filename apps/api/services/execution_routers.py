@@ -1,5 +1,9 @@
 """Execution routers (rep9) — the provider-neutral interface a FIX router (Flyer
-or similar) would implement for BLOCK trading. NONE IS CONNECTED.
+or similar) would implement for BLOCK trading. NO REAL ROUTER IS CONNECTED.
+
+cpsim05: ``fix_sim`` — :class:`SimulatedFixRouter`, FIX 4.4 over HTTP to the
+SIMULATED counterparty only (connected, ``simulated``). The real ``fix`` entry
+below is unchanged: a NotConnectedRouter, refused with its reason.
 
 No router is contracted, so this module is the INTERFACE and a registry whose
 every entry says "not connected". There is no client code, no socket, no HTTP
@@ -38,10 +42,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-ROUTES = ("manual", "fix")
+ROUTES = ("manual", "fix", "fix_sim")
 ROUTE_LABELS = {"manual": "Manual — print an order execution sheet for a broker of your choice",
-                "fix": "FIX router — not connected"}
+                "fix": "FIX router — not connected",
+                "fix_sim": "FIX — simulated counterparty (SIMULATED; every member at the simulated custodian)"}
 DEFAULT_ROUTE = "manual"
+#: cpsim05 — the simulated FIX counterparty's route key (instructions: routed_via / sent_channel; blocks: route)
+SIM_ROUTE = "fix_sim"
 
 
 class RouterNotConnected(RuntimeError):
@@ -69,6 +76,9 @@ class ExecutionRouter(ABC):
     label: str = ""
     protocol: str = "fix"
     connected: bool = False
+    #: cpsim05 — a SIMULATED counterparty: connected, but never a real automated route (it does not make a manual
+    #: block need a reason, and it is offered only when every member is at the simulated custodian)
+    simulated: bool = False
 
     @abstractmethod
     async def submit_block(self, block: dict, allocations: list[dict]) -> RouterResult: ...
@@ -105,6 +115,47 @@ class NotConnectedRouter(ExecutionRouter):
         self._refuse()
 
 
+class SimulatedFixRouter(ExecutionRouter):
+    """cpsim05 (D3) — FIX 4.4 tag=value over HTTP to the SIMULATED counterparty (services/fix_sim_client.py). Connected
+    because the counterparty is ours; ``simulated`` so it never stands in for a real router. Each method sends ONE
+    message with a session the caller read (and released its connection for) and returns the client's
+    ``{sent, received, replies, summary}``. Deciding WHETHER to send is the caller's: services/fix_sim_blocks.py (a
+    person's block action, after the block's own maker-checker approval)."""
+
+    key, label, protocol, connected, simulated = SIM_ROUTE, "FIX — simulated counterparty", "fix", True, True
+
+    async def submit_block(self, block, allocations, *, session, sec, account_ref, transport=None):
+        from services import fix_sim_client as FC
+
+        fields = FC.new_order_single(cl_ord_id=str(block["id"]), account=account_ref, side=block["side"], sec=sec,
+                                     quantity=block["total_quantity"], price_kind=block["price_kind"],
+                                     limit_price=block.get("limit_price"), block=True)
+        return await FC.send(session, "D", fields, transport=transport)
+
+    async def cancel_block(self, block, reason, *, session, sec, transport=None):
+        from services import fix_sim_client as FC
+
+        fields = FC.cancel_request(cl_ord_id=f"{block['id']}:cxl", orig_cl_ord_id=str(block["id"]),
+                                   side=block["side"], sec=sec, quantity=block["total_quantity"])
+        return await FC.send(session, "F", fields, transport=transport)
+
+    async def execution_reports(self, block, *, session, order_id=None, transport=None):
+        from services import fix_sim_client as FC
+
+        return await FC.send(session, "H", FC.status_request(cl_ord_id=str(block["id"]), order_id=order_id,
+                                                             side=block["side"]), transport=transport)
+
+    async def send_allocations(self, block, allocations, *, session, sec, order_id, avg_price, trade_date, legs,
+                               transport=None):
+        from services import fix_sim_client as FC
+
+        fields = FC.allocation_instruction(alloc_id=f"{block['id']}:alloc", cl_ord_id=str(block["id"]),
+                                           order_id=order_id, side=block["side"], sec=sec,
+                                           quantity=sum((q for _, q in legs), 0), avg_price=avg_price,
+                                           trade_date=trade_date, legs=legs)
+        return await FC.send(session, "J", fields, transport=transport)
+
+
 # rep9 fix 1 — the spec's word is "not connected"; the reason says so (it used to read "contracted or connected")
 NOT_CONNECTED_REASON = ("the FIX router is not connected — none is contracted (rep9 builds the interface only — no "
                         "client code, no network). Use the manual route: print the order execution sheet, give it to a broker of "
@@ -112,6 +163,7 @@ NOT_CONNECTED_REASON = ("the FIX router is not connected — none is contracted 
 
 _REGISTRY: dict[str, ExecutionRouter] = {
     "fix": NotConnectedRouter("fix", "FIX router (Flyer or similar) — none contracted", NOT_CONNECTED_REASON),
+    SIM_ROUTE: SimulatedFixRouter(),          # cpsim05 — the simulated counterparty only
 }
 
 
@@ -121,22 +173,31 @@ def registry() -> dict[str, ExecutionRouter]:
 
 def routers() -> list[dict]:
     return [{"key": r.key, "label": r.label, "protocol": r.protocol, "connected": bool(r.connected),
+             "simulated": bool(getattr(r, "simulated", False)),
              "status": "connected" if r.connected else "not_connected",
              "reason": None if r.connected else getattr(r, "reason", NOT_CONNECTED_REASON)}
             for r in _REGISTRY.values()]
 
 
 def any_connected() -> bool:
-    return any(r.connected for r in _REGISTRY.values())
+    """A REAL automated route is connected (cpsim05: the simulated counterparty does not count — it is offered only
+    to an all-simulated block, and choosing manual never needs a reason because of it)."""
+    return any(r.connected and not getattr(r, "simulated", False) for r in _REGISTRY.values())
+
+
+def simulated_router() -> ExecutionRouter | None:
+    r = _REGISTRY.get(SIM_ROUTE)
+    return r if r is not None and r.connected and getattr(r, "simulated", False) else None
 
 
 def route_refusal(route: str) -> str | None:
-    """None when the route may be chosen; otherwise the plain reason."""
+    """None when the route may be chosen; otherwise the plain reason. (cpsim05: 'fix_sim' is admitted here when its
+    router is connected; whether a BLOCK may take it — every member simulated — is services.blocks' check.)"""
     if route == "manual":
         return None
     if route not in ROUTES:
         return f"route is one of {list(ROUTES)}"
     r = _REGISTRY.get(route)
     if r is None or not r.connected:
-        return f"route fix refused: {NOT_CONNECTED_REASON}"
+        return f"route {route} refused: {NOT_CONNECTED_REASON}"
     return None

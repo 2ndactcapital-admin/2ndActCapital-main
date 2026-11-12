@@ -82,9 +82,14 @@ SENT_CHANNEL_LABELS = {
     "letter": "Letter of instruction", "in_person": "In person", "other": "Other",
     # cpsim03 — recorded ONLY by "Send to custodian" (services.custodian_execution), with the custodian's order id
     "custodian_api": "Custodian API (simulated)",
+    # cpsim05 — recorded ONLY by the simulated FIX path (services.fix_sim_auto / fix_sim_blocks), with the FIX OrderID
+    "fix_sim": "FIX — simulated counterparty",
 }
 CUSTODIAN_CHANNEL = "custodian_api"
-MANUAL_SENT_CHANNELS = tuple(k for k in SENT_CHANNEL_LABELS if k != CUSTODIAN_CHANNEL)
+FIX_SIM_CHANNEL = "fix_sim"
+#: channels a person can never claim by hand ("Mark sent"): each is recorded only with the counterparty's order id
+API_CHANNELS = (CUSTODIAN_CHANNEL, FIX_SIM_CHANNEL)
+MANUAL_SENT_CHANNELS = tuple(k for k in SENT_CHANNEL_LABELS if k not in API_CHANNELS)
 RECONCILE_METHOD_LABELS = {"custodian_data": "Matched to custodian data", "manual": "Confirmed manually"}
 ACTION_LABELS = {
     "create": "Created", "edit": "Edited", "submit": "Submitted for approval", "approve": "Approved",
@@ -92,6 +97,8 @@ ACTION_LABELS = {
     "close": "Closed", "cancel": "Cancelled", "expire": "Expired", "carry": "Carried to the next day",
     "ask": "Not filled — decision requested", "letter": "Letter of instruction generated",
     "custodian_reject": "Refused by the custodian", "custodian_cancel": "Custodian order cancelled",   # cpsim03
+    "approve_upstream": "Approved via the proposal's maker-checker (simulated counterparty)",          # cpsim05
+    "automatic_failed": "Automatic step stopped (simulated counterparty)",                             # cpsim05
 }
 DOCUMENT_LABELS = {"letter_of_instruction": "Letter of instruction",
                    "dvp_settlement_instruction": "DVP settlement instruction",
@@ -458,8 +465,15 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
                                     "instruction")
         trade_date = date.today()
         async with conn.transaction():
+            # cpsim05 fix 3: every line's security is checked in ONE read (it was _security per line — 2 round-trips
+            # per trade, its result unused here). Same refusal: a security not in the master → ExecutionNotFound.
+            want = {_uuid(t.global_security_id, "security") for t in trade_list.trades}
+            have = {str(r["id"]) for r in await conn.fetch(
+                "SELECT id FROM portfolio.securities_global WHERE id = ANY($1::uuid[]) AND system_to IS NULL",
+                list(want))}
+            if want - have:
+                raise ExecutionNotFound("security not found in the security master")
             for t in trade_list.trades:
-                await _security(conn, t.global_security_id)
                 lots = [(str(li.tax_lot_id), li.quantity) for li in t.lot_instructions]
                 await _validate_lots(conn, org_id, acct["id"], t.global_security_id, t.side, lots, t.quantity)
                 if t.side in SHORT_SIDES:      # rep13 — eligibility + the §1259 household check, every short
@@ -642,6 +656,12 @@ async def _apply_outcome(pool, org_id, task: dict, outcome: str, actor_id, note)
                                    from_status="pending_approval", to_status="draft", actor_id=actor_id,
                                    detail={"task_id": task["id"], "note": note})
     await publish(pool, [ref])
+    if outcome == "approve" and new.get("routed_via") == FIX_SIM_CHANNEL and new.get("source") == "proposal":
+        # cpsim05 D4 — a SYSTEM proposal's fix_sim instruction: rep2's second-person approval is its approval of
+        # record; the send / book / sync / reconcile then run automatically, after this request (simulated only)
+        from services import fix_sim_auto
+
+        fix_sim_auto.after_instruction_approved(pool, org_id=org_id, instruction=new, actor_id=actor_id)
     return new
 
 
@@ -746,28 +766,29 @@ async def _transition(pool, *, org_id, instruction_id, actor_id, allowed: tuple[
 
 
 async def mark_sent(pool, *, org_id, instruction_id, actor_id, channel: str, note: str | None = None,
-                    custodian_order_id: str | None = None) -> dict:
+                    custodian_order_id: str | None = None, detail_extra: dict | None = None) -> dict:
     """approved → sent. cpsim03: channel 'custodian_api' is recorded only with the custodian's order id — by
     services.custodian_execution.send_to_custodian after the custodian accepted the order (a person's action); the
     "Mark sent" route never passes an order id, so a person cannot claim a custodian API send by hand."""
     if channel not in SENT_CHANNEL_LABELS:
         raise ExecutionError(f"channel must be one of {list(MANUAL_SENT_CHANNELS)}")
-    if (channel == CUSTODIAN_CHANNEL) != bool(custodian_order_id):
-        raise ExecutionError("the custodian API channel is recorded only by Send to custodian, with the custodian's "
-                             f"order id — choose one of {list(MANUAL_SENT_CHANNELS)}")
+    if (channel in API_CHANNELS) != bool(custodian_order_id):
+        raise ExecutionError("the custodian API / simulated FIX channels are recorded only by their own send, with the "
+                             f"counterparty's order id — choose one of {list(MANUAL_SENT_CHANNELS)}")
     now = datetime.now(timezone.utc)
     extra = {"custodian_order_id": custodian_order_id} if custodian_order_id else {}
     new, _ = await _transition(
         pool, org_id=org_id, instruction_id=instruction_id, actor_id=actor_id, allowed=("approved",),
         what="mark sent", action="mark_sent", to_status="sent",
         fields=lambda a: {"sent_by": a["id"], "sent_at": now, "sent_channel": channel, "sent_note": note, **extra},
-        detail={"channel": channel, "note": note, **extra})
+        detail={"channel": channel, "note": note, **extra, **(detail_extra or {})})
     return new
 
 
 async def enter_fill(pool, *, org_id, instruction_id, actor_id, quantity: Decimal, price: Decimal,
                      filled_at: datetime, lots: list[tuple[str, Decimal]] | None = None, completes: bool = False,
-                     note: str | None = None, custodian_exec_id: str | None = None) -> dict:
+                     note: str | None = None, custodian_exec_id: str | None = None,
+                     detail_extra: dict | None = None) -> dict:
     """A fill a person reports. Only after the instruction is sent; never more
     than the instructed quantity; lots of THIS account and security, and the
     instructed lots when the instruction named any."""
@@ -802,8 +823,9 @@ async def enter_fill(pool, *, org_id, instruction_id, actor_id, quantity: Decima
                                      f"{row['quantity']} instructed")
             complete = completes or (row["quantity"] is not None and q_total == _dec(row["quantity"])) or (
                 row["notional"] is not None and n_total >= _dec(row["notional"]))
-            if custodian_exec_id and row["sent_channel"] != CUSTODIAN_CHANNEL:
-                raise ExecutionError("a custodian execution is booked only on an instruction sent to a custodian API")
+            if custodian_exec_id and row["sent_channel"] not in API_CHANNELS:
+                raise ExecutionError("a custodian execution is booked only on an instruction sent to a custodian API "
+                                     "(or the simulated FIX counterparty)")
             fill_id = await conn.fetchval(
                 f"INSERT INTO {T_FILL} (org_id, instruction_id, quantity, price, filled_at, lots, completes, note, "
                 "entered_by, custodian_exec_id) VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::uuid, $10) "
@@ -818,13 +840,15 @@ async def enter_fill(pool, *, org_id, instruction_id, actor_id, quantity: Decima
                                detail={"fill_id": str(fill_id), "quantity": str(quantity), "price": str(price),
                                        "filled_at": filled_at.isoformat(), "lots": len(lots),
                                        "total_quantity": str(q_total), "completes": bool(completes),
-                                       **({"custodian_exec_id": custodian_exec_id} if custodian_exec_id else {})})
+                                       **({"custodian_exec_id": custodian_exec_id} if custodian_exec_id else {}),
+                                       **{k: v for k, v in (detail_extra or {}).items() if v is not None}})
     await publish(pool, [ref])
     return new
 
 
 async def reconcile(pool, *, org_id, instruction_id, actor_id, method: str, reference: str | None = None,
-                    note: str | None = None, transaction_ids: list[str] | None = None) -> dict:
+                    note: str | None = None, transaction_ids: list[str] | None = None,
+                    detail_extra: dict | None = None) -> dict:
     """filled → reconciled. ``custodian_data`` names what it was matched to
     (and any portfolio.transactions ids given must be this account's, in this
     security); ``manual`` needs a note saying how it was confirmed."""
@@ -851,7 +875,8 @@ async def reconcile(pool, *, org_id, instruction_id, actor_id, method: str, refe
         what="reconcile", action="reconcile", to_status="reconciled",
         fields=lambda a: {"reconciled_by": a["id"], "reconciled_at": now, "reconcile_method": method,
                           "reconcile_reference": (reference or "").strip() or None, "reconcile_note": note},
-        detail={"method": method, "reference": reference, "note": note, "transaction_ids": txids})
+        detail={"method": method, "reference": reference, "note": note, "transaction_ids": txids,
+                **(detail_extra or {})})
     return new
 
 
@@ -1180,7 +1205,27 @@ async def detail(conn, org_id, instruction_id) -> dict:
     from services import custodian_execution as CX   # cpsim03 — the custodian-API route (no network here)
 
     out["custodian"] = await CX.panel(conn, org_id, row, acct)
+    # cpsim05 — the FIX exchange (SIMULATED): every message this instruction's automatic / person FIX steps sent and
+    # received, from its OWN events (no read of the simulator), readable tag / name / value
+    out["fix_exchange"] = fix_exchange(out["timeline"]) if row["routed_via"] == FIX_SIM_CHANNEL else None
     return out
+
+
+def fix_exchange(timeline: list[dict]) -> dict:
+    from services import fix_sim_client as FC
+
+    msgs = []
+    for e in timeline:
+        fx = (e.get("detail") or {}).get("fix") or {}
+        for direction, raws in (("out", [fx.get("sent")] if fx.get("sent") else []), ("in", fx.get("received") or [])):
+            for raw in raws:
+                fields = FC.readable(raw)
+                mt = next((f["value"] for f in fields if f["tag"] == 35), None)
+                msgs.append({"event_id": e["id"], "action": e["action"], "at": e["at"], "direction": direction,
+                             "msg_type": mt, "msg_name": FC.MSG_NAMES.get(mt or ""), "raw": raw, "fields": fields})
+    auto = any((e.get("detail") or {}).get("on_behalf") == "automatic" for e in timeline)
+    return {"label": "SIMULATED", "messages": msgs,
+            "automatic": auto, "automatic_label": "automatic — simulated counterparty" if auto else None}
 
 
 def vocabularies() -> dict:

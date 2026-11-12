@@ -1,0 +1,543 @@
+{
+  "environment": "simulator",
+  "passed": 75,
+  "failed": 0,
+  "results": [
+    {
+      "id": "C00",
+      "contract": "DOCUMENTED open-api-authentication (authorize URL)",
+      "label": "the client's authorize URL: the login host + /api/oauth2/authorize, scope openid, client_id, redirect_uri, state",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C01",
+      "contract": "DOCUMENTED open-api-authentication (authorize)",
+      "label": "authorize: 302 to redirect_uri with a code and the state echoed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C02",
+      "contract": "DOCUMENTED open-api-authentication (client_id)",
+      "label": "authorize: an unknown client_id is refused (\u2265 400, no redirect)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C03",
+      "contract": "DOCUMENTED open-api-authentication (token)",
+      "label": "token (authorization_code): the client posts to the API host + /oauth2/token and parses the response",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C04",
+      "contract": "DOCUMENTED open-api-authentication (token)",
+      "label": "token: a used authorization code is refused",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C05",
+      "contract": "DOCUMENTED open-api-authentication (token response)",
+      "label": "token response (POST {api}/oauth2/token, token_type=id) carries access_token, refresh_token, expires_in (int), token_type",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C05b",
+      "contract": "DOCUMENTED open-api-authentication (token_type=id)",
+      "label": "the simulator refuses a token request without token_type=id (the documented body)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C06",
+      "contract": "DOCUMENTED open-api-authentication (client_secret)",
+      "label": "token: a wrong client_secret is refused",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C07",
+      "contract": "DOCUMENTED open-api-authentication (refresh_token grant)",
+      "label": "refresh (grant_type refresh_token, token_type=id): a new access token",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C08",
+      "contract": "(simulator) refresh rotation",
+      "label": "refresh: a spent refresh token is refused",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C09",
+      "contract": "DOCUMENTED endpoints households (GET /api/v2/households)",
+      "label": "households: {\"paging\": {page, page_size, total_pages}, \"data\": {\"households\": [{id, name}]}}, non-empty, the client reads every one",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C10",
+      "contract": "DOCUMENTED json-code-examples (paging)",
+      "label": "paging: page_size 1 walks total_pages distinct pages (base read from paging.page), the page past the end is empty, and the client's paged read returns the same set",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C10b",
+      "contract": "DOCUMENTED endpoints (page_size max 1000)",
+      "label": "the simulator refuses page_size above the documented maximum",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C11",
+      "contract": "DOCUMENTED endpoints accounts (GET /v2/accounts?household_id=)",
+      "label": "accounts: data.household_id + data.accounts with every documented field (id, rep_code, account_number, account_type, account_name, status \u2208 ACTIVE/REJECTED/CLOSED/RESTRICTED/PENDING, date_open, date_closed, as_of_date, account_balance); the client reads every one",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C12",
+      "contract": "DOCUMENTED endpoints positions (GET /v2/accounts/{account_id}/positions/)",
+      "label": "positions: data.account_id + data.positions with every documented field (id, cusip, symbol, description, long_short_indicator, currency_code, quantity, as_of_date, security_type, market_value); the client reads every one",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C13",
+      "contract": "DOCUMENTED endpoints cost basis (GET /v2/accounts/{account_id}/cost-basis/)",
+      "label": "cost basis: data.cost_basis, one row per tax lot with every documented field (id, cusip, symbol, description, quantity, market_value, cost_basis_unadjusted, cost_basis_adjusted, unrealized_gain_loss, as_of_date, open_date)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C14",
+      "contract": "DOCUMENTED endpoints transactions (GET /v2/accounts/{account_id}/transactions)",
+      "label": "transactions: data.transactions with every documented field (incl. transaction_type, transaction_date, settle_date, transaction_fees / broker_fees / other_fees, cancellation_reversal_flag); every type one the client maps",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C14b",
+      "contract": "DOCUMENTED endpoints transactions (date_from / date_to)",
+      "label": "transactions honour date_from / date_to (every row inside the window) and the default window is the past month",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C15",
+      "contract": "client rule (a transaction needs a position \u2014 ALTRUIST_CONTRACT \u00a73.5)",
+      "label": "every transacted security also appears in the account's positions (cash rows exempt)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C16",
+      "contract": "DOCUMENTED json-code-examples (dates YYYY/MM/DD)",
+      "label": "every response date is YYYY/MM/DD and the client parses it",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C17",
+      "contract": "DOCUMENTED endpoints (Authorization header)",
+      "label": "a resource without a valid access token is refused 401",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O01",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.1 O-1 / \u00a78.3",
+      "label": "POST /v2/orders (the client's post_order): 201, the order with every \u00a78.3 field",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O02",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.3 executions / \u00a78.5",
+      "label": "a market buy (accept) fills in full: one execution {exec_id, quantity, price, executed_at, trade_date, settle_date}, decimals as strings, settle a later US business day, ISO UTC time",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O03",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.1 O-1 (idempotent)",
+      "label": "a repeat POST with the same client_order_id returns the SAME order (200) \u2014 never a second one",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O15",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.1 O-1 (repeat rule)",
+      "label": "a repeat POST with the same client_order_id but a DIFFERENT body (sell / limit / day / qty 1) returns the original order unchanged (every \u00a78.3 field), 200 \u2014 and there is still exactly one order",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O04",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.1 O-2",
+      "label": "GET /v2/orders/{order_id} (the client's get_order) returns the order",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O05",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.1 O-3",
+      "label": "GET /v2/orders?account_id= \u2192 {\"orders\": [...]} in one response; without account_id \u2192 400",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O06",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.2 (decimal strings)",
+      "label": "a JSON-float quantity is refused 422 naming the field; no order is created",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O07",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.1 O-4 / \u00a78.5 (limit)",
+      "label": "an unmarketable limit buy is working; DELETE (the client's delete_order) cancels it; a second DELETE is 409",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O08",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.1 O-4 (filled)",
+      "label": "DELETE a filled order is refused 409, the reason naming its status",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O09",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.5 (insufficient position)",
+      "label": "a sell above the position is rejected 'insufficient position' (never below zero)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O10",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.1 O-5",
+      "label": "orders need an ACCESS token: none \u2192 401, the cpsim_ client key itself \u2192 401",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O11",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.1 O-2 (404)",
+      "label": "an unknown order id is 404",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O12",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.5 (book moves for fills)",
+      "label": "the fill moved the book: the position is held + 2 and the buy transaction sim-x-<exec_id> is served",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O13",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.1 O-6",
+      "label": "order responses carry X-Counterparty-Simulated: true",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T01",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.1 T-1 / \u00a79.3 / \u00a79.6",
+      "label": "POST a journal \u2192 201 with every \u00a79.3 field; same-day value date: received \u2192 acknowledged \u2192 settled, each an event",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T02",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.4 / D2 (cash ledger + feed types)",
+      "label": "the journal moved the cash rows exactly (\u2212100 / +100) and the feed serves transfer_out / transfer_in (explicit ids <transfer>-out / -in) \u2014 types the client maps (sell / buy)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T03",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.1 T-1 (repeat rule)",
+      "label": "a repeat POST with a DIFFERENT body \u2192 200, the ORIGINAL transfer unchanged, one transfer",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T04",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.1 T-2",
+      "label": "GET one transfer",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T05",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.1 T-3",
+      "label": "list by account (either leg; the destination finds it), one response, 400 without account_id",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T06",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.2 (decimal strings)",
+      "label": "a JSON-number amount \u2192 422 naming the field, nothing created",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T07",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.6 (ACH to a domestic bank)",
+      "label": "an ACH to a domestic bank with its ACH routing reference \u2192 acknowledged, the source debited, settlement the next business day",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T08",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.6 / D6 (the bank's check)",
+      "label": "a wire with the wrong routing reference \u2192 rejected with the receiving bank's reason; nothing debited",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T09",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.2 / \u00a79.6 (international wire)",
+      "label": "a wire to an international bank with its BIC + IBAN reference settles on the value date; an ACH to it is refused 422",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T10",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.6 / D6 (IBAN)",
+      "label": "a wrong IBAN reference \u2192 rejected with the bank's reason",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T11",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.6 (insufficient funds)",
+      "label": "more than the cash row holds \u2192 rejected 'insufficient funds', nothing moved",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T12",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.1 T-4 / T-2 (404)",
+      "label": "DELETE a settled transfer \u2192 409 naming its status; an unknown transfer \u2192 404",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T13",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.1 T-5",
+      "label": "transfers need an ACCESS token (none / the cpsim_ key \u2192 401)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T14",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.2 (references only)",
+      "label": "a full routing number where the last four belong \u2192 422 naming the field",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T15",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.1 T-6",
+      "label": "transfer responses carry X-Counterparty-Simulated: true",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F01",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) D \u2192 8",
+      "label": "NewOrderSingle (market) \u2192 ExecutionReport New (150=0) then one Trade (150=F, 39=2) at the platform close; every reply passes the client's BodyLength + CheckSum; 49/56 swapped back",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F02",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) D \u2192 8 (idempotent ClOrdID)",
+      "label": "a repeated ClOrdID (a different quantity) \u2192 the SAME order's reports + a 150=I status, never a second order",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F03",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) H \u2192 8",
+      "label": "OrderStatusRequest \u2192 every trade report + 150=I status",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F04",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) D \u2192 8 (limit)",
+      "label": "an unmarketable limit \u2192 New (39=0) only, nothing filled",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F05",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) F \u2192 8 / 9",
+      "label": "OrderCancelRequest of a working order \u2192 150=4 / 39=4; a second cancel \u2192 OrderCancelReject 102=0",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F06",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) F \u2192 9",
+      "label": "cancelling an unknown order \u2192 OrderCancelReject 102=1",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F07",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) D \u2192 8 (rejected)",
+      "label": "an oversell \u2192 39=8 with 58 'insufficient position'",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F08",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) D \u2192 8 (54=5)",
+      "label": "SELL SHORT (54=5) \u2192 rejected 'no shorting declared', no order created (OrderID NONE)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F09",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) 3 (CheckSum)",
+      "label": "a wrong CheckSum \u2192 Reject (35=3) naming tag 10, HTTP 200 (never a 500)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F10",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) 3 (BodyLength)",
+      "label": "a wrong BodyLength \u2192 Reject naming tag 9",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F11",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) 3 (CompID)",
+      "label": "an unknown SenderCompID \u2192 Reject 373=9 (CompID problem)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F12",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) 3 (required tag)",
+      "label": "a NewOrderSingle without Side (54) \u2192 Reject 373=1 naming tag 54",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F13",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) delimiters",
+      "label": "SOH and '|' both accepted; the reply uses the request's delimiter",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F14",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) D \u2192 8 (partial, advance)",
+      "label": "partial \u2192 39=1 with one trade; after a clock advance the rest fills (39=2, two trades totalling the order)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F15",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) D \u2192 8 (delay, advance)",
+      "label": "delay \u2192 New (39=0), nothing filled; filled after a clock advance",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F16",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) D (block) + J \u2192 P",
+      "label": "a block order (591) fills without an account; AllocationInstruction \u2192 Ack 87=0 naming each account's booked transaction (467); a repeat AllocID \u2192 the same Ack, nothing booked twice",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F17",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) J \u2192 book",
+      "label": "each allocation leg is in its account's transactions feed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F18",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) auth",
+      "label": "the FIX endpoint needs an ACCESS token (none \u2192 401)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F19",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (FIX 4.4 over HTTP, CPSIM05_NOTES \u00a73) 3 (malformed)",
+      "label": "a body that is not FIX at all \u2192 a Reject (35=3), HTTP 200 \u2014 never a 500",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C18",
+      "contract": "\u00a76 (SIMULATED header)",
+      "label": "every simulator response carries X-Counterparty-Simulated: true",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "F20",
+      "contract": "simulated FIX \u2014 no Altruist FIX contract seen (the message log)",
+      "label": "every message in and out logged (one exchange per message in, \u2265 one reply each; the rejected ones flagged not valid)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C19",
+      "contract": "\u00a76.7 / T8",
+      "label": "webhook: lowercase hex HMAC-SHA256 over the raw body, verified by the receiver's own verify_signature_source, body {event_id, event_type, account_id, environment}",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "O14",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a78.4",
+      "label": "order webhook: {event_id, event_type, order_id, client_order_id, account_id, environment, occurred_at}, signed and verified as \u00a76.7 (forces the simulator)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "T16",
+      "contract": "ASSUMED (not published \u2014 Realtime / FIX) \u00a79.5",
+      "label": "transfer webhook: {event_id, event_type, transfer_id, client_transfer_id, account_id, environment, occurred_at}, signed and verified as \u00a76.7 (forces the simulator)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "C20",
+      "contract": "(harness)",
+      "label": "no network: the run opened no socket outside the database",
+      "passed": true,
+      "detail": "[]"
+    }
+  ],
+  "target": "simulator (in-process fixture)",
+  "fixture_rejected_rows": {
+    "households": 0,
+    "accounts": 0,
+    "positions": 0,
+    "transactions": 0,
+    "lots": 0
+  },
+  "fixture_security": true,
+  "run_at": "2026-11-12T02:47:34.123736+00:00",
+  "db_host_allowed": true
+}

@@ -344,6 +344,36 @@ This file starts with the email item below.
 ---
 
 
+## CPSIM05 — a SIMULATED FIX counterparty: approved proposals' trades for simulated-custodian accounts sent automatically as FIX 4.4 over HTTP, fills booked, synced, reconciled, P/L shown
+
+STATUS: BUILT — branch cpsim05-work (2026-11-11), all 10 tasks committed. Notes `docs/cpsim/CPSIM05_NOTES.md`
+(D1–D8 as built, the FIX message catalogue, findings 1–15). HELD for review (not merged).
+
+UPDATE (cpsim05 fix 1, 2026-11-11; proved by fix 2, 2026-11-12): DONE except one open timing FAIL. fix 3 (2026-11-12): approval latency — CODE + VERIFY, DONE. Counted the approval request's DB round-trips by caller vs the SAME approval on a MANUAL route: cpsim05 adds a constant +15 (the Altruist adapter's route decision; same at 2 and 6 lines; zero automatic-step work in the request); the manual baseline alone was 7.1 s (≈ 31 ms × 224–229 round-trips WSL→Supabase), so the 5 s bound measured the host, not cpsim05. CODE: the pre-existing approve→execute per-line N+1 batched (create_instructions' security check; execute's proposal restatement) → 14 → 10 round-trips per line. VERIFY: y_timing now asserts sim − manual ≤ 15 and equal at 2/6 lines, baseline ≤ 10/line, sim ≤ 1.5× manual seconds, < 15 s, plus the after-response gate. Proof: timing 101/0 (224/239/264/279 round-trips; 6.52/6.99/7.78/8.80 s), auto 105/0, self-checks 28/0, cleanup 17/0 (0 rows). Not fixed, recorded: per-instruction domain-event publish (8/line) and the RLS pool's 4 round-trips per acquire. Record: CPSIM05_NOTES §9. Fix 1's fixes, all VERIFY or DOCS, none CODE: E (proposals stamped with AM.valuation_as_of, not the counterparty clock), E follow-on (held-away fixture account gets current data), I (async genexpr → awaited loops), N (REGISTRY filled by register_all(); positive controls), S (short_terms on the fixture), R1 (cpsim03 §8 found by number), R2 (ALTREAD1 heading restored), P/L compared as Decimals, 'cash' split out of 'auto', idempotency / timing self-contained. Proof by fix 2 (one-offs, `timeout 600`): cleanup-only 17/0 (0 rows before); self-checks cpsim05 28/0, cpsim03 37/0, altread1 50/0; authz1 + visibility1 routes CURRENT; auto section 17/0 (LT 72.00 / ST −12.00 / unrealized −70.00; the run 34/1: SIGTERM at 600 s in the END teardown, then cleanup 17/0); cash 93/0; outcomes 100/0; idempotency 94/0; system 93/0; guard 109/0 (scan + both positive controls); unsupported 95/0 (the short); blocks 98/0; unchanged 95/0; **timing 94/1 — OPEN: the approval request answered in 6.95 s vs the 5 s bound (15 s / 3); the after-response gate PASSED; likely WSL→Supabase round-trip latency, not proven; bound not loosened**; end cleanup 17/0. Safety re-check: CPSIM05_NOTES §8a. Record: CPSIM05_NOTES §8.
+
+- **Schema** `docs/cpsim05_part1.sql` APPLIED (`scripts/_apply_cpsim05.py --all`, 25/25 read back): cpsim.fix_messages +
+  fix_allocations (append-only, cpsim_app S/I — the shared withheld list), cpsim.orders.protocol / is_block, the
+  `altruist` institution type + the `fix` group; public: custodian_order_chk admits a FIX OrderID, fix_sim_chk, two event
+  actions (approve_upstream, automatic_failed), the D5 event trigger (BEFORE INSERT), trade_blocks_route_chk manual +
+  fix_sim. RLS unchanged. Snapshot refreshed.
+- **Simulator** `POST /cpsim/c/<slug>/fix` (cpsim/fix.py): FIX 4.4 over HTTP, D/F/H/J → 8/9/P, Reject 35=3 (checksum,
+  BodyLength, CompIDs, missing tags; never a 500), cpsim03's outcomes, a FIX partial's rest on advance, block orders +
+  allocations, the message log; Admin → Counterparties → FIX tab.
+- **Hollisworks**: fix_sim_client (its own codec), SimulatedFixRouter (`fix_sim`; the real `fix` still NotConnected),
+  the adapter routes simulated accounts `fix_sim`; **fix_sim_auto** — after an approved human-maker proposal executes,
+  automatically (after the response): approval-of-record event → NewOrderSingle → mark_sent → enter_fill per ExecID →
+  post-fill sync → auto-reconcile → loss_bank.ingest; system proposals via rep2's approval; collect after a clock advance;
+  failure → automatic_failed + to-do; D5 guard + DB backstop; verb declared NEVER. Blocks on fix_sim (fix_sim_blocks).
+  P/L on the proposal page (fix_sim_pl, SIMULATED); the instruction page's FIX exchange.
+- **Conformance** fix group F01–F20: in-process 75 PASS, 0 FAIL (it found and fixed a '|' inside a Reject Text).
+  Render tests `tests/cpsim05` 8/8; `node --test tests/` 770 pass / 0 fail. Boundary check OK (it failed on main:
+  verify_altread1 was never allow-listed — fixed). AUTHZ1 / VISIBILITY1 route docs regenerated.
+- **Verify** `apps/api/scripts/verify_cpsim05.py` (in scripts/regression_set.txt) — WRITTEN, NOT RUN (self-checks only);
+  npm run build not run. Re-pinned for cpsim05: verify_cpsim01 (altruist now has a FIX session), verify_cpsim03 (REST
+  protocol pinned, the widened CHECKs), verify_rep9 (the simulated router).
+- **Operator**: to demo it, apply `cpsim03_capabilities.py --apply` (the simulator capability) and save each existing
+  simulated counterparty's FIX tab once; then run verify_cpsim05.py.
+
 ## ALTREAD1 — the Altruist READ client matches Altruist's PUBLISHED Open API (developer.altruist.com, read 2026-11-11); cost basis (tax lots) + account balance; simulator + conformance on the documented shapes
 
 STATUS: BUILT — branch altread1-work (2026-11-11), all 9 tasks committed. Notes `docs/altruist/ALTREAD1_NOTES.md`

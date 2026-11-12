@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 1065 · guarded 255 · sql-scope 54 · body-check 15 · legacy-rule 3
+Routes: 1067 · guarded 255 · sql-scope 54 · body-check 15 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -62,6 +62,7 @@ Routes: 1065 · guarded 255 · sql-scope 54 · body-check 15 · legacy-rule 3
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/connections/{target_org_id}/sync` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/disable` | admin_counterparties | scrub |
 | PUT | `/api/v1/admin/counterparties/{counterparty_id}/fix` | admin_counterparties | scrub |
+| GET | `/api/v1/admin/counterparties/{counterparty_id}/fix/messages` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/key/generate` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/key/revoke` | admin_counterparties | scrub |
 | POST | `/api/v1/admin/counterparties/{counterparty_id}/key/rotate` | admin_counterparties | scrub |
@@ -573,6 +574,7 @@ Routes: 1065 · guarded 255 · sql-scope 54 · body-check 15 · legacy-rule 3
 | POST | `/api/v1/execution/blocks/{block_id}/close` | blocks | scrub |
 | POST | `/api/v1/execution/blocks/{block_id}/corrections` | blocks | scrub |
 | POST | `/api/v1/execution/blocks/{block_id}/fills` | blocks | scrub |
+| POST | `/api/v1/execution/blocks/{block_id}/fix-sim` | blocks | scrub |
 | POST | `/api/v1/execution/blocks/{block_id}/reject` | blocks | scrub |
 | POST | `/api/v1/execution/blocks/{block_id}/sent` | blocks | scrub |
 | POST | `/api/v1/execution/blocks/{block_id}/sheet` | blocks | scrub |

@@ -699,6 +699,8 @@ VERB_DUTIES: dict[str, str] = {
     # CPSIM03 — Send to custodian / Import fills: a person's writes (declared, NOT registered — workflow_autonomy NEVER)
     "execution.custodian_send": "write",
     "execution.custodian_import": "write",
+    # CPSIM05 — the simulated FIX automatic step: declared, NOT registered (workflow_autonomy NEVER)
+    "execution.fix_sim_auto": "write",
 }
 
 

@@ -2470,3 +2470,15 @@ the same `enter_fill` with that person as the one who entered it; **Reconcile** 
 the transactions the next sync brings in. The manual route (Mark sent, the order execution sheet) stays offered. The
 real Altruist route is unchanged: manual (no published orders contract; `equity_trading_api` 'unknown'). Blocks and
 the FIX router are unchanged (manual / not connected). Notes: `docs/cpsim/CPSIM03_NOTES.md`.
+
+## cpsim05 — the simulated FIX route beside manual (2026-11-11)
+
+For an account at the SIMULATED custodian (every cpsim03 D2 condition), the Altruist adapter now routes the trade list
+`fix_sim`: the same instructions, sent as FIX 4.4 messages over HTTP to the simulated FIX counterparty. Joe's rule
+(2026-11-11): the proposal's own maker-checker IS the approval, so once a human-made proposal is approved its trades
+are sent, filled, synced and reconciled **automatically** (an explicit approval-of-record event names the checker).
+A system proposal keeps rep2's second-person approval, and then goes automatic. A block may take `fix_sim` only when
+every member is simulated (its own approval is the approval). Manual is still the default and always offered. Real
+custodians are unchanged (manual; the real FIX router is not connected). The proposal page shows the simulated
+execution's realized ST / LT and unrealized P/L from the tax engine (SIMULATED). See `docs/cpsim/CPSIM05_NOTES.md`.
+

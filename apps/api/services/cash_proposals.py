@@ -815,7 +815,10 @@ def routes_offered() -> list[dict]:
     fix refused with its reason (no router is connected)."""
     from services import execution_routers as XR
 
-    return [{"key": k, "label": XR.ROUTE_LABELS[k], "refusal": XR.route_refusal(k)} for k in XR.ROUTES]
+    # cpsim05: the simulated FIX route is a BLOCK / automatic-proposal route for simulated accounts only — the cash
+    # screen's route list stays exactly manual + fix (unchanged)
+    return [{"key": k, "label": XR.ROUTE_LABELS[k], "refusal": XR.route_refusal(k)} for k in XR.ROUTES
+            if k != XR.SIM_ROUTE]
 
 
 async def household_panel(conn, org_id, household_id, *, user_id, can_write: bool, can_approve: bool,

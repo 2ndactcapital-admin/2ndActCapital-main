@@ -246,6 +246,8 @@ PRE_HOLIDAY = date(2026, 11, 25)       # Wednesday; Thursday 2026-11-26 is Thank
 AFTER_HOLIDAY = date(2026, 11, 27)     # Friday
 FIXED_NOW = datetime(2026, 11, 13, 15, 30, 0, tzinfo=timezone.utc)
 TYPES = ("altruist", "schwab", "domestic_bank", "international_bank")
+#: the types whose field groups include 'fix' (cpsim05 added it to altruist — docs/cpsim05_part1.sql)
+FIX_SESSION_TYPES = ("schwab", "altruist")
 SETTING = "counterparty_sim.allowed"
 REAL_ABA = "026009593"
 REAL_IBAN = "GB82WEST12345698765432"
@@ -921,8 +923,8 @@ async def y_registry(conn):
                                                "slug": SLUG_PREFIX + key.replace("_", "-")})
         issued = (b or {}).get("issued") or {}
         ok = check(code == 200 and str(b.get("id", "")).count("-") == 4 and issued.get("api_key", "").startswith(
-            "cpsim_live_") and b.get("shown_once") is True and ("fix_password" in issued) is (key == "schwab"),
-            f"create {key}: 200, a cpsim_live_ key shown once (a FIX password only for the FIX type)",
+            "cpsim_live_") and b.get("shown_once") is True and ("fix_password" in issued) is (key in FIX_SESSION_TYPES),
+            f"create {key}: 200, a cpsim_live_ key shown once (a FIX password only for a type with a FIX session)",
             f"{code} {dumps({k: v for k, v in (b or {}).items() if k != 'issued'})[:300]}")
         if ok:
             S["cp"][key] = b["id"]
@@ -944,8 +946,10 @@ async def y_registry(conn):
           "each of the 4 fixtures is is_simulated, draft, with destination /cpsim/c/<slug>", f"{rows}")
     check(bool(by) and by.get("schwab", {}).get("fix") == 1 and by.get("domestic_bank", {}).get("banks") == 1 and
           by.get("international_bank", {}).get("banks") == 1 and by.get("altruist", {}).get("banks") == 0 and
-          by.get("altruist", {}).get("fix") == 0 and all(r["bd"] == FRIDAY for r in by.values()),
-          "each type got exactly the field groups it declares (FIX for schwab, bank details for the two banks); the "
+          by.get("altruist", {}).get("fix") == 1 and by.get("domestic_bank", {}).get("fix") == 0 and
+          all(r["bd"] == FRIDAY for r in by.values()),
+          "each type got exactly the field groups it declares (FIX for schwab and — cpsim05 — altruist, bank details "
+          "for the two banks); the "
           "clock starts at the injected business date", f"{by}")
     if "altruist" not in S["cp"]:
         return
@@ -1405,7 +1409,8 @@ async def y_admin(conn):
         note_audit("counterparty.fix_updated", S["cp"]["schwab"])
     check(code == 200 and pw.startswith("cpsim_fixpw_") and pw != S["fixpw"].get("schwab"),
           "FIX session edited (FIXT.1.1) and its password rotated (shown once)", f"{code} {dumps(b)[:200]}")
-    code, b = await api(U_SA, "PUT", f"{_P}/{cid}/fix", {"heartbt_int": 45})
+    # cpsim05: the altruist type now carries a FIX session (docs/cpsim05_part1.sql) — a BANK type has none
+    code, b = await api(U_SA, "PUT", f"{_P}/{S['cp'].get('domestic_bank')}/fix", {"heartbt_int": 45})
     check(code == 400, "an institution type without a FIX session refuses FIX edits (400)", f"{code}")
     code, b = await api(U_SA, "POST", f"{_P}/{cid}/test-message", {"key": S["keys"]["altruist"]})
     if code == 200:

@@ -1350,16 +1350,25 @@ async def execute(pool, *, org_id, proposal_id, actor_id, manual: bool = False) 
             await X.submit(pool, org_id=org_id, instruction_id=iid, actor_id=actor["id"])
     async with pool.acquire() as conn:
         async with conn.transaction():
-            for t, iid in zip(trades, ids):
-                await conn.execute(f"UPDATE {T_T} SET valid_to = now() WHERE id = $1 AND valid_to IS NULL", t["id"])
+            # cpsim05 fix 3: the routing restatement is SET-BASED — two statements for the whole list, not two per
+            # line (it was a per-line N+1 on every approval: 2 round-trips per trade). Same rows, same values: every
+            # routed line is closed (valid_to), then re-inserted carrying its instruction id; the close-only guard
+            # trigger and the active (proposal_id, line_no) unique index see exactly what the per-line loop gave them.
+            pairs = list(zip(trades, ids))
+            tids = [str(t["id"]) for t, _iid in pairs]
+            iids = [str(iid) for _t, iid in pairs]
+            if pairs:
+                await conn.execute(f"UPDATE {T_T} SET valid_to = now() WHERE id = ANY($1::uuid[]) AND valid_to IS NULL",
+                                   tids)
                 await conn.execute(
                     f"""INSERT INTO {T_T} (org_id, proposal_id, line_no, global_security_id, side, quantity, notional,
                             price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
                             wash_sale, instruction_id, lot_method, short_leg, option_leg, cash_leg)
-                        SELECT org_id, proposal_id, line_no, global_security_id, side, quantity, notional, price,
-                               price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                               wash_sale, $2::uuid, lot_method, short_leg, option_leg, cash_leg FROM {T_T}
-                        WHERE id = $1""", t["id"], iid)
+                        SELECT t.org_id, t.proposal_id, t.line_no, t.global_security_id, t.side, t.quantity, t.notional,
+                               t.price, t.price_source, t.price_as_of, t.lots, t.est_st_gain, t.est_lt_gain, t.reason,
+                               t.wash_sale_flag, t.wash_sale, m.iid, t.lot_method, t.short_leg, t.option_leg, t.cash_leg
+                        FROM {T_T} t JOIN unnest($1::uuid[], $2::uuid[]) AS m(tid, iid) ON t.id = m.tid
+                        ORDER BY t.line_no""", tids, iids)
                 # cash04 fix 1: the routing restatement carries EVERY leg column (short / option / cash) — it used to
                 # drop cash_leg, so an approved cash proposal's lines lost their sleeve, limit and warning
             new = await _update(conn, p["id"], {"execution": {
@@ -1371,6 +1380,12 @@ async def execute(pool, *, org_id, proposal_id, actor_id, manual: bool = False) 
                                                                         "routed_to": result.routed_to,
                                                                         "reason": result.reason})
     await _publish(pool, org_id, "routed", p["id"], {"instruction_ids": ids}, actor["id"])
+    # cpsim05 D4 — the ONE choke point: a human-maker proposal routed to the SIMULATED FIX counterparty is sent,
+    # booked, synced and reconciled automatically AFTER this request (the proposal's maker-checker is the approval of
+    # record). Only schedules — nothing is sent inside this request. Every other route: nothing happens here.
+    from services import fix_sim_auto
+
+    fix_sim_auto.after_proposal_routed(pool, org_id=org_id, proposal=p, routing=result.as_dict(), instruction_ids=ids)
     return new
 
 
@@ -1946,8 +1961,10 @@ async def detail(conn, org_id, proposal_id) -> dict:
     out["tasks"] = tasks
     ids = (_loads(p["execution"]) or {}).get("instruction_ids") or []
     out["instructions"] = [{"id": str(r["id"]), "status": r["status"], "side": r["side"],
-                            "quantity": _num(r["quantity"]), "notional": _num(r["notional"])}
-                           for r in await conn.fetch("SELECT id, status, side, quantity, notional FROM "
+                            "quantity": _num(r["quantity"]), "notional": _num(r["notional"]),
+                            "routed_via": r["routed_via"], "sent_channel": r["sent_channel"]}       # cpsim05
+                           for r in await conn.fetch("SELECT id, status, side, quantity, notional, routed_via, "
+                                                     "sent_channel FROM "
                                                      "public.execution_instructions WHERE id = ANY($1::uuid[]) "
                                                      "AND system_to IS NULL", ids)] if ids else []
     plan = await conn.fetchrow(f"SELECT * FROM {T_PLAN} WHERE proposal_id = $1 AND system_to IS NULL "
@@ -1960,6 +1977,9 @@ async def detail(conn, org_id, proposal_id) -> dict:
     from services import model_provider as PM
 
     out["provider_notice"] = await PM.proposal_notice(conn, org_id, p)       # rep15 — provided by a sub-adviser
+    from services import fix_sim_pl as FPL                                    # cpsim05 D7 — SIMULATED execution P/L
+
+    out["fix_sim_pl"] = await FPL.proposal_pl(conn, org_id, p, ids) if ids else None
     return out
 
 

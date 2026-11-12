@@ -106,6 +106,13 @@ VERB_AUTONOMY: dict[str, dict] = {
     "execution.custodian_import": {"class": NEVER, "trades": True,
                                    "writes": "books a custodian's executions as fills (execution_fills) — a person "
                                              "only"},
+    # CPSIM05 — the simulated FIX counterparty's AUTOMATIC send / book / reconcile (services.fix_sim_auto). Declared
+    # NEVER for unattended runs and NOT registered: it is reachable only from the proposal-execution choke point, the
+    # rep2 approval of a proposal-sourced fix_sim instruction and the simulator's clock advance — never a workflow
+    # step, an agent or a trigger. Its approval is the proposal's (or rep2's) maker-checker, by a person.
+    "execution.fix_sim_auto": {"class": NEVER, "trades": True,
+                               "writes": "sends an APPROVED proposal's trades to the SIMULATED FIX counterparty and books "
+                                         "the fills (simulated counterparty only)"},
     "cash.rule_fire": {"class": ELIGIBLE_WITH_CAP, "draft_only": True, "submits_for_approval": True,
                        "quantity": lambda _ctx: 5,
                        "writes": "payment instruction DRAFTS submitted for approval (payment_instructions, status "

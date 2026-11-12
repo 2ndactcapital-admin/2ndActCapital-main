@@ -320,6 +320,13 @@ async def _close_live(conn, table: str, counterparty_id, extra: str = "", *args)
         str(counterparty_id), *args))
 
 
+def default_fix_session(slug: str) -> dict:
+    """cpsim01's session defaults (Hollisworks' orientation: sender = Hollisworks, target = this counterparty)."""
+    return {"begin_string": "FIX.4.4", "sender_comp_id": "HOLLISWORKS",
+            "target_comp_id": slug.upper().replace("-", "_")[:64], "host": f"fix.{slug}.cpsim.invalid", "port": 9878,
+            "heartbt_int": 30, "reset_on_logon": True, "username": None}
+
+
 async def set_fix(conn, counterparty_id, fields: dict, actor, rotate_password: bool = False) -> dict:
     cp = await _require(conn, counterparty_id)
     typ = await institution_type_or_fail(conn, cp["institution_type"])
@@ -329,7 +336,9 @@ async def set_fix(conn, counterparty_id, fields: dict, actor, rotate_password: b
     if unknown:
         raise RegistryError(f"unknown FIX fields {sorted(unknown)}")
     old = await _close_live(conn, "cpsim.counterparty_fix_sessions", cp["id"])
-    base = {k: (old or {}).get(k) for k in FIX_FIELDS}
+    # cpsim05: a counterparty with no session yet (an Altruist-compatible one created before the type carried the 'fix'
+    # group) starts from the same defaults create() writes, so saving the FIX tab once creates a complete session
+    base = {k: (old or {}).get(k) for k in FIX_FIELDS} if old else default_fix_session(cp["slug"])
     base.setdefault("reset_on_logon", True)
     new = {**base, **fields}
     if new.get("begin_string") not in BEGIN_STRINGS:

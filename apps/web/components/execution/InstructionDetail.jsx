@@ -426,6 +426,34 @@ export function OrderSheetPanel({ envelope }) {
   );
 }
 
+/**
+ * CPSIM05 — the FIX exchange of an instruction routed to the SIMULATED FIX counterparty: every message its steps sent
+ * and received (from its own events), readable tag / name / value, and "automatic — simulated counterparty" when the
+ * proposal's approval sent it. Read-only: there is no button here.
+ */
+export function FixExchangePanel({ envelope }) {
+  const fx = envelope?.instruction?.fix_exchange;
+  if (!fx) return null;
+  const msgs = Array.isArray(fx.messages) ? fx.messages : [];
+  return (
+    <div className={`${card} p-6 text-sm`} data-testid="fix-exchange">
+      <h2 className="text-lg font-semibold text-navy">FIX exchange<SimulatedBadge /></h2>
+      {fx.automatic_label ? <p className="mt-1 text-[#334155]" data-testid="fix-automatic">{fx.automatic_label}: sent,
+        booked and reconciled after the proposal&apos;s maker-checker approval — no second approval.</p> : null}
+      {msgs.length ? (
+        <ol className="mt-2 space-y-2">{msgs.map((m, i) => (
+          <li key={`${m.event_id}-${m.direction}-${i}`} data-fix-direction={m.direction}>
+            <p className="font-medium text-navy">{m.direction === "out" ? "Sent" : "Received"} — {m.msg_name || m.msg_type}
+              <span className="ml-2 text-xs text-[#64748B]">{m.action}</span></p>
+            <ul className="text-xs text-[#334155]">{(m.fields || []).filter((f) => ![8, 9, 10].includes(f.tag)).map((f, j) => (
+              <li key={`${f.tag}-${j}`}>{f.tag} {f.name}: {f.value}</li>))}</ul>
+            <code className="block break-all text-[10px] text-[#64748B]">{m.raw}</code>
+          </li>))}</ol>
+      ) : <p className="mt-2 text-[#64748B]" data-testid="fix-exchange-none">No FIX message yet.</p>}
+    </div>
+  );
+}
+
 export default function InstructionDetail({ initialEnvelope, initialOrderView = null }) {
   const [env, setEnv] = useState(initialEnvelope);
   const [orderView, setOrderView] = useState(initialOrderView);
@@ -439,6 +467,7 @@ export default function InstructionDetail({ initialEnvelope, initialOrderView = 
     <div className="space-y-5">
       <Summary envelope={env} />
       <CustodianOrderPanel envelope={env} orderView={orderView} setOrderView={setOrderView} onDone={reload} />
+      <FixExchangePanel envelope={env} />
       <ActionBar key={`${env?.instruction?.status}-${orderView ? "o" : "n"}`} envelope={env} onDone={reload} orderView={orderView} />
       <EditDraft envelope={env} onDone={reload} />
       <TaskPanel envelope={env} onDone={reload} />

@@ -252,6 +252,48 @@ def report(out: dict, path: pathlib.Path) -> None:
     print(f"[json] {path}")
 
 
+async def _fix_fixture(cp: dict, sec: dict) -> dict:
+    """cpsim05 — the fix group's fixture: the two book accounts, the session CompIDs (cpsim01's defaults), and the
+    counterparty's behaviour / clock as callbacks (a fixture counterparty's admin acts, in-process)."""
+    from cpsim import db as SDB
+    from cpsim import ledger as LG
+    from cpsim import orders as SO
+    from cpsim import registry as R
+
+    async with SDB.tx() as conn:
+        sess = await conn.fetchrow("SELECT sender_comp_id, target_comp_id FROM cpsim.counterparty_fix_sessions WHERE "
+                                   "counterparty_id = $1::uuid AND valid_to IS NULL", cp["id"])
+
+    async def behaviour(fields: dict) -> None:
+        async with SDB.tx() as conn:
+            await R.set_behaviour(conn, cp["id"], fields, None)
+
+    async def advance() -> None:
+        async with SDB.tx() as conn:
+            moved = await R.advance_clock(conn, cp["id"], None)
+            day = date.fromisoformat(moved["to"])
+            await SO.reevaluate(conn, cp["id"], day)
+            await LG.settle_fills(conn, cp["id"], day)
+    return {"account_id": "conf-acct-1", "account_2": "conf-acct-2", "cusip": sec["id_value"], "held": "10",
+            "sender": sess["sender_comp_id"], "target": sess["target_comp_id"], "behaviour": behaviour,
+            "advance": advance}
+
+
+async def _fix_log_check(counterparty_id) -> dict:
+    """F20 — every FIX message in and out is in cpsim.fix_messages (append-only), no password stored."""
+    from cpsim import db as SDB
+
+    async with SDB.tx() as conn:
+        r = await conn.fetchrow(
+            "SELECT count(*) FILTER (WHERE direction = 'in') AS n_in, count(*) FILTER (WHERE direction = 'out') AS "
+            "n_out, count(DISTINCT exchange_id) AS ex, count(*) FILTER (WHERE direction = 'in' AND NOT valid) AS bad "
+            "FROM cpsim.fix_messages WHERE counterparty_id = $1::uuid", counterparty_id)
+    ok = r["n_in"] > 0 and r["n_out"] >= r["n_in"] and r["ex"] == r["n_in"] and r["bad"] >= 4
+    return {"id": "F20", "contract": "simulated FIX — no Altruist FIX contract seen (the message log)",
+            "label": "every message in and out logged (one exchange per message in, ≥ one reply each; the rejected "
+                     "ones flagged not valid)", "passed": bool(ok), "detail": "" if ok else str(dict(r))}
+
+
 async def run_in_process(json_out: pathlib.Path, *, transform=None) -> dict:
     """The fixture run. ``transform`` (tests only) rewrites a response — the planted-divergence proof."""
     from _db_connect import hydrate
@@ -284,8 +326,11 @@ async def run_in_process(json_out: pathlib.Path, *, transform=None) -> dict:
             fx = {"account_id": "conf-acct-1", "cusip": sec["id_value"], "held": "10"} if sec else None
             tfx = {"from": "conf-acct-1", "to": "conf-acct-2", "cash": "1250.00", "value_date": clock.isoformat(),
                    **banks}
+            fixfx = await _fix_fixture(cp, sec) if sec else None
             out = await AC.run(environment=AO.SIMULATOR, hosts=hosts, credentials=(cp["client_id"], cp["key"]),
-                               transport=transport, orders=fx, transfers=tfx, today=clock)
+                               transport=transport, orders=fx, transfers=tfx, today=clock, fix=fixfx)
+            if fixfx:
+                out["results"].append(await _fix_log_check(cp["id"]))
         if not sec:      # cpsim03 — the orders group needs a priced equity / fund: its absence is a failure, not a skip
             out["results"].append({"id": "O00", "contract": "§8 (orders)", "label": "orders group: a priced equity / "
                                    "fund security with a CUSIP exists for the fixture book", "passed": False,
