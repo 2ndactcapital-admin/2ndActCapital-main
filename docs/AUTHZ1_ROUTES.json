@@ -1,5 +1,5 @@
 {
- "app_route_count": 1081,
+ "app_route_count": 1085,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -12658,6 +12658,78 @@
    "name": "master_review_decision",
    "note": "",
    "path": "/api/v1/admin/security-data/master/review/{review_id}/decision",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_master",
+   "name": "master_tracked",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/tracked",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.security_master",
+   "name": "master_tracked_estimate",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/tracked/estimate",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.security_master",
+   "name": "master_tracked_track",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/tracked/track",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.security_master",
+   "name": "master_tracked_untrack",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/tracked/untrack",
    "public": false,
    "write": true
   },

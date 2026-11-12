@@ -5,6 +5,8 @@ import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import { jobSwitch } from "@/lib/bugfix4.mjs";
 import { can, labelOf, vocab } from "./sourceLabel.mjs";
 import { describeFilter, listHref, pct, reviewHref } from "@/lib/secmaster2.mjs";
+import { ESTIMATE_API, TRACK_API, UNTRACK_API, actionBody, canTrack, canUntrack, cleanTrackedFilter, confirmText,
+  refusalText, selectionBody, trackedHref } from "@/lib/track1.mjs";
 
 // SECMASTER1 — Super Admin → Security data → Security master: the status panel, the platform jobs
 // (schedule, last run, Run now, close a held run) and the review queue. Every control renders only
@@ -14,6 +16,7 @@ const card = "rounded-[6px] border border-[#ece8dd] bg-white p-5";
 const btn = "rounded border border-[#C5A880] px-2 py-1 text-xs text-navy hover:bg-[#F5F1EB]";
 
 const entries = (o) => Object.entries(o || {});
+const MASTER_SUMMARY = "/admin/security-data/master";
 
 export function StatusPanel({ envelope }) {
   const st = envelope?.status;
@@ -143,6 +146,120 @@ export function SecuritiesList({ envelope }) {
   );
 }
 
+// TRACK1 — the Tracked view: the named lists (Track list…), a filter over the whole master (the server's own
+// predicates — q / type / exchange / category / prices / tracked / list), the matching securities with checkboxes,
+// and the bulk actions. Every write control renders only when the envelope's can_track / can_untrack is exactly
+// true; every bulk action asks the server for the count + estimate first and confirms with it; the request then
+// carries that count and the server refuses if it changed. No envelope → nothing renders (fails closed).
+function Select({ name, value, options, label }) {
+  return (
+    <label className="text-xs text-text-muted">{label}
+      <select name={name} defaultValue={value || ""} className="mt-1 block w-full rounded border border-[#E2E8F0] bg-white px-2 py-1 text-sm text-navy">
+        <option value="">any</option>
+        {(options || []).map((o) => <option key={o.key} value={o.key}>{o.label}{o.count != null ? ` (${o.count})` : ""}</option>)}
+      </select>
+    </label>
+  );
+}
+
+export function TrackedView({ envelope, list, filter = {}, selected = [], onToggle, onToggleAll, onBulk, onTrackList, busy = false }) {
+  if (!envelope || !can(envelope, "can_read")) return null;
+  const v = envelope.vocabularies || {};
+  const f = cleanTrackedFilter(filter, envelope);
+  const rows = Array.isArray(list?.rows) && can(list, "can_read") ? list.rows : [];
+  const total = typeof list?.total === "number" ? list.total : null;
+  const track = canTrack(envelope);
+  const untrack = canUntrack(envelope);
+  const pr = envelope.progress;
+  const sel = new Set(selected);
+  return (
+    <section className={card} data-testid="tracked-view">
+      <div className="flex items-baseline justify-between">
+        <h2 className="font-serif text-xl text-navy">Tracked securities</h2>
+        <a href={MASTER_SUMMARY} className="text-xs text-navy underline decoration-[#C5A880] underline-offset-2">Back to the summary</a>
+      </div>
+      <p className="mt-1 text-sm text-text-muted">Securities tracked here join the price coverage set (reason "tracked"): the prices backfill and the
+        nightly prices job load their 5-year daily history within the source's daily budget.</p>
+      {pr ? <p className="mt-2 text-sm text-navy" data-testid="tracked-progress">{pr.label}</p> : null}
+
+      <h3 className="mt-5 font-serif text-lg text-navy">Named lists</h3>
+      {(envelope.lists || []).length === 0 ? <p className="mt-1 text-sm text-text-muted" data-testid="no-lists">No list is loaded yet — the operator loads them (scripts/security_lists_load.py).</p> : (
+        <table className="mt-2 w-full text-sm">
+          <thead className="text-left text-text-muted"><tr><th>List</th><th>Source</th><th>As of</th><th className="text-right">Members</th>
+            <th className="text-right">Tracked</th><th className="text-right">Not found</th>{track ? <th /> : null}</tr></thead>
+          <tbody>{envelope.lists.map((l) => (
+            <tr key={l.list_key} className="border-t border-[#E2E8F0]" data-testid="list-row">
+              <td title={l.description || ""}><a className="text-navy underline decoration-[#C5A880] underline-offset-2" href={trackedHref({ in_list: l.list_key }, envelope)}>{l.name}</a></td>
+              <td className="text-xs">{l.source_detail}</td><td className="text-xs">{l.as_of || "—"}</td>
+              <td className="text-right">{l.member_count}</td><td className="text-right">{l.tracked}</td><td className="text-right">{l.miss_count}</td>
+              {track ? <td className="text-right"><button type="button" className={btn} disabled={busy} onClick={() => onTrackList?.(l)} data-testid="track-list">Track list…</button></td> : null}
+            </tr>))}</tbody>
+        </table>
+      )}
+
+      <h3 className="mt-5 font-serif text-lg text-navy">Find securities</h3>
+      <form method="get" action={MASTER_SUMMARY} className="mt-2 grid gap-3 md:grid-cols-4" data-testid="tracked-filter">
+        <input type="hidden" name="view" value="tracked" />
+        <label className="text-xs text-text-muted">Name, ticker or CUSIP
+          <input name="q" defaultValue={f.q || ""} maxLength={100} className="mt-1 block w-full rounded border border-[#E2E8F0] bg-white px-2 py-1 text-sm text-navy" /></label>
+        <Select name="security_type" label="Type" value={f.security_type} options={v.security_types} />
+        <Select name="exchange" label="Exchange" value={f.exchange} options={v.exchanges} />
+        <Select name="category" label="Fund category" value={f.category} options={v.categories} />
+        <Select name="has_price" label="Prices" value={f.has_price} options={v.has_price} />
+        <Select name="tracked" label="Tracked" value={f.tracked} options={v.tracked} />
+        <Select name="in_list" label="In list" value={f.in_list} options={v.lists} />
+        <div className="flex items-end"><button type="submit" className={btn}>Apply</button></div>
+      </form>
+
+      {total == null ? null : (
+        <div className="mt-4">
+          <p className="text-xs text-text-muted" data-testid="tracked-count">{describeFilter(list.filters)} — {total} securities{total > rows.length ? `, first ${rows.length} shown` : ""}</p>
+          {(track || untrack) ? (
+            <div className="mt-2 flex flex-wrap gap-2" data-testid="bulk-actions">
+              {track ? <button type="button" className={btn} disabled={busy || sel.size === 0} onClick={() => onBulk?.("track", { ids: [...sel] })}>Track selected ({sel.size})</button> : null}
+              {untrack ? <button type="button" className={btn} disabled={busy || sel.size === 0} onClick={() => onBulk?.("untrack", { ids: [...sel] })}>Untrack selected ({sel.size})</button> : null}
+              {track && Object.keys(f).length ? <button type="button" className={btn} disabled={busy || total === 0} onClick={() => onBulk?.("track", { filters: f })} data-testid="track-all">Track all {total} matching…</button> : null}
+              {untrack && Object.keys(f).length ? <button type="button" className={btn} disabled={busy || total === 0} onClick={() => onBulk?.("untrack", { filters: f })} data-testid="untrack-all">Untrack all {total} matching…</button> : null}
+            </div>
+          ) : null}
+          {rows.length === 0 ? <p className="mt-3 text-sm text-text-muted">No securities match.</p> : (
+            <table className="mt-3 w-full text-sm">
+              <thead className="text-left text-text-muted"><tr>
+                {track || untrack ? <th><input type="checkbox" aria-label="Select all shown" checked={rows.every((r) => sel.has(r.id))} onChange={() => onToggleAll?.(rows.map((r) => r.id))} /></th> : null}
+                <th>Name</th><th>Type</th><th>Identifiers</th><th>Prices</th><th>Tracked</th></tr></thead>
+              <tbody>{rows.map((r) => (
+                <tr key={r.id} className="border-t border-[#E2E8F0]" data-testid="tracked-row">
+                  {track || untrack ? <td><input type="checkbox" aria-label={r.name} checked={sel.has(r.id)} onChange={() => onToggle?.(r.id)} /></td> : null}
+                  <td>{r.name}</td><td>{r.security_type}</td>
+                  <td className="text-xs">{Object.entries(r.identifiers || {}).map(([k, x]) => `${k} ${x}`).join(" · ")}</td>
+                  <td className="text-xs">{r.has_price ? "loaded" : "none yet"}</td>
+                  <td className="text-xs">{r.tracked ? <span className="text-[#2D6A4F]">tracked</span> : "—"}</td>
+                </tr>))}</tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// The confirm-then-write flow of a bulk action (estimate → confirm with the server's numbers → note → write).
+export async function runBulk({ verb, selection, envelope, ask = (m) => window.confirm(m), askNote = (m) => window.prompt(m),
+  post = call }) {
+  const sel = selectionBody(selection, envelope);
+  if (!sel) return { error: "Nothing selected." };
+  const est = await post(ESTIMATE_API, { method: "POST", body: JSON.stringify({ ...sel, removing: verb === "untrack" }) });
+  const refused = refusalText(est);
+  if (refused) return { error: refused };
+  const text = confirmText(verb, est);
+  if (!text || !ask(text)) return { cancelled: true };
+  const note = askNote(verb === "untrack" ? "Why are these untracked? (required)" : (sel.list_key ? "Note (optional)" : "Why are these tracked? (required)"));
+  if (note === null) return { cancelled: true };
+  const body = actionBody(sel, est, note);
+  const out = await post(verb === "untrack" ? UNTRACK_API : TRACK_API, { method: "POST", body: JSON.stringify(body) });
+  return { result: out.result, progress: out.progress };
+}
+
 export function JobsView({ envelope, onRunNow, onClose, onSwitch, runningKey = null }) {
   const jobs = envelope?.jobs || [];
   const run = can(envelope, "can_run");
@@ -228,6 +345,39 @@ async function call(url, opts) {
   return data;
 }
 
+export function TrackedPanel({ initialTracked, initialList, filter }) {
+  const [env, setEnv] = useState(initialTracked);
+  const [selected, setSelected] = useState([]);
+  // CATCHALL1 busy — the ONE shared indicator (no local busy copy)
+  const bulk = useBusy();
+  const [msg, setMsg] = useState(null);
+  const done = async (res) => {
+    if (res.error) setMsg(res.error);
+    else if (res.result) {
+      const r = res.result;
+      setMsg(r.untracked != null ? `Untracked ${r.untracked}; ${r.not_tracked} were not tracked.`
+        : `Tracked ${r.tracked}; ${r.already_tracked} already tracked${r.unknown?.length ? `; ${r.unknown.length} not found` : ""}. ${res.progress?.label || ""}`);
+      setSelected([]);
+      try { setEnv(await call("/api/admin/security-data/master/tracked")); } catch { /* the page reload shows it */ }
+    }
+  };
+  const go = async (verb, selection) => {
+    if (bulk.busy) return;
+    setMsg(null);
+    await bulk.run(async () => { await done(await runBulk({ verb, selection, envelope: env })); });
+  };
+  return (
+    <div className="space-y-3">
+      {msg ? <p className="text-sm text-navy" data-testid="tracked-msg">{msg}</p> : null}
+      <BusyError error={bulk.error} className="block text-sm text-[#9B2335]" />
+      <TrackedView envelope={env} list={initialList} filter={filter} selected={selected} busy={bulk.busy}
+        onToggle={(id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))}
+        onToggleAll={(ids) => setSelected((s) => (ids.every((i) => s.includes(i)) ? s.filter((x) => !ids.includes(x)) : [...new Set([...s, ...ids])]))}
+        onBulk={go} onTrackList={(l) => go("track", { listKey: l.list_key })} />
+    </div>
+  );
+}
+
 export default function SecurityMasterAdmin({ initialStatus, initialJobs, initialReview, initialSummary = null,
   initialList = null }) {
   const [status, setStatus] = useState(initialStatus);
@@ -259,6 +409,7 @@ export default function SecurityMasterAdmin({ initialStatus, initialJobs, initia
     <div className="space-y-6">
       {msg ? <p className="text-sm text-navy">{msg}</p> : null}
       <BusyError error={runNow.error} className="block text-sm text-[#9B2335]" />
+      {can(initialSummary, "can_read") ? <p className="text-sm"><a href={`${MASTER_SUMMARY}?view=tracked&tracked=true`} className="text-navy underline decoration-[#C5A880] underline-offset-2" data-testid="tracked-link">Tracked securities — add any security to the price coverage set</a></p> : null}
       {initialList ? <SecuritiesList envelope={initialList} /> : <SummaryPanel envelope={initialSummary} />}
       <StatusPanel envelope={status} />
       <JobsView envelope={jobs} runningKey={runNow.busy ? runningKey : null} onRunNow={onRunNow}

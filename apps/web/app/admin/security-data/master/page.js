@@ -3,8 +3,9 @@ import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { fetchAPI } from "@/lib/api";
 import { labelFor } from "@/lib/menuVisibility";
-import SecurityMasterAdmin from "@/components/securityData/SecurityMaster";
+import SecurityMasterAdmin, { TrackedPanel } from "@/components/securityData/SecurityMaster";
 import { cleanFilter } from "@/lib/secmaster2.mjs";
+import { cleanTrackedFilter } from "@/lib/track1.mjs";
 
 // SECMASTER1 — Super Admin → Security master: counts by type / source, the platform jobs (last run,
 // Run now, close a held run) and the review queue. Every control comes from the server's envelope.
@@ -22,6 +23,41 @@ export default async function SecurityMasterPage({ searchParams }) {
   let summary = null;
   let list = null;
   let error = null;
+  // TRACK1 — ?view=tracked: the Tracked view. Its filters are only the names the SERVER lists
+  // (tracked envelope vocabularies.filters); with none, it shows the tracked securities.
+  if (one(search.view) === "tracked") {
+    let tracked = null;
+    let tList = null;
+    let tFilter = {};
+    try {
+      tracked = await fetchAPI("/api/v1/admin/security-data/master/tracked");
+      const raw = Object.fromEntries(Object.entries(search).map(([k, v]) => [k, one(v)]));
+      tFilter = cleanTrackedFilter(raw, tracked);
+      if (!Object.keys(tFilter).length) tFilter = cleanTrackedFilter({ tracked: "true" }, tracked);
+      const offset = Number(one(search.offset)) > 0 ? Math.floor(Number(one(search.offset))) : 0;
+      tList = Object.keys(tFilter).length ? await fetchAPI(`/api/v1/admin/security-data/master/securities?${new URLSearchParams({ ...tFilter, limit: "200", offset: String(offset) })}`) : null;
+    } catch (e) {
+      error = e.status === 403 ? "forbidden" : e.message;
+    }
+    return (
+      <AppShell user={session.user}>
+        <h1 className="text-3xl font-semibold text-navy">{labelFor("/admin/security-data/master")}</h1>
+        <div className="mt-6">
+          {error === "forbidden" ? (
+            <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">
+              Tracked securities are managed by Super Admins.
+            </div>
+          ) : error ? (
+            <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">
+              Could not load the tracked securities: {error}
+            </div>
+          ) : (
+            <TrackedPanel initialTracked={tracked} initialList={tList} filter={tFilter} />
+          )}
+        </div>
+      </AppShell>
+    );
+  }
   try {
     [status, jobs, summary] = await Promise.all([fetchAPI("/api/v1/admin/security-data/master/status"),
       fetchAPI("/api/v1/admin/security-data/master/jobs"), fetchAPI("/api/v1/admin/security-data/master/summary")]);
