@@ -73,3 +73,4 @@ verify_cpsim04.py
 verify_altread1.py
 verify_cpsim05.py
 verify_cpsim06.py
+verify_dailyops1.py

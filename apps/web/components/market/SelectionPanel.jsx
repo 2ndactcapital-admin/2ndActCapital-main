@@ -1,9 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { BUTTON, CARD, CARD_STYLE, EYEBROW, QUIET } from "@/components/market/marketStyles.mjs";
-import { codeText } from "@/lib/market/catalogModel.mjs";
+import { requestJson } from "@/components/market/marketClient.mjs";
+import { BUTTON, CARD, CARD_STYLE, ERROR_STYLE, EYEBROW, QUIET } from "@/components/market/marketStyles.mjs";
+import {
+  codeText,
+  interpretSecuritySearch,
+  searchSettings,
+  securitySearchUrl,
+} from "@/lib/market/catalogModel.mjs";
 import { UNRESTRICTED_LICENSE_CLASS } from "@/lib/market/marketDefaults.mjs";
 import {
   KIND_INDICATOR,
@@ -12,6 +18,7 @@ import {
   clearAll,
   indicatorBySeriesKey,
   indicatorGroups,
+  isAllowed,
   isSelectableSecurity,
   isSelected,
   securityGroups,
@@ -24,9 +31,36 @@ import {
  * The left column: category chips (bulk), indicators by category, securities
  * by type. Every label, colour, provider name, license marker and limit comes
  * from the catalog; grouping, counting and toggling are lib/market/selection.mjs.
+ *
+ * dailyops1: the catalog lists only the SELECTABLE securities. The rest of the
+ * security master is found with the search box (GET /api/market/securities/
+ * search); a result with no price history is shown disabled with its reason.
+ * `initialSearch` ({ text, state }) is for render tests only.
  */
-export default function SelectionPanel({ catalog, selection, onChange }) {
+export default function SelectionPanel({ catalog, selection, onChange, initialSearch }) {
   const [message, setMessage] = useState(null);
+  const search = searchSettings(catalog);
+  const [searchText, setSearchText] = useState(initialSearch?.text ?? "");
+  // The answer is kept with the URL it answers; the state shown is derived, so
+  // no state is set synchronously inside the effect.
+  const [searchResult, setSearchResult] = useState(null);
+  const searchUrl = securitySearchUrl(searchText, search);
+  const searchState = initialSearch?.state
+    ?? (!searchUrl ? { kind: "idle" }
+      : searchResult?.url === searchUrl ? searchResult.state : { kind: "loading" });
+
+  useEffect(() => {
+    if (initialSearch || !searchUrl) return undefined;
+    let alive = true;
+    const timer = setTimeout(async () => {
+      const next = interpretSecuritySearch(await requestJson(searchUrl));
+      if (alive) setSearchResult({ url: searchUrl, state: next });
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [searchUrl, initialSearch]);
   const limit = selectionLimit(catalog);
   const groups = indicatorGroups(catalog);
   const secGroups = securityGroups(catalog);
@@ -118,6 +152,61 @@ export default function SelectionPanel({ catalog, selection, onChange }) {
           </div>
         ))}
 
+        {search && (
+          <div data-market-control="security-search">
+            <label className={`${EYEBROW} mb-1 block`} htmlFor="market-security-search">
+              Find a security
+            </label>
+            <input
+              id="market-security-search"
+              type="search"
+              value={searchText}
+              maxLength={search.maxChars}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="Name, ticker or CUSIP"
+              className="w-full rounded border border-[var(--2a-border)] bg-white px-2 py-1 text-sm text-[var(--2a-text)]"
+            />
+            {searchState.kind === "loading" && (
+              <p className={`${QUIET} mt-1`} data-market="search-loading">
+                Searching…
+              </p>
+            )}
+            {searchState.kind === "error" && (
+              <p className="mt-1 text-xs" style={{ color: ERROR_STYLE.color }} role="alert" data-market="search-error">
+                {searchState.message}
+              </p>
+            )}
+            {searchState.kind === "results" && (
+              <div className="mt-1" data-market="search-results">
+                {searchState.securities.length === 0 ? (
+                  <p className={QUIET}>No security matches.</p>
+                ) : (
+                  <ul className="space-y-0.5">
+                    {searchState.securities.map((sec) =>
+                      isSelectableSecurity(sec) && isAllowed(catalog, KIND_SECURITY, sec.id) ? (
+                        <SeriesRow
+                          key={sec.id}
+                          checked={isSelected(selection, KIND_SECURITY, sec.id)}
+                          onToggle={() => apply(toggle(selection, catalog, KIND_SECURITY, sec.id))}
+                          color={sec.color}
+                          name={sec.ticker ? `${sec.name} (${sec.ticker})` : sec.name}
+                          provider={bySeries.get(sec.series_key)?.source_provider}
+                        />
+                      ) : (
+                        <UnselectableRow
+                          key={sec.id}
+                          name={sec.ticker ? `${sec.name} (${sec.ticker})` : sec.name}
+                          reason={sec.unselectable_reason}
+                        />
+                      ),
+                    )}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {secGroups.map((sg) => {
           const rows = (
             <ul className="space-y-0.5">
@@ -140,17 +229,7 @@ export default function SelectionPanel({ catalog, selection, onChange }) {
                     }
                   />
                 ) : (
-                  <li
-                    key={sec.id}
-                    className="flex items-start gap-2 py-0.5 text-sm text-[var(--2a-text-muted)]"
-                    data-market="unselectable"
-                  >
-                    <input type="checkbox" disabled className="mt-1" aria-label={sec.name} />
-                    <span className="min-w-0">
-                      <span className="block truncate">{sec.name}</span>
-                      <span className="block text-[11px]">{codeText(sec.unselectable_reason)}</span>
-                    </span>
-                  </li>
+                  <UnselectableRow key={sec.id} name={sec.name} reason={sec.unselectable_reason} />
                 );
               })}
             </ul>
@@ -170,6 +249,18 @@ export default function SelectionPanel({ catalog, selection, onChange }) {
         })}
       </div>
     </aside>
+  );
+}
+
+function UnselectableRow({ name, reason }) {
+  return (
+    <li className="flex items-start gap-2 py-0.5 text-sm text-[var(--2a-text-muted)]" data-market="unselectable">
+      <input type="checkbox" disabled className="mt-1" aria-label={name} />
+      <span className="min-w-0">
+        <span className="block truncate">{name}</span>
+        <span className="block text-[11px]">{codeText(reason)}</span>
+      </span>
+    </li>
   );
 }
 

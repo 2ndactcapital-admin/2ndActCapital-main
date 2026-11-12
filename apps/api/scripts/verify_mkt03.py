@@ -492,8 +492,14 @@ def a_catalog(R, live_active: int, sec_expected: int) -> None:
           colors1 == colors2 and sc1 == sc2 and bool(colors1),
           "a colour that changes between page loads re-paints a member's saved chart")
     secs = body.get("securities", [])
-    check("C5 securities lists every active, non-merged security-master row",
-          len(secs) == sec_expected, "the overlay picker must show the whole master, selectable or not",
+    # dailyops1 — CONTRACT CHANGE (docs/DAILYOPS1_NOTES.md): the catalog lists only the SELECTABLE
+    # securities (the whole ~16,000-row master crashed the palette); sec_expected is now that count,
+    # read by SQL at runtime. The unselectable rows are found through GET /market/securities/search
+    # (verify_dailyops1 proves the reason on every one of them).
+    check("C5 securities lists every active, non-merged security-master row priced by an ACTIVE series "
+          "(dailyops1: selectable only)",
+          len(secs) == sec_expected,
+          "the overlay picker must show exactly the securities it can plot",
           f"listed={len(secs)} expected={sec_expected}")
     by_id = {s["id"]: s for s in secs}
     linked_ok = all(by_id.get(i, {}).get("selectable") is True and by_id[i].get("series_key") == k
@@ -504,9 +510,11 @@ def a_catalog(R, live_active: int, sec_expected: int) -> None:
           "these are the only securities the overlay can plot today",
           json.dumps({i: (by_id.get(i, {}).get("selectable"), by_id.get(i, {}).get("series_key")) for i in LINKS}))
     others = [s for s in secs if s["id"] not in LINKS]
-    others_ok = all(s["selectable"] is False and s["unselectable_reason"] == "no_price_history"
-                    and s["price_source"] == "none" and s["series_key"] is None for s in others)
-    check("C7 every other security is unselectable with reason 'no_price_history'", others_ok and bool(others),
+    # dailyops1 — the catalog no longer carries unselectable rows; C7 now proves the catalog has NONE
+    # (every listed security is linked to an active series). The 'no_price_history' reason on every
+    # unselectable security is proved on the search route by verify_dailyops1 [C].
+    check("C7 the catalog lists no unselectable security (dailyops1); every one is linked to an active series",
+          not others and all(s["selectable"] is True and s["unselectable_reason"] is None for s in secs),
           "a selectable security with no price history would plot an empty line", f"others={len(others)}")
     perms = body.get("permissions") or {}
     vocab = body.get("vocabularies") or {}
@@ -846,9 +854,10 @@ async def phase_a(conn, reader, dsn) -> None:
               "every assertion below reads these rows", f"counts={n}")
         live_active = await reader.fetchval(f"SELECT count(*) FROM {SERIES_T} WHERE ingest_status = 'active'")
         await load_links(reader)
-        sec_expected = await reader.fetchval(
-            "SELECT count(*) FROM portfolio.securities_global WHERE valid_to IS NULL AND system_to IS NULL "
-            "AND merged_into_id IS NULL")
+        sec_expected = await reader.fetchval(  # dailyops1: the SELECTABLE rows (see C5)
+            "SELECT count(*) FROM portfolio.securities_global g JOIN market_data.indicator_series s "
+            "ON s.security_global_id = g.id AND s.ingest_status = 'active' "
+            "WHERE g.valid_to IS NULL AND g.system_to IS NULL AND g.merged_into_id IS NULL")
         sd_sql = await reader.fetchval(
             f"SELECT stddev_samp(o.value) FROM {OBS_T} o JOIN {SERIES_T} s ON s.id = o.series_id "
             "WHERE s.series_key = $1 AND o.valid_to IS NULL AND o.system_to IS NULL", K("m_sig"))
@@ -1022,6 +1031,12 @@ async def phase_b(reader) -> None:
 
 # ═══════════════════════════════════════════════════════════════════════════
 async def main() -> int:
+    # dailyops1 — fast regression mode: the static / pure sections only (no database, no npm build), judged by
+    # the standard 'TOTAL: N PASS, M FAIL' line the shared nested-run parser reads (_verify_total).
+    if "--self-checks-only" in sys.argv:
+        a_static()
+        print(f"TOTAL: {PASSED} PASS, {FAILED} FAIL")
+        return 1 if FAILED else 0
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true", help="also run Phase B against the real data")
     args = parser.parse_args()

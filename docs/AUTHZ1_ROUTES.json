@@ -1,5 +1,5 @@
 {
- "app_route_count": 1080,
+ "app_route_count": 1081,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -11278,6 +11278,24 @@
    "name": "market_catalog",
    "note": "PUBLIC-TO-ORG: market indicator catalog",
    "path": "/api/v1/market/catalog",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "active"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.market_data",
+   "name": "market_securities_search",
+   "note": "PUBLIC-TO-ORG: security-master search for the market picker (dailyops1)",
+   "path": "/api/v1/market/securities/search",
    "public": false,
    "write": false
   },

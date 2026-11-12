@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import os
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from dataclasses import dataclass, field
 
 from services.note_extraction.trim import estimate_tokens_chars
@@ -101,6 +102,38 @@ def recorded_cost(dep, header_cost: float | None, input_tokens, output_tokens, c
     return priced_cost(dep, input_tokens, output_tokens, cached_tokens)
 
 
+# dailyops1 — portfolio.note_extraction_runs.spend_cap_usd is numeric(12,6):
+# the largest value it holds is 999999.999999. A cap that cannot be stored is
+# refused BEFORE the run row is written, with a reason that names the limit;
+# "no cap" is None (stored NULL), never a sentinel number.
+SPEND_CAP_MAX_USD = Decimal("999999.999999")
+
+
+class SpendCapConfigError(ValueError):
+    """A configured dollar cap that is not a number, negative, or too large to record."""
+
+
+def checked_spend_cap(value, *, source: str = "spend cap") -> Decimal | None:
+    """None → None (no cap). Otherwise a finite Decimal in [0, SPEND_CAP_MAX_USD]
+    rounded to 6 dp (the column's scale), or SpendCapConfigError."""
+    if value is None:
+        return None
+    try:
+        d = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError):
+        raise SpendCapConfigError(f"{source} must be a dollar amount; got a value that is not a number") from None
+    if not d.is_finite():
+        raise SpendCapConfigError(f"{source} must be a finite dollar amount")
+    if d < 0:
+        raise SpendCapConfigError(f"{source} must not be negative")
+    d = d.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+    if d > SPEND_CAP_MAX_USD:
+        raise SpendCapConfigError(
+            f"{source} must be at most ${SPEND_CAP_MAX_USD} (the run record holds numeric(12,6)); "
+            "leave it unset for no dollar cap — the daily model budgets still apply")
+    return d
+
+
 class SpendCapReached(RuntimeError):
     def __init__(self, cap: float, spent: float, needed: float, what: str):
         super().__init__(
@@ -141,7 +174,9 @@ def priced_cost(deployment, input_tokens: int | None, output_tokens: int | None,
 
 @dataclass
 class SpendTracker:
-    cap_usd: float
+    """``cap_usd`` None = no dollar cap (dailyops1): the daily run's model
+    budgets (services.ai_budget) are then the only limit."""
+    cap_usd: float | None
     spent_usd: float = 0.0
     reserved_usd: float = 0.0
     calls: int = 0
@@ -149,7 +184,7 @@ class SpendTracker:
 
     async def reserve(self, estimate: float, what: str) -> float:
         async with self._lock:
-            if self.spent_usd + self.reserved_usd + estimate > self.cap_usd:
+            if self.cap_usd is not None and self.spent_usd + self.reserved_usd + estimate > self.cap_usd:
                 raise SpendCapReached(self.cap_usd, self.spent_usd + self.reserved_usd, estimate, what)
             self.reserved_usd += estimate
             return estimate
@@ -166,6 +201,8 @@ class SpendTracker:
 
     @property
     def remaining(self) -> float:
+        if self.cap_usd is None:
+            return float("inf")
         return max(0.0, self.cap_usd - self.spent_usd - self.reserved_usd)
 
 

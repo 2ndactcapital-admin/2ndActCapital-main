@@ -154,7 +154,8 @@ TEST_WHY = {
 # Earlier sprints' suites, run here as a regression (their own verifies count them).
 EARLIER = ["rebase.test.mjs", "chartGeometry.test.mjs", "chartModel.test.mjs", "chartRequest.test.mjs",
            "chartRender.test.mjs", "render.test.mjs", "gridRequest.test.mjs", "selection.test.mjs",
-           "marketRoutes.test.mjs"]
+           "marketRoutes.test.mjs",
+           "dailyops1Render.test.mjs"]   # dailyops1: the security search box (a later sprint's suite, run here too)
 
 
 def node_tests() -> None:
@@ -328,6 +329,10 @@ def static_scans() -> None:
     check(re.findall(r"\bfetch\(([^,)]*)", client) == ["url"] and "export async function requestJson(url" in client,
           "marketClient.requestJson fetches only the URL it is given", "the URL always comes from a lib route builder")
     allowed_args = {"step.request.url", "req.url", "VIEWS_ROUTE", "url"}
+    # dailyops1: SelectionPanel's search URL — allowed only because it is built by the lib/market builder.
+    sel = strip_comments(read(COMPONENTS / "SelectionPanel.jsx"))
+    if "const searchUrl = securitySearchUrl(searchText, search);" in sel:
+        allowed_args.add("searchUrl")
     req_args = sorted({a.strip() for f in COMPONENTS.glob("*.jsx")
                        for a in re.findall(r"requestJson\(([^,)]*)", strip_comments(read(f)))})
     check(bool(req_args) and set(req_args) <= allowed_args,
@@ -578,6 +583,13 @@ def build() -> None:
 
 # ═══════════════════════════════════════════════════════════════════════════
 def main() -> int:
+    # dailyops1 — fast regression mode: the static / pure sections only (no database, no npm build), judged by
+    # the standard 'TOTAL: N PASS, M FAIL' line the shared nested-run parser reads (_verify_total).
+    if "--self-checks-only" in sys.argv:
+        node_tests()
+        static_scans()
+        print(f"TOTAL: {_n_pass} PASS, {_n_fail} FAIL", flush=True)
+        return 1 if _n_fail else 0
     node_tests()
     static_scans()
     files = scope()

@@ -251,7 +251,10 @@ def stddev_field() -> None:
     check(not bad, "stddev_text: 6 dp ROUND_HALF_EVEN text, null for None and for 0, never exponent notation",
           "the browser divides by exactly this string; a float or a different rounding desyncs sigma", f"bad={bad}")
 
-    cur = ast.parse(read(READ_SERVICE))
+    # dailyops1 — pinned to mkt04b's OWN commit (not the working tree): a later sprint's edits to read_service.py
+    # (dailyops1's security search) are not mkt04b's change (docs/VERIFY_RULES, _verify_self "RULE").
+    _base_ref, own_sha = sprint_range()
+    cur = ast.parse(git("show", f"{own_sha}:{READ_SERVICE_REL}") if own_sha else read(READ_SERVICE))
     base_src = base_text(READ_SERVICE_REL)
     if not check(bool(base_src), "the pre-sprint read_service.py is readable from git", "the diff proof needs it"):
         return
@@ -750,6 +753,15 @@ async def phase_b() -> None:
 
 # ═══════════════════════════════════════════════════════════════════════════
 def main() -> int:
+    # dailyops1 — fast regression mode: the static / pure sections only (no database, no npm build), judged by
+    # the standard 'TOTAL: N PASS, M FAIL' line the shared nested-run parser reads (_verify_total).
+    if "--self-checks-only" in sys.argv:
+        golden()
+        stddev_field()
+        node_tests()
+        static_scans()
+        print(f"TOTAL: {_n_pass} PASS, {_n_fail} FAIL", flush=True)
+        return 1 if _n_fail else 0
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="also run Phase B against the real database")
     args = ap.parse_args()

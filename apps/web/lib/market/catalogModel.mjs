@@ -86,3 +86,42 @@ export function vocabText(vocabList, code) {
   }
   return codeText(code);
 }
+
+// ── Security search (dailyops1) ─────────────────────────────────────────────
+// The catalog lists only the SELECTABLE securities; the rest of the security
+// master is found through GET /api/market/securities/search?q=. The limits
+// (minimum / maximum characters, result cap) come from the catalog's own
+// vocabularies.search — with no such vocabulary the search box is not shown.
+
+export const SECURITY_SEARCH_ROUTE = "/api/market/securities/search";
+
+/** The catalog's search limits, or null (fail closed: no search box). */
+export function searchSettings(catalog) {
+  const s = catalog?.vocabularies?.search;
+  if (!isObject(s)) return null;
+  const { min_chars: minChars, max_chars: maxChars, max_results: maxResults } = s;
+  if (![minChars, maxChars, maxResults].every((n) => typeof n === "number" && n > 0)) return null;
+  return { minChars, maxChars, maxResults };
+}
+
+/** The request URL for a search, or null when the text is too short / long. */
+export function securitySearchUrl(text, settings) {
+  const q = String(text ?? "").trim();
+  if (!settings || q.length < settings.minChars || q.length > settings.maxChars) return null;
+  return `${SECURITY_SEARCH_ROUTE}?q=${encodeURIComponent(q)}`;
+}
+
+export const SEARCH_FAILED = "The security search could not be completed.";
+
+/**
+ * { ok, body } of GET /api/market/securities/search -> the search state.
+ *   { kind: "error", message } | { kind: "results", query, securities }
+ * FAIL CLOSED: a response without a read-granting envelope is an error.
+ */
+export function interpretSecuritySearch({ ok, body }) {
+  if (!ok) return { kind: "error", message: errorMessage(body, SEARCH_FAILED) };
+  if (!grantsRead(body) || !Array.isArray(body.securities)) {
+    return { kind: "error", message: NO_ENVELOPE_MESSAGE };
+  }
+  return { kind: "results", query: typeof body.query === "string" ? body.query : "", securities: body.securities };
+}

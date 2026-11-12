@@ -1,6 +1,7 @@
 """mkt03 — the market data READ API: catalog, series, grid, correlations.
 
-    GET  /market/catalog                                   categories, indicators, securities
+    GET  /market/catalog                                   categories, indicators, SELECTABLE securities
+    GET  /market/securities/search?q=                      security-master search (dailyops1), <= 25 rows
     GET  /market/series?keys=a,b&from=&to=&frequency=      raw (optionally resampled) points
     POST /market/grid          {keys, anchor, end?, mode, frequency}
     POST /market/correlations  {focus_key, keys, anchor, end?, lag_months?, min_periods?}
@@ -56,6 +57,19 @@ async def market_catalog(request: Request):
             "loc": ["query"], "type": "extra_forbidden",
             "msg": "This endpoint takes no query parameters"}]))
     body = await _read(svc.build_catalog)
+    return {**body, "permissions": permissions_envelope(reader)}
+
+
+@router.get("/securities/search")
+async def market_securities_search(request: Request):
+    """dailyops1 — the catalog lists only selectable securities; the rest of
+    the security master is found here. Same gate and envelope as /catalog."""
+    reader = await require_market_data_read(request)
+    try:
+        q = svc.parse_search_query(list(request.query_params.multi_items()))
+        body = await _read(svc.search_securities, q)
+    except svc.MarketDataRequestError as exc:
+        return _refusal(exc)
     return {**body, "permissions": permissions_envelope(reader)}
 
 

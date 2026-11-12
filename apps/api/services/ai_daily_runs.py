@@ -66,6 +66,7 @@ CAP_ENV = "AI_DAILY_RUN_SPEND_CAP_USD"           # optional per-run dollar cap f
 DEFAULT_SLICE, DEFAULT_LEASE, DEFAULT_START = 240, 600, "00:05"
 BATCH = 25
 HISTORY_DAYS = 30
+NOTE_PUBLIC_FORMS = ("424B2", "FWP")             # the note corpus: EDGAR pricing supplements / free-writing prospectuses
 
 
 def _env_int(name: str, default: int) -> int:
@@ -99,12 +100,39 @@ def start_after() -> tuple[int, int]:
     return 0, 5
 
 
-def spend_cap() -> float:
+def spend_cap():
+    """The note job's per-run dollar cap: None when ``CAP_ENV`` is unset (no
+    dollar cap — the daily model budgets are the limit; stored as NULL).
+
+    dailyops1: this used to return the sentinel 1e9, which cannot fit
+    portfolio.note_extraction_runs.spend_cap_usd (numeric(12,6)) — every
+    nightly run since 2026-11-05 stopped on a numeric overflow before reading
+    a single document. A configured value that is not a number, negative or
+    too large to record raises spend.SpendCapConfigError (the run is then
+    stopped at its start with that reason) — never a silent fallback."""
+    from services.note_extraction.spend import checked_spend_cap
+
     raw = (os.environ.get(CAP_ENV) or "").strip()
-    try:
-        return float(raw) if raw else 1e9          # no cap set: the daily budgets are the limit
-    except ValueError:
-        return 1e9
+    return None if not raw else float(checked_spend_cap(raw, source=CAP_ENV))
+
+
+# ── the public-data guard (dailyops1) ───────────────────────────────────────
+# The daily jobs run on the data-sharing OpenAI models (public_data_only in
+# platform_model_catalog): ONLY public documents may ever reach them. A job is
+# run only when its task key is a public-data task (services.model_catalog.
+# PUBLIC_DATA_TASK_KEYS — the one source of that rule), checked in drive()
+# BEFORE a single item is selected. statement_positions (member statements) is
+# not one, and is also never scheduled. Each job's queue reads only the public
+# corpus: the note queue keeps only reference filings classified
+# 'public_reference' (EDGAR 424B2/FWP); the replica job reads fund
+# prospectuses pulled from EDGAR into the platform-only source-document store.
+def public_job_refusal(task_key: str) -> str | None:
+    from services import model_catalog as MC
+
+    if task_key in NEVER_SCHEDULED or task_key not in MC.PUBLIC_DATA_TASK_KEYS:
+        return (f"'{task_key}' is not a public-data job: the daily run reads documents with data-sharing models "
+                f"and may run only {sorted(MC.PUBLIC_DATA_TASK_KEYS)} — refused before any item was selected")
+    return None
 
 
 # ── jobs ────────────────────────────────────────────────────────────────────
@@ -142,8 +170,13 @@ async def _note_queue(pool, *, exclude=(), limit: int = BATCH, include_test_orgs
         ready = await selection.ready_notes(conn)
         staged = {str(r["reference_filing_id"]) for r in await conn.fetch(
             "SELECT DISTINCT reference_filing_id FROM portfolio.note_extraction_staging")}
+        # dailyops1 public-data guard: only the public EDGAR corpus, never anything else.
+        public = {str(r["id"]) for r in await conn.fetch(
+            "SELECT id FROM portfolio.reference_filings WHERE id = ANY($1::uuid[]) "
+            "AND retention_classification = 'public_reference' AND form_type = ANY($2::text[])",
+            [n.reference_filing_id for n in ready], list(NOTE_PUBLIC_FORMS))}
     skip = staged | {str(x) for x in exclude}
-    todo = [n for n in ready if n.reference_filing_id not in skip]
+    todo = [n for n in ready if n.reference_filing_id not in skip and n.reference_filing_id in public]
     return [{"id": n.reference_filing_id, "issuer": n.issuer} for n in selection.stratify(todo, limit)]
 
 
@@ -153,8 +186,12 @@ async def _note_read(pool, run: dict, cfg: dict, items: list[dict], stop_when) -
     import asyncpg
 
     from services.note_extraction import cascade, participants, proxy, runner, schema
-    from services.note_extraction.spend import UnpricedModelError
+    from services.note_extraction.spend import SpendCapConfigError, UnpricedModelError
 
+    try:
+        cap = spend_cap()                      # refused at the start, before any connection or document
+    except SpendCapConfigError as exc:
+        return BatchResult(error=f"refused at start: {exc}")
     conn = await asyncpg.connect(os.environ["DATABASE_URL"], statement_cache_size=0, ssl="require", timeout=30)
     try:
         specs = schema.build_field_specs(await schema.load_registry_rows(conn))
@@ -168,7 +205,7 @@ async def _note_read(pool, run: dict, cfg: dict, items: list[dict], stop_when) -
             jev_route=cfg.get("jev_route"), escalation=None, ensemble_config_id=str(cfg["id"]))
         try:
             summary = await runner.run_notes(
-                conn, [i["id"] for i in items], specs, slots, catalog=catalog, spend_cap_usd=spend_cap(),
+                conn, [i["id"] for i in items], specs, slots, catalog=catalog, spend_cap_usd=cap,
                 run_kind="cascade", config={"daily_run_id": str(run["id"]), "trigger": run["trigger"]},
                 participant_rows=parts, issuer_groups=groups, stop_when=stop_when)
         except UnpricedModelError as exc:
@@ -366,6 +403,9 @@ async def drive(pool, run_id, *, jobs: dict[str, Job] | None = None, deadline: f
         deadline = clock() + slice_seconds()
     if job is None:
         return await _finish(pool, run_id, STOPPED_ERROR, detail=f"'{run['task_key']}' is not a daily job") or run
+    refusal = public_job_refusal(job.task_key)
+    if refusal is not None:
+        return await _finish(pool, run_id, STOPPED_ERROR, detail=refusal) or run
     done, failed, base_usage = int(run["documents_done"]), list(run["failed_items"] or []), run["usage"] or {}
     scope = None
     try:
@@ -461,6 +501,9 @@ async def daily_tick(pool, *, now_utc: datetime | None = None, jobs: dict[str, J
     for task_key, job in jobs.items():
         if task_key in NEVER_SCHEDULED:
             out["jobs"][task_key] = {"action": "never_scheduled"}
+            continue
+        if public_job_refusal(task_key) is not None:
+            out["jobs"][task_key] = {"action": "not_public_data"}
             continue
         try:
             async with ai_budget._platform_tx(pool) as conn:
