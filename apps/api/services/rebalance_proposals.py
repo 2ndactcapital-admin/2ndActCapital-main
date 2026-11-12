@@ -1952,8 +1952,10 @@ async def detail(conn, org_id, proposal_id) -> dict:
     out["tasks"] = tasks
     ids = (_loads(p["execution"]) or {}).get("instruction_ids") or []
     out["instructions"] = [{"id": str(r["id"]), "status": r["status"], "side": r["side"],
-                            "quantity": _num(r["quantity"]), "notional": _num(r["notional"])}
-                           for r in await conn.fetch("SELECT id, status, side, quantity, notional FROM "
+                            "quantity": _num(r["quantity"]), "notional": _num(r["notional"]),
+                            "routed_via": r["routed_via"], "sent_channel": r["sent_channel"]}       # cpsim05
+                           for r in await conn.fetch("SELECT id, status, side, quantity, notional, routed_via, "
+                                                     "sent_channel FROM "
                                                      "public.execution_instructions WHERE id = ANY($1::uuid[]) "
                                                      "AND system_to IS NULL", ids)] if ids else []
     plan = await conn.fetchrow(f"SELECT * FROM {T_PLAN} WHERE proposal_id = $1 AND system_to IS NULL "
@@ -1966,6 +1968,9 @@ async def detail(conn, org_id, proposal_id) -> dict:
     from services import model_provider as PM
 
     out["provider_notice"] = await PM.proposal_notice(conn, org_id, p)       # rep15 — provided by a sub-adviser
+    from services import fix_sim_pl as FPL                                    # cpsim05 D7 — SIMULATED execution P/L
+
+    out["fix_sim_pl"] = await FPL.proposal_pl(conn, org_id, p, ids) if ids else None
     return out
 
 

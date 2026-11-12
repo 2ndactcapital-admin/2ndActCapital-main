@@ -217,12 +217,48 @@ function ConnectionTab({ env, d, act }) {
   );
 }
 
-function FixTab({ env, d, act }) {
+/**
+ * CPSIM05 — the FIX message log (read-only): every message the simulated counterparty received and answered, newest
+ * first, each readable as tag / name / value. FIX 4.4 tag=value over HTTP — no session, logon or heartbeat.
+ */
+export function FixMessages({ id, initialMessages }) {
+  const [env, , loadError] = useLoaded(initialMessages, initialMessages ? null : `${id}/fix/messages`);
+  if (loadError) return <p className="text-sm text-[#9B2335]" data-testid="fix-messages">{loadError}</p>;
+  if (!env) return <p className="text-sm text-[#64748B]" data-testid="fix-messages">Loading the FIX log…</p>;
+  const rows = Array.isArray(env.rows) ? env.rows : [];
+  const notes = Array.isArray(env.notes) ? env.notes : [];
+  return (
+    <div data-testid="fix-messages" className="mt-4 space-y-2">
+      <h3 className="text-sm font-semibold text-navy">FIX messages<span className="ml-2 rounded border border-[#C5A880] px-1 text-[10px] font-semibold">SIMULATED</span></h3>
+      {notes.map((n) => <p key={n} className="text-xs text-[#64748B]">{n}</p>)}
+      {rows.length ? (
+        <table className="w-full text-left text-xs">
+          <thead className="text-[#64748B]"><tr><th>When</th><th>Direction</th><th>Message</th><th>ClOrdID</th>
+            <th>OrderID</th><th>ExecID</th><th>Valid</th><th>Fields</th></tr></thead>
+          <tbody>{rows.map((m) => (
+            <tr key={m.id} className="border-t border-[#ece8dd] align-top" data-fix-message={m.id}>
+              <td>{shortDate(m.created_at)}</td><td>{m.direction === "in" ? "Received" : "Sent"}</td>
+              <td>{m.msg_name || m.msg_type || "—"}</td><td>{m.cl_ord_id || ""}</td><td>{m.order_id || ""}</td>
+              <td>{m.exec_id || ""}</td>
+              <td>{m.valid ? "Yes" : `No — ${m.reject_reason || "rejected"}`}</td>
+              <td><details><summary className="cursor-pointer text-navy">{(m.fields || []).length} fields</summary>
+                <ul>{(m.fields || []).map((f, i) => <li key={`${f.tag}-${i}`}>{f.tag} {f.name}: {f.value}</li>)}</ul>
+                <code className="block break-all text-[10px] text-[#64748B]">{m.raw}</code></details></td>
+            </tr>))}</tbody>
+        </table>
+      ) : <p className="text-sm text-[#64748B]" data-testid="fix-messages-none">No FIX messages yet.</p>}
+    </div>
+  );
+}
+
+function FixTab({ env, d, act, fixMessages = null }) {
   const f = d.fix_session;
   if (!f) return <p className="text-sm text-[#64748B]" data-testid="tab-fix">No FIX session.</p>;
   return (
     <div data-testid="tab-fix">
-      <p className="text-xs text-[#64748B]">Stored only — there is no FIX engine in this version.</p>
+      <p className="text-xs text-[#64748B]">SIMULATED — FIX 4.4 messages carried over HTTP (POST …/fix): one message in,
+        the reply message(s) out. SenderCompID / TargetCompID below must match each message. There is no FIX engine —
+        no session, logon or heartbeat.</p>
       <dl className="mt-2 grid gap-3 text-sm md:grid-cols-3">
         <Field label="BeginString" value={f.begin_string} /><Field label="SenderCompID" value={f.sender_comp_id} />
         <Field label="TargetCompID" value={f.target_comp_id} /><Field label="Host" value={f.host} />
@@ -240,6 +276,7 @@ function FixTab({ env, d, act }) {
             Rotate FIX password</button>
         </div>
       ) : null}
+      <FixMessages id={env.counterparty?.id} initialMessages={fixMessages} />
     </div>
   );
 }
@@ -721,7 +758,7 @@ export function ConformanceTab({ id, initialConformance }) {
 }
 
 export function CounterpartyDetail({ envelope, requests, initialTab = "connection", book = null, connections = null,
-  conformance = null, orders = null, initialAdvance = null, transfers = null, received = null }) {
+  conformance = null, orders = null, initialAdvance = null, transfers = null, received = null, fixMessages = null }) {
   const [env, setEnv] = useState(envelope);
   const [advance, setAdvance] = useState(initialAdvance);
   const [log, setLog] = useState(requests);
@@ -744,7 +781,7 @@ export function CounterpartyDetail({ envelope, requests, initialTab = "connectio
     }
   }
   const body = {
-    connection: <ConnectionTab env={env} d={env} act={act} />, fix: <FixTab env={env} d={env} act={act} />,
+    connection: <ConnectionTab env={env} d={env} act={act} />, fix: <FixTab env={env} d={env} act={act} fixMessages={fixMessages} />,
     bank: <BankTab env={env} d={env} act={act} />, behaviour: <BehaviourTab env={env} d={env} act={act} />,
     clock: <ClockTab env={env} d={env} act={act} advance={advance} />, activity: <ActivityTab requests={log} />,
     import_export: tabs.find((t) => t.key === "import_export")?.enabled

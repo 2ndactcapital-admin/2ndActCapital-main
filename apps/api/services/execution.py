@@ -1198,7 +1198,27 @@ async def detail(conn, org_id, instruction_id) -> dict:
     from services import custodian_execution as CX   # cpsim03 — the custodian-API route (no network here)
 
     out["custodian"] = await CX.panel(conn, org_id, row, acct)
+    # cpsim05 — the FIX exchange (SIMULATED): every message this instruction's automatic / person FIX steps sent and
+    # received, from its OWN events (no read of the simulator), readable tag / name / value
+    out["fix_exchange"] = fix_exchange(out["timeline"]) if row["routed_via"] == FIX_SIM_CHANNEL else None
     return out
+
+
+def fix_exchange(timeline: list[dict]) -> dict:
+    from services import fix_sim_client as FC
+
+    msgs = []
+    for e in timeline:
+        fx = (e.get("detail") or {}).get("fix") or {}
+        for direction, raws in (("out", [fx.get("sent")] if fx.get("sent") else []), ("in", fx.get("received") or [])):
+            for raw in raws:
+                fields = FC.readable(raw)
+                mt = next((f["value"] for f in fields if f["tag"] == 35), None)
+                msgs.append({"event_id": e["id"], "action": e["action"], "at": e["at"], "direction": direction,
+                             "msg_type": mt, "msg_name": FC.MSG_NAMES.get(mt or ""), "raw": raw, "fields": fields})
+    auto = any((e.get("detail") or {}).get("on_behalf") == "automatic" for e in timeline)
+    return {"label": "SIMULATED", "messages": msgs,
+            "automatic": auto, "automatic_label": "automatic — simulated counterparty" if auto else None}
 
 
 def vocabularies() -> dict:

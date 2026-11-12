@@ -86,6 +86,43 @@ export function Weights({ envelope }) {
   );
 }
 
+/**
+ * CPSIM05 — what the proposal's trades did at the SIMULATED FIX counterparty, from the server only: per trade the fill,
+ * proceeds / cost and the realized short- / long-term gain the TAX ENGINE computed (the lot method in force); the
+ * account's unrealized P/L at the last platform price. Every number is labelled SIMULATED. Nothing when the server
+ * sends no panel (fails closed — no client-side default).
+ */
+export function SimulatedFixPL({ envelope }) {
+  const pl = envelope?.proposal?.fix_sim_pl;
+  if (!pl || !Array.isArray(pl.trades)) return null;
+  const t = pl.totals || {};
+  const u = pl.unrealized || {};
+  const tag = <span data-testid="pl-simulated" className="ml-1 rounded border border-[#C5A880] bg-[#F5F1EB] px-1 text-[10px] font-semibold text-navy">SIMULATED</span>;
+  return (
+    <div className={`${card} p-6 text-sm`} data-testid="fix-sim-pl">
+      <h2 className="text-lg font-semibold text-navy">Simulated execution — realized and unrealized{tag}</h2>
+      <p className="mt-1 text-xs text-[#64748B]">Sent automatically to the simulated FIX counterparty after this proposal&apos;s
+        approval. {pl.method}</p>
+      <table className="mt-2 w-full text-left">
+        <thead className="text-xs text-[#64748B]"><tr><th>Security</th><th>Side</th><th>Filled</th><th>Fill price</th>
+          <th>Proceeds / cost</th><th>Realized ST</th><th>Realized LT</th><th>Status</th></tr></thead>
+        <tbody>{pl.trades.map((r) => (
+          <tr key={r.instruction_id} className="border-t border-[#ece8dd]" data-pl-trade={r.instruction_id}>
+            <td>{r.security || "—"}</td><td>{r.side}</td><td>{r.filled_quantity}{tag}</td><td>{r.average_price ?? "—"}</td>
+            <td>{r.side === "sell" ? `${moneyText(r.proceeds)} proceeds` : `${moneyText(r.cost)} cost`}</td>
+            <td>{r.realized_st != null ? moneyText(r.realized_st) : (r.realized_note || "—")}</td>
+            <td>{r.realized_lt != null ? moneyText(r.realized_lt) : "—"}</td><td>{r.status}</td>
+          </tr>))}</tbody>
+      </table>
+      <p className="mt-2" data-testid="pl-totals">Total{tag}: proceeds {moneyText(t.proceeds)}, cost {moneyText(t.cost)};
+        realized short-term {moneyText(t.realized_st)}, long-term {moneyText(t.realized_lt)}
+        (net {moneyText(t.realized)}).</p>
+      <p className="mt-1" data-testid="pl-unrealized">Account unrealized P/L at the last platform price{tag}:
+        {" "}{moneyText(u.total)} ({u.lot_source === "custodian" ? "the custodian's lots" : "Hollisworks lots"}, as of {u.as_of}).</p>
+    </div>
+  );
+}
+
 export default function ProposalDetail({ initialEnvelope }) {
   const [env, setEnv] = useState(initialEnvelope);
   const [note, setNote] = useState("");
@@ -179,11 +216,13 @@ export default function ProposalDetail({ initialEnvelope }) {
         </div>
         {msg ? <p className="mt-2 text-[#9B2335]">{msg}</p> : null}
       </div>
+      <SimulatedFixPL envelope={env} />
       {instructions.length ? (
         <div className={`${card} p-6 text-sm`}>
           <h2 className="text-lg font-semibold text-navy">Execution instructions</h2>
           <ul className="mt-2">{instructions.map((i) => (
-            <li key={i.id}><a className="text-navy underline" href={`/portfolio/instructions/${i.id}`}>{i.side} {i.quantity || i.notional}</a> — {i.status}</li>
+            <li key={i.id}><a className="text-navy underline" href={`/portfolio/instructions/${i.id}`}>{i.side} {i.quantity || i.notional}</a> — {i.status}
+              {i.routed_via === "fix_sim" ? <span className="ml-2 text-xs text-[#64748B]" data-testid="fix-sim-route">automatic — simulated counterparty (SIMULATED)</span> : null}</li>
           ))}</ul>
         </div>
       ) : null}
