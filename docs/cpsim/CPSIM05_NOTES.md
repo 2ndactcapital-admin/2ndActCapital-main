@@ -221,3 +221,12 @@ found none; `--cleanup-only` read 0 before and 17 PASS / 0 FAIL after).
 | **S** — "SELL SHORT … ValidationError: … carries short terms" (log 357) | **VERIFY** | rep13 `TradeLine._one_amount` (custody/trading.py:155): a `sell_short` line must carry `short_terms` with `position_effect: open`. The fixture had none, so the model refused it before the route was reached. | The line carries `short_terms = {"position_effect": "open"}`; a new check asserts the TradeList is valid, so the refusal asserted (`ShortSaleNotDeclared`, nothing sent) is the route's. |
 | **R1** — nested verify_cpsim03 §8 "every row ASSUMED — 25 rows; not ASSUMED: []" (log 482) | **VERIFY** | The offender list is empty; the failing term is the exact heading words `"ASSUMED — no published Altruist trading API seen"`, which altread1 relabelled to `## 8. Orders — ASSUMED — not part of Altruist's published API (Realtime / FIX)`. | §8 is found by its number (`## 8. Orders`, unchanged); its HEADING must contain ASSUMED; ≥ 20 rows, every row ASSUMED — unchanged. |
 | **R2** — nested verify_altread1 "PROJECT_STATUS carries the ALTREAD1 STATUS line" (log 484) | **DOCS** (cpsim05 damage) | `git diff 904d265 d017e9a -- docs/PROJECT_STATUS.md`: cpsim05 task 1 inserted its block by replacing the start of the line `## ALTREAD1 — the Altruist READ client`, leaving ` matches Altruist's PUBLISHED …` with no heading. The check was right. | Heading restored verbatim; the check is unchanged. |
+
+## 8. Fix 1 proof (fix 2, 2026-11-12) — each one-off recorded and committed as it ran
+
+Each run: `timeout 600 doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_cpsim05.py <flag>` (one at a time,
+nothing else heavy alongside).
+
+| Run | Result | Notes |
+|---|---|---|
+| `--cleanup-only` (start) | **17 PASS, 0 FAIL** (183 s) | fixture rows before: **0** in all 55 counted tables (the killed fix 1 one-off left nothing); after: 0 per table, 0 leftovers; 15 real-row fingerprints (count + checksum) unchanged |
