@@ -196,11 +196,19 @@ def _citizenship(v) -> str | None:
     return v if v in ("us_citizen", "permanent_resident", "visa") else None
 
 
+def _infer_kind(contact_kind: str, digits: str) -> str:
+    """The kind of a number with no recorded type: a legal entity's is an EIN; a person's starting with 9 is an ITIN
+    (no SSN is issued in the 900 area), otherwise an SSN."""
+    if contact_kind == "entity":
+        return "ein"
+    return "itin" if digits[:1] == "9" else "ssn"
+
+
 def _tax_on_record(e: dict, taxes: list) -> dict:
     """What the page may know about a tax id: whether the FULL number can be read at send time ('full' — the legacy
     entities.tax_id), only a hash ('hash_only' — the opener types it), or none; and its last four."""
     if _digits(e.get("tax_id")) and len(_digits(e.get("tax_id"))) == 9:
-        k = (taxes[0]["kind"] if taxes else None) or ("ein" if _kind(e["entity_type"]) == "entity" else "ssn")
+        k = (taxes[0]["kind"] if taxes else None) or _infer_kind(_kind(e["entity_type"]), _digits(e["tax_id"]))
         return {"on_record": "full", "last4": last4(e["tax_id"]), "kind": k if k in ("ssn", "itin", "ein") else None}
     if taxes:
         k = taxes[0]["kind"]
@@ -352,8 +360,8 @@ def build_request(crm: dict, member_ids: list[str], body: dict, today: date) -> 
             c["tax_id"] = {"kind": typed.get("kind") or (taxes[0]["kind"] if taxes else None),
                            "value": str(typed["value"])}
         elif len(_digits(e.get("tax_id"))) == 9:
-            k = (typed or {}).get("kind") or (taxes[0]["kind"] if taxes else None) or (
-                "ein" if pre["kind"] == "entity" else "ssn")
+            k = (typed or {}).get("kind") or (taxes[0]["kind"] if taxes else None) or _infer_kind(
+                pre["kind"], _digits(e["tax_id"]))
             c["tax_id"] = {"kind": k, "value": _digits(e["tax_id"])}
         elif taxes:
             probs.append(_local_problem(f"{p}.tax_id", "type_tax_id", "the CRM keeps only the last four of this tax "
