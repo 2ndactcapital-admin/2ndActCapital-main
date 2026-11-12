@@ -952,6 +952,22 @@ async def y_real(conn):
     got2 = [gid(sym_index(r[0])) for r in REQUESTS[r1:]]
     check(set(got2[:3]) == set(ids) - set(got) and len(got2) == 5 and s2["day"]["status"] == "stopped_budget",
           "day 2 asks the 3 never refreshed FIRST, then 2 of day 1's", f"{len(got2)}")
+    # one-off mode (no scope — the operator's --gsid, PRICES1 / TRACK1 verifies): no day row, no state written
+    fp0 = await fingerprint(conn, "SELECT global_security_id, last_refreshed_on, last_day_id FROM "
+                                  "portfolio.price_refresh_state WHERE global_security_id = ANY($1::uuid[])", ids)
+    nd0 = int(await platform(conn, "SELECT count(*) FROM portfolio.price_refresh_days WHERE scope LIKE $1",
+                             f"{LIST_PREFIX}%", fetch="fetchval"))
+    BUDGETS[STUB] = (await calls_logged(conn, STUB, day2)) + 8
+    r2 = len(REQUESTS)
+    s3 = await P.nightly(pool, today=day2, clock=CLK, deadline_s=10_000, **kw(ids))
+    fp1 = await fingerprint(conn, "SELECT global_security_id, last_refreshed_on, last_day_id FROM "
+                                  "portfolio.price_refresh_state WHERE global_security_id = ANY($1::uuid[])", ids)
+    nd1 = int(await platform(conn, "SELECT count(*) FROM portfolio.price_refresh_days WHERE scope LIKE $1",
+                             f"{LIST_PREFIX}%", fetch="fetchval"))
+    check(len(REQUESTS) - r2 == 8 and "day" not in s3 and fp0 == fp1 and nd0 == nd1,
+          "a ONE-OFF run (no scope) refreshes every requested security (all 8, even those done today) and writes no "
+          "day row and no state (verify_track1's org-keyed teardown refused a state row — reproduced, fixed)",
+          f"{len(REQUESTS) - r2} {'day' in s3} {fp0 == fp1} {nd0}->{nd1}")
 
 
 def y_render():
