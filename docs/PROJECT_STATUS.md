@@ -344,7 +344,11 @@ This file starts with the email item below.
 ---
 
 
-## ALTREAD1 — the Altruist READ client matches Altruist's PUBLISHED Open API (developer.altruist.com, read 2026-11-11); cost basis (tax lots) + account balance; simulator + conformance on the documented shapes
+## CPSIM05 — a SIMULATED FIX counterparty: approved proposals' trades for simulated-custodian accounts sent automatically as FIX 4.4 over HTTP, fills booked, synced, reconciled, P/L shown
+
+STATUS: IN PROGRESS — branch cpsim05-work (2026-11-11). Notes `docs/cpsim/CPSIM05_NOTES.md`. Task 1 (discovery) done.
+
+ matches Altruist's PUBLISHED Open API (developer.altruist.com, read 2026-11-11); cost basis (tax lots) + account balance; simulator + conformance on the documented shapes
 
 STATUS: BUILT — branch altread1-work (2026-11-11), all 9 tasks committed. Notes `docs/altruist/ALTREAD1_NOTES.md`
 (findings, D1–D7 as built, 19 corrections old → new, diff review). Contract `docs/cpsim/ALTRUIST_CONTRACT.md` rewritten
