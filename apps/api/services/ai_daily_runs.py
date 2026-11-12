@@ -99,12 +99,20 @@ def start_after() -> tuple[int, int]:
     return 0, 5
 
 
-def spend_cap() -> float:
+def spend_cap():
+    """The note job's per-run dollar cap: None when ``CAP_ENV`` is unset (no
+    dollar cap — the daily model budgets are the limit; stored as NULL).
+
+    dailyops1: this used to return the sentinel 1e9, which cannot fit
+    portfolio.note_extraction_runs.spend_cap_usd (numeric(12,6)) — every
+    nightly run since 2026-11-05 stopped on a numeric overflow before reading
+    a single document. A configured value that is not a number, negative or
+    too large to record raises spend.SpendCapConfigError (the run is then
+    stopped at its start with that reason) — never a silent fallback."""
+    from services.note_extraction.spend import checked_spend_cap
+
     raw = (os.environ.get(CAP_ENV) or "").strip()
-    try:
-        return float(raw) if raw else 1e9          # no cap set: the daily budgets are the limit
-    except ValueError:
-        return 1e9
+    return None if not raw else float(checked_spend_cap(raw, source=CAP_ENV))
 
 
 # ── jobs ────────────────────────────────────────────────────────────────────
@@ -153,8 +161,12 @@ async def _note_read(pool, run: dict, cfg: dict, items: list[dict], stop_when) -
     import asyncpg
 
     from services.note_extraction import cascade, participants, proxy, runner, schema
-    from services.note_extraction.spend import UnpricedModelError
+    from services.note_extraction.spend import SpendCapConfigError, UnpricedModelError
 
+    try:
+        cap = spend_cap()                      # refused at the start, before any connection or document
+    except SpendCapConfigError as exc:
+        return BatchResult(error=f"refused at start: {exc}")
     conn = await asyncpg.connect(os.environ["DATABASE_URL"], statement_cache_size=0, ssl="require", timeout=30)
     try:
         specs = schema.build_field_specs(await schema.load_registry_rows(conn))
@@ -168,7 +180,7 @@ async def _note_read(pool, run: dict, cfg: dict, items: list[dict], stop_when) -
             jev_route=cfg.get("jev_route"), escalation=None, ensemble_config_id=str(cfg["id"]))
         try:
             summary = await runner.run_notes(
-                conn, [i["id"] for i in items], specs, slots, catalog=catalog, spend_cap_usd=spend_cap(),
+                conn, [i["id"] for i in items], specs, slots, catalog=catalog, spend_cap_usd=cap,
                 run_kind="cascade", config={"daily_run_id": str(run["id"]), "trigger": run["trigger"]},
                 participant_rows=parts, issuer_groups=groups, stop_when=stop_when)
         except UnpricedModelError as exc:

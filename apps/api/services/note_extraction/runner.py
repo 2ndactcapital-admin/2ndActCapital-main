@@ -78,7 +78,7 @@ class RunSummary:
 
 
 async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: EnsembleSlots, *,
-                    catalog: dict, spend_cap_usd: float, run_kind: str, config: dict,
+                    catalog: dict, spend_cap_usd: float | None, run_kind: str, config: dict,
                     participant_rows: list[dict], created_by=None, downloader=None,
                     keep_outcomes: bool = False, progress=None,
                     issuer_groups: dict[str, str] | None = None, stop_when=None) -> RunSummary:
@@ -94,7 +94,10 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
     (services.ai_budget — reused when the daily run already opened it): a
     BudgetReached stops the run exactly like the spending cap. ``stop_when``
     (a no-argument callable) is checked between notes — the daily run's time
-    slice; the run then ends 'completed' with ``summary.sliced``."""
+    slice; the run then ends 'completed' with ``summary.sliced``.
+
+    dailyops1: ``spend_cap_usd`` None = no dollar cap (the run row records
+    NULL); a cap too large to record is refused before the run row exists."""
     catalog = await priced_catalog_for_bulk(conn, catalog, bulk_deployments(slots))
     ensemble = None
     if slots.ensemble_config_id:

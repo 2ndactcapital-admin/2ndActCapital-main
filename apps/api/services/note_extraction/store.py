@@ -103,16 +103,22 @@ async def insert_readings(conn, rows: list[ReadingRow]) -> int:
     return len(rows)
 
 
-async def create_run(conn, *, run_kind: str, spend_cap_usd: float, config: dict,
+async def create_run(conn, *, run_kind: str, spend_cap_usd: float | None, config: dict,
                      ensemble_config_id=None, created_by=None, notes_planned: int = 0,
                      status: str = "running") -> str:
+    """``spend_cap_usd`` None = no dollar cap → NULL (dailyops1). A cap the
+    numeric(12,6) column cannot hold is refused here, before the INSERT, with
+    a reason (spend.SpendCapConfigError) — never a numeric overflow."""
+    from services.note_extraction.spend import checked_spend_cap
+
+    cap = checked_spend_cap(spend_cap_usd)
     async with platform_scope(conn):
         return str(await conn.fetchval(
             """INSERT INTO portfolio.note_extraction_runs
                  (run_kind, status, ensemble_config_id, config, spend_cap_usd, notes_planned, created_by)
                VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) RETURNING id""",
             run_kind, status, ensemble_config_id, json.dumps(config, default=str),
-            Decimal(str(spend_cap_usd)), notes_planned, created_by,
+            cap, notes_planned, created_by,
         ))
 
 
