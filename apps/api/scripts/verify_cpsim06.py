@@ -695,7 +695,11 @@ async def raw(method, path, *, headers=None, body=None, timeout=300.0, form=None
         data_out = {"raw": res.text[:4000]}
     # the create calls show a new key / password ONCE, by design — every other body is scanned
     if not (method == "POST" and (path == _P or path.endswith("/realtime/users"))):
-        S["bodies"].append(res.text[:40000])
+        # every body carries its source: a Hollisworks /api/v1 response or a simulator /cpsim answer (+ the grant)
+        S["bodies"].append({"src": "api" if path.startswith("/api/v1") else "sim" if path.startswith("/cpsim/")
+                            else "other", "method": method, "path": path.split("?")[0],
+                            "grant": (form or {}).get("grant_type"), "status": res.status_code,
+                            "text": res.text[:40000]})
     return res.status_code, data_out, dict(res.headers)
 
 
@@ -1434,7 +1438,7 @@ async def y_sensitive(conn):
     ah = [h for r in audit for h in sensitive_hits(r["p"] or "")]
     check(bool(audit) and not ah, "no fake tax id or date of birth in any fixture audit row (opened / refused rows "
           "carry problem codes and last four only)", f"{len(audit)} rows; {ah[:3]}")
-    bh = [h for b in S["bodies"] for h in sensitive_hits(b)]
+    bh = [h for b in S["bodies"] for h in sensitive_hits(b["text"])]
     check(bool(S["bodies"]) and not bh, f"no response body ({len(S['bodies'])} of them — the Check / Open results, the "
           "pre-fill envelope, the Realtime tab, every simulator answer) carried a tax id or a date of birth", f"{bh[:3]}")
     c, env = await api(U_OP, "GET", f"{_H}/{H_A}/custodian-account")
@@ -1449,7 +1453,10 @@ async def y_sensitive(conn):
           "the Admin → Counterparties → Realtime tab shows contacts with last four only", f"{c2}")
     oh = sensitive_hits(OUTPUT.getvalue())
     check(not oh, "this script's own output never printed a tax id or a date of birth", f"{oh[:3]}")
-    leaks = [x for b in S["bodies"] for x in secret_leaks(b)]
+    for b in S["bodies"]:        # fix 2 discovery: which body (source) holds which leaked prefix — 10 characters only
+        for x in secret_leaks(b["text"]):
+            info(f"[leak-src] {b['src']} {b['method']} {b['path']} grant={b['grant']} {b['status']} → {x}")
+    leaks = [x for b in S["bodies"] for x in secret_leaks(b["text"])]
     check(not leaks, "no response body carried a simulator key, password or token (the shown-once create answers "
           "are the only place one appears, by design)", f"{leaks[:3]}")
 

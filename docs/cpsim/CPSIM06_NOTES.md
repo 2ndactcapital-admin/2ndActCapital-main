@@ -272,3 +272,23 @@ changed in this fix.
   Altruist connections, counterparties, book accounts, realtime contacts / drafts) unchanged. 12 PASS / 0 FAIL.
 - `--self-checks-only`: 27 PASS / 0 FAIL.
 - The full verify is re-run by the runner.
+
+## Fix 2 findings — token in a response body (2026-11-12)
+
+The full run's one FAIL (`cpsim06fix1_run.out` line 323, `y_sensitive`): "no response body carried a simulator key,
+password or token — ['cpsim_rtat…', 'cpsim_rtrt…', 'cpsim_rtat…']". Every `S["bodies"]` entry now carries its source
+(`api` = a Hollisworks `/api/v1` response, `sim` = a simulator `/cpsim` answer; method, path, grant, status). One-off
+`--only=token,sensitive` (141 PASS / 1 FAIL — the FAIL reproduced) listed every leaking body (10-character prefix only):
+
+| body source | prefix | verdict |
+|---|---|---|
+| sim POST `/cpsim/c/<slug>/realtime/realms/altruist/protocol/openid-connect/token` grant=password, 200 | `cpsim_rtat` | VERIFY — token endpoint, tokens by protocol |
+| same, grant=password, 200 | `cpsim_rtrt` | VERIFY — token endpoint, tokens by protocol |
+| same, grant=refresh_token, 200 | `cpsim_rtat` | VERIFY — token endpoint, tokens by protocol |
+| same, grant=refresh_token, 200 | `cpsim_rtrt` | VERIFY — token endpoint, tokens by protocol |
+
+No Hollisworks `/api/v1` body (Check / Open results, pre-fill envelope, Realtime tab, error bodies, sync results) and no
+other simulator answer carried a token, key or password. The two leaking answers are the verify's OWN direct calls to
+the token endpoint in `y_token` (it plays the Realtime client to test the grant rules); the token endpoint returns
+tokens by protocol, server-to-server, exactly as Altruist's real endpoint does. **Verdict: VERIFY (the check scanned a
+by-protocol answer), not CODE.** No person-facing response carries a token.
