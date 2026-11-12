@@ -298,3 +298,31 @@ Findings:
   measured the WSL → Supabase latency of the pre-existing approve path, not cpsim05.
 - **But the baseline grows ≈ 14 round-trips per line** (229 → 285 for +4 lines) — a per-line N+1 in the pre-existing
   approve → execute path (rep2 / rep5 code). Identified per statement in run 2 below.
+
+Run 2 (statement-level diff, manual 2 → 6 lines; 91/0, teardown zero) named the baseline's **14 round-trips per line**:
+`_security` per line (securities_global + identifiers = 2, result unused in `create_instructions`), the proposal
+routing restatement per line (UPDATE + INSERT = 2), the instruction + its create event (2, inherent), and the
+per-instruction `execution.<action>` domain event: `publish_event` on its own pool acquire (4 statements + the RLS
+pool's 4 per acquire = 8). cpsim05's constant +15 = the Altruist adapter's route decision (cpsim03 D2:
+external_references ×2, the connection, `counterparty_sim_may_connect`, the org settings, custodian_capabilities ×2)
++ 2 pool acquires (`refuse_undeclared_shorts`, `simulator_route`) — once per trade list, never per line.
+
+**Decision: CODE + VERIFY.**
+- **CODE (baseline N+1, minimal; pre-existing rep2 / rep5 code, not cpsim05):** `services/execution.py`
+  `create_instructions` checks every line's security in ONE read (same refusal, ExecutionNotFound);
+  `services/rebalance_proposals.py` `execute` restates the routed lines in TWO set-based statements (close all, then
+  INSERT … SELECT … JOIN unnest(tids, iids)) instead of two per line — same rows, same guard trigger, same active-line
+  unique index. Run 3 (91/0, teardown zero): manual_2 224 / 7.13 s, sim_2 239 / 7.47 s, manual_6 264 / 8.61 s,
+  sim_6 279 / 8.90 s — **per line 14 → 10**, simulated extra still exactly **15 at 2 and at 6 lines**.
+- **NOT fixed, [FIND]:** the remaining 8 per line are the per-instruction domain event (one event per fact, each
+  `publish_event` on its own acquire so a subscriber failure never touches the caller — the domain-events contract);
+  and the RLS pool wrapper costs 4 round-trips per acquire (BEGIN, set_config, COMMIT, asyncpg's release reset), ≈ half
+  of every request's round-trips app-wide. Both are platform-wide changes, out of this fix's scope; recorded.
+- **VERIFY:** the 5 s wall-clock bound measured WSL → Supabase distance (the manual baseline alone, no simulator, is
+  7.1 s at ≈ 31 ms per round-trip). `y_timing` now proves, in the same section, with a round-trip counter on every
+  pool connection: (a) the after-response gate (kept); (b) simulated − manual round-trips ≤ `SIM_ROUTE_EXTRA_MAX` = 15
+  and the SAME at 2 and 6 lines; plus the baseline grows ≤ `BASELINE_PER_LINE_MAX` = 10 per line (pins the CODE fix);
+  plus zero automatic-step round-trips inside the request window; (c) simulated seconds ≤ manual × 1.5; (d) every
+  counted approval < 15 s absolute. Deviation from the prompt's literal (b), stated: "a 2-line and a 6-line proposal
+  issue the same number" cannot hold for the TOTAL (each line is at least an instruction INSERT + its event); it is
+  asserted on the simulated route's EXTRA over the manual baseline, which is what cpsim05 adds.

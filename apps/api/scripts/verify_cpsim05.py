@@ -111,6 +111,13 @@ HTTP_OK, HTTP_CREATED, HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT, HTTP_UNPRO
 CLIENT_TIMEOUT_S = 15.0        # the FIX / orders client's read timeout — the approval must answer well under it
 N_PLUS_ONE_ROWS = 60           # FIX messages added before the message-log timing
 N_PLUS_ONE_MAX_S = 5.0         # the log list (one query) must answer under this, whatever the row count
+# CPSIM05 FIX 3 — the approval-latency property, counted not clocked (CPSIM05_NOTES §9). The old bound (the approval
+# under CLIENT_TIMEOUT_S / 3 = 5 s wall clock) measured WSL → Supabase latency: the SAME approval on a MANUAL route,
+# no simulator at all, took 7.1 s (224–229 round-trips at ≈ 31 ms). What it was meant to prove, made stricter:
+SIM_ROUTE_EXTRA_MAX = 15       # simulated − manual round-trips, same shape (measured exactly 15 at 2 AND 6 lines)
+BASELINE_PER_LINE_MAX = 10     # manual round-trips per extra line (measured 10 after fix 3's batching; 14 before)
+SIM_VS_MANUAL_MAX = 1.5        # simulated seconds ≤ manual seconds × this, measured in the same section
+TIMING_LINES = (2, 6)          # a 2-line and a 6-line proposal: the simulated extra must be the SAME number
 SECTION_TIMEOUT = 600          # every section must finish in < 10 minutes
 
 
@@ -1303,6 +1310,66 @@ async def own_model_proposal(conn, label: str) -> str | None:
     return pid
 
 
+class _RoundTrips:
+    """CPSIM05 FIX 3 — counts every asyncpg round-trip (execute / executemany / fetch / fetchrow / fetchval, on EVERY
+    connection the app's pools hand out) while active; a call whose stack is inside the automatic step
+    (fix_sim_auto gated / _run_batch / _collect) is counted apart as ``after``."""
+
+    NAMES = ("execute", "executemany", "fetch", "fetchrow", "fetchval")
+    AUTO = {"gated", "_run_batch", "_collect"}
+
+    def __init__(self):
+        self.n = self.after = 0
+        self._orig = {}
+
+    def _auto(self) -> bool:
+        f = sys._getframe(2)
+        while f is not None:
+            if f.f_code.co_name in self.AUTO and f.f_code.co_filename.endswith("fix_sim_auto.py"):
+                return True
+            f = f.f_back
+        return False
+
+    def __enter__(self):
+        cls = asyncpg.connection.Connection
+        for name in self.NAMES:
+            orig = self._orig[name] = getattr(cls, name)
+
+            def make(orig):
+                async def w(c, *a, **k):
+                    if self._auto():
+                        self.after += 1
+                    else:
+                        self.n += 1
+                    return await orig(c, *a, **k)
+                return w
+            setattr(cls, name, make(orig))
+        return self
+
+    def __exit__(self, *exc):
+        for name, orig in self._orig.items():
+            setattr(asyncpg.connection.Connection, name, orig)
+
+
+async def counted_approval(conn, account, n_lines: int) -> dict:
+    """CPSIM05 FIX 3 — the SAME approval shape (n buy lines, human maker U_MK, checker U_CK, the REAL approve route)
+    on ``account``: round-trips + seconds of the approval request alone. The account is freed afterwards."""
+    lines = [{"security": SEC_FUND, "side": "buy", "quantity": "1", "price": PRICE_FUND} for _ in range(n_lines)]
+    pid = await make_proposal(conn, account, lines)
+    c, o = await api(U_MK, "POST", f"{_PR}/{pid}/submit")
+    if c != HTTP_OK:
+        return {"code": c, "n": 0, "after": 0, "secs": 0.0, "routed": [], "err": dumps(o)[:200]}
+    with _RoundTrips() as rt:
+        t0 = time.monotonic()
+        c, _o = await api(U_CK, "POST", f"{_PR}/{pid}/approve", {"note": "cpsim05 verify: counted"})
+        secs = time.monotonic() - t0
+    await FA.drain()
+    ids = await ids_of(conn, pid)
+    routed = [(await instruction(conn, i)).get("routed_via") for i in ids]
+    await free_account(conn, pid)
+    return {"code": c, "n": rt.n, "after": rt.after, "secs": secs, "routed": routed}
+
+
 def ev1(evts, action):
     return next((e for e in evts if e["action"] == action), None)
 
@@ -2016,8 +2083,9 @@ async def y_isolation(conn):
 
 
 async def y_timing(conn):
-    section("[Y] Timing: the approval request returns BEFORE the automatic step starts, well under the client timeout; "
-            "the message-log list has no N+1")
+    section("[Y] Timing: the approval request returns BEFORE the automatic step starts; its round-trips = the manual "
+            "baseline + a constant (none per line), ≤ 1.5× its seconds, under the client timeout; the message-log list "
+            "has no N+1")
     if not S.get("timing"):                      # run on its own: set up its own proposal (fix 1)
         await own_model_proposal(conn, "timing_own")
     t = S.get("timing") or {}
@@ -2026,9 +2094,46 @@ async def y_timing(conn):
                               for x in gated),
           "every automatic step scheduled inside a request started only after that request's response was sent "
           "(the after-response gate)", f"{gated[:2]}")
-    check(t.get("code") == HTTP_OK and t.get("secs", 99) < CLIENT_TIMEOUT_S / 3,
-          f"the approval request answered in {t.get('secs', 0):.2f} s — well under the {CLIENT_TIMEOUT_S:.0f} s client "
-          "timeout (it schedules, it does not wait)", f"{t.get('secs')}")
+    check(t.get("code") == HTTP_OK, "the approval request that scheduled the automatic step answered 200",
+          f"{t.get('code')} {t.get('secs')}")
+    # CPSIM05 FIX 3: the approval's cost, COUNTED (round-trips by caller) against the same approval on a MANUAL route
+    # (no simulator) in this section — not a wall-clock bound that measures the host's distance from the database.
+    for r in await platform(conn, "SELECT id FROM rebalance_proposals WHERE account_id = ANY($1::uuid[]) AND status IN "
+                                  "('draft', 'pending_approval', 'approved') AND system_to IS NULL", [ACC_SIM, ACC_OTHER]):
+        try:                                         # rebalance_proposals_open_uq: one open proposal per account
+            await free_account(conn, str(r["id"]))
+        except Exception as exc:  # noqa: BLE001 — a measurement below then fails loudly on its own submit
+            print(f"[INFO] timing: could not free proposal {r['id']}: {type(exc).__name__}: {exc}")
+    m = {}
+    for n in TIMING_LINES:
+        for route, acc in (("manual", ACC_OTHER), ("sim", ACC_SIM)):
+            m[(route, n)] = await counted_approval(conn, acc, n)
+    print(f"[INFO] approval round-trips / seconds: " + "; ".join(
+        f"{r}_{n}: {v['n']} / {v['secs']:.2f} s (after-response in window {v['after']})" for (r, n), v in m.items()))
+    ok = all(v["code"] == HTTP_OK and len(v["routed"]) == n and set(v["routed"]) == {"fix_sim" if r == "sim" else
+                                                                                       "manual"}
+             for (r, n), v in m.items())
+    check(ok, "the counted approvals: each 200, every line routed (fix_sim on ACC_SIM, manual on the no-adapter "
+          "account)", f"{[(k, v['code'], v['routed']) for k, v in m.items()]}")
+    extra = {n: m[("sim", n)]["n"] - m[("manual", n)]["n"] for n in TIMING_LINES}
+    check(ok and all(0 <= e <= SIM_ROUTE_EXTRA_MAX for e in extra.values()) and len(set(extra.values())) == 1,
+          f"the simulated approval issues at most {SIM_ROUTE_EXTRA_MAX} round-trips more than the manual baseline, and "
+          f"the SAME number at {TIMING_LINES[0]} and {TIMING_LINES[-1]} lines (nothing per line; no FIX work in the "
+          "request)", f"extra={extra}")
+    lo, hi = TIMING_LINES[0], TIMING_LINES[-1]
+    per_line = (m[("manual", hi)]["n"] - m[("manual", lo)]["n"]) / (hi - lo)
+    check(ok and per_line <= BASELINE_PER_LINE_MAX,
+          f"the approve → execute baseline grows at most {BASELINE_PER_LINE_MAX} round-trips per line (fix 3 batched "
+          "the per-line security check and the per-line proposal restatement)", f"{per_line}")
+    check(ok and all(m[("sim", n)]["after"] == 0 for n in TIMING_LINES),
+          "no automatic-step round-trip ran inside the approval request's window", f"{[m[('sim', n)]['after'] for n in TIMING_LINES]}")
+    ratio = {n: m[("sim", n)]["secs"] / max(m[("manual", n)]["secs"], 1e-9) for n in TIMING_LINES}
+    check(ok and all(r <= SIM_VS_MANUAL_MAX for r in ratio.values()),
+          f"the simulated approval takes at most {SIM_VS_MANUAL_MAX}× the manual baseline's seconds, same section",
+          f"{ {n: round(r, 2) for n, r in ratio.items()} }")
+    worst = max(v["secs"] for v in m.values())
+    check(ok and worst < CLIENT_TIMEOUT_S, f"every counted approval answered under the {CLIENT_TIMEOUT_S:.0f} s "
+          f"client timeout (slowest {worst:.2f} s)", f"{worst}")
     sess = await _session()
     for i in range(N_PLUS_ONE_ROWS // 2):
         await FC.send(sess, "H", [(11, f"cp5v-np1-{i}")], transport=APP_T)

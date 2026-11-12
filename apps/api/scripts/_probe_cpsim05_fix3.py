@@ -106,6 +106,9 @@ async def one(conn, label, account, n_lines):
     print(f"[PROBE]    top repeated statements:")
     for s, v in sq.most_common(12):
         print(f"[PROBE]      {v:3d}x {s}")
+    V.S.setdefault("stmts", {})[label] = {sq_k: (v, "<" .join(next((r["chain"][:3] for r in in_req if r["sql"] == sq_k),
+                                                                    [])))
+                                          for sq_k, v in sq.items()}
     V.S.setdefault("probe", {})[label] = {"code": c, "secs": round(secs, 2), "n": len(in_req),
                                           "by": dict(by), "routed": routed}
     await V.free_account(conn, pid)
@@ -115,8 +118,9 @@ async def one(conn, label, account, n_lines):
 async def probe(conn):
     V.section("[PROBE] cpsim05 fix 3 — approval request round-trips")
     await V.behaviour(default_outcome="accept")
-    for label, acc, n in (("manual_2", V.ACC_OTHER, 2), ("sim_2", V.ACC_SIM, 2),
-                          ("manual_6", V.ACC_OTHER, 6), ("sim_6", V.ACC_SIM, 6)):
+    plan = [x for x in (("manual_2", V.ACC_OTHER, 2), ("sim_2", V.ACC_SIM, 2), ("manual_6", V.ACC_OTHER, 6),
+                        ("sim_6", V.ACC_SIM, 6)) if x[0] in os.environ.get("PROBE_RUNS", "manual_2,sim_2,manual_6,sim_6")]
+    for label, acc, n in plan:
         try:
             await one(conn, label, acc, n)
         except Exception as exc:  # noqa: BLE001
@@ -124,6 +128,14 @@ async def probe(conn):
             print(f"[PROBE] {label} raised {type(exc).__name__}: {exc}")
             traceback.print_exc()
     print("[PROBE-JSON] " + json.dumps(V.S.get("probe")))
+    st = V.S.get("stmts", {})
+    for a, b in (("manual_2", "manual_6"), ("sim_2", "sim_6"), ("manual_2", "sim_2")):
+        if a in st and b in st:
+            print(f"[PROBE] statement-count delta {a} -> {b}:")
+            for k in sorted(set(st[a]) | set(st[b])):
+                na, nb = st[a].get(k, (0, ""))[0], st[b].get(k, (0, ""))[0]
+                if na != nb:
+                    print(f"[PROBE]   {na:3d} -> {nb:3d}  {k}   @ {(st[b].get(k) or st[a].get(k))[1]}")
 
 
 V.FIXTURE_SECTIONS = (("timing", probe),)

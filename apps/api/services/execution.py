@@ -465,8 +465,15 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
                                     "instruction")
         trade_date = date.today()
         async with conn.transaction():
+            # cpsim05 fix 3: every line's security is checked in ONE read (it was _security per line — 2 round-trips
+            # per trade, its result unused here). Same refusal: a security not in the master → ExecutionNotFound.
+            want = {_uuid(t.global_security_id, "security") for t in trade_list.trades}
+            have = {str(r["id"]) for r in await conn.fetch(
+                "SELECT id FROM portfolio.securities_global WHERE id = ANY($1::uuid[]) AND system_to IS NULL",
+                list(want))}
+            if want - have:
+                raise ExecutionNotFound("security not found in the security master")
             for t in trade_list.trades:
-                await _security(conn, t.global_security_id)
                 lots = [(str(li.tax_lot_id), li.quantity) for li in t.lot_instructions]
                 await _validate_lots(conn, org_id, acct["id"], t.global_security_id, t.side, lots, t.quantity)
                 if t.side in SHORT_SIDES:      # rep13 — eligibility + the §1259 household check, every short
