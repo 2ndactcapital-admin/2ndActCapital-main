@@ -219,3 +219,42 @@ conformance · safety · routes · front end · teardown · regressions (fast). 
 Honest limits, each printed by the script: the D2 date-of-birth-in-the-past and tax-id-format rules are proven at the
 counterparty by the conformance group (R13–R22). Through Hollisworks, a date of birth comes from the CRM or the
 opener's override. `npm run build` and the full verify are owed to the operator's run.
+
+## 8. The verify RUN (2026-11-12, after the sprint — one-offs, each `timeout 600`, on the operator's request)
+
+The full script cannot finish inside one 10-minute foreground command, so every section ran as an `--only` one-off.
+Each one-off has its own seed and full teardown. Routes, front end and regressions ran as the exact commands those
+sections issue. Logs: `sprint_prompts/logs/cpsim06_*.out` (git-ignored).
+
+| Run | Result |
+|---|---|
+| `--self-checks-only` | **27 PASS, 0 FAIL** |
+| `--cleanup-only` (start and end) | **12 PASS, 0 FAIL** — 0 fixture rows before; real fingerprints unchanged |
+| `--only=token` (+ schema, seed, teardown) | **78 / 0** |
+| `--only=open_a` | first run 120 / **1** → fixed → **128 / 0** |
+| `--only=open_b` | **128 / 0** |
+| `--only=sensitive` (+ refusals) | first run 128 / **6** → fixed → **135 / 0** |
+| `--only=check_idem,guard` | 85 / **1** → fixed; `--only=guard,ratelimit,unchanged` **90 / 0**; check_idem's own checks passed in the first run |
+| `--only=conformance,safety` | 80 / **2** → fixed → **87 / 0** |
+| `authz1_routes.py` / `visibility1_routes.py --check` | **CURRENT / CURRENT** |
+| `node --test tests/` | **781 tests, 780 pass, 0 fail** (one skipped / todo) |
+| `npm run build` (`--max-old-space-size=3072`) | **exit 0** |
+| regressions, fast (`--self-checks-only`) | cpsim02 30/0 · altread1 50/0 · cpsim05 28/0 · portentry2 21/0 · crmdetail1 23/0 · authz1 1/0 |
+| `cpsim_boundary_check.py` | OK, 0 violations |
+
+The failures, each with its verdict:
+
+| FAIL | Verdict | Fix |
+|---|---|---|
+| open_a: the trust's trustee refused `ssn_area` | **CODE** — a person's full tax id read from `entities.tax_id` with no typed `entity_tax_ids` row was sent as kind `ssn` even when it was an ITIN (9XX) | `_infer_kind`: an entity → EIN; a person's 9XX number → ITIN, else SSN (`services/custodian_account_opening.py`) |
+| refusals: the three SSN-area cases and the ITIN acceptance also showed `duplicate_email` | **VERIFY** — the preceding duplicate-email case left P_ADULT's counterparty contact holding the trustee's email (correct: the custodian keeps what it was sent) | the verify restates P_ADULT with its own data right after (and asserts it is in good order again) |
+| sensitive: catalog flagged `book_transactions.taxes` | **VERIFY** — a withholding AMOUNT, not a tax id; the column regex was too broad | regex narrowed to dob / birth / ssn / itin / ein / tax_id |
+| sensitive: "a response carried a key" | **VERIFY** — the scanned bodies included the shown-once create answers (counterparty key + FIX password, the new user's password) | create answers excluded from the scan (cpsim05's rule); the check now asserts NO leak at all |
+| guard: the non-test org's non-demo household was offered | **VERIFY** — rep6fix2's `organizations_mark_test_fixture` trigger forces `is_test = true` on every `99000000-…` id, so the "non-test" org was a test org | the org id moved to cpsim03's `c5130000-…` family; the section asserts `is_test` is false inside the rolled-back transaction. Re-run: non-demo → absent ('not a demo household'), all-demo → offered |
+| conformance: the label check | **VERIFY** — the runner's table truncates the contract to 28 characters | the section reads the runner's JSON (`--json-out`) |
+| safety: `permission denied for schema cpsim` | **VERIFY** — `has_table_privilege` needs USAGE the app role (correctly) lacks | privileges read from the catalog ACL (`aclexplode`) |
+
+Still owed: one uninterrupted full run of `verify_cpsim06.py`, which needs more than 10 minutes and so must run outside
+this tool's foreground cap. Also owed: the cycle-end FULL regression pass (`VERIFY_REGRESSIONS=full`), including a full
+`verify_portentry2.py` over the `add_account` `on_created` hook. This run covered the hook's default path through
+`--only=unchanged` (a manual add: same response keys, no crosswalk).

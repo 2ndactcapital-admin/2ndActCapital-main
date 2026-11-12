@@ -238,7 +238,9 @@ NAME = "CPSIM06 VERIFY "
 SLUG_PREFIX = "cpsim6verify-"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 FIXTURE_ID_PREFIX = "99000000-0000-0000-0000-0000c966"
-OUTSIDE_ORG = UUID("99000000-0000-0000-0000-00000c960001")   # the non-test org: ONLY inside a rolled-back transaction
+# the non-test org: ONLY inside a rolled-back transaction. NOT 99000000-…: rep6fix2's organizations_mark_test_fixture
+# trigger forces is_test = true on every such id (cpsim03's ORG_R uses this family for the same reason)
+OUTSIDE_ORG = UUID("c5130000-0000-4000-8000-0000c9660001")
 D0 = prior_business_day(date.today() - timedelta(days=1))
 SIM_BASE = "https://cpsim.verify6.invalid"
 REDIRECT = "https://verify.cpsim06.invalid/altruist/callback"
@@ -691,7 +693,9 @@ async def raw(method, path, *, headers=None, body=None, timeout=300.0, form=None
         data_out = res.json() if res.content else {}
     except ValueError:
         data_out = {"raw": res.text[:4000]}
-    S["bodies"].append(res.text[:40000])
+    # the create calls show a new key / password ONCE, by design — every other body is scanned
+    if not (method == "POST" and (path == _P or path.endswith("/realtime/users"))):
+        S["bodies"].append(res.text[:40000])
     return res.status_code, data_out, dict(res.headers)
 
 
@@ -1322,6 +1326,11 @@ async def y_refusals(conn):
         await check_req(U_OP, H_A, body_for("trust"))
     for label, ov, want in cases:
         await _refuse(conn, label, body_for("individual", overrides={P_ADULT: ov}), want)
+    # the duplicate-email case restated P_ADULT's counterparty contact with the trustee's email (correct: the
+    # custodian keeps what it was sent); restate it with its own CRM email before the next cases use the trustee
+    cr, orr = await check_req(U_OP, H_A, body_for("individual"))
+    check(cr == HTTP_OK and orr.get("ok") is True, "re-sent with its own CRM data, the same owner is in good order "
+          "again (the earlier refusal left nothing behind in Hollisworks)", f"{cr} {problem_codes(orr)}")
 
     def trustee_owner(tax: dict) -> dict:
         # P_TRUSTEE has no hashed CRM tax id, so a typed number is SENT and the counterparty's own rule decides
@@ -1404,8 +1413,8 @@ async def y_sensitive(conn):
           f"{len(S['tax'])} {len(S['dobs'])}")
     cols = await platform(conn, "SELECT c.relname, a.attname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
                                 "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'cpsim' AND a.attnum > 0 "
-                                "AND NOT a.attisdropped AND (a.attname ~ '(dob|birth|ssn|itin)' OR (a.attname ~ 'tax' "
-                                "AND a.attname NOT IN ('tax_id_kind', 'tax_id_last4', 'tax_id_digest', "
+                                "AND NOT a.attisdropped AND (a.attname ~ '(dob|birth|ssn|itin|ein$)' OR (a.attname ~ "
+                                "'tax_?id' AND a.attname NOT IN ('tax_id_kind', 'tax_id_last4', 'tax_id_digest', "
                                 "'tax_id_salt')))")
     check(not cols, "catalog: no cpsim column can hold a date of birth or a full tax id", f"{[dict(r) for r in cols]}")
     hits = []
@@ -1440,9 +1449,9 @@ async def y_sensitive(conn):
           "the Admin → Counterparties → Realtime tab shows contacts with last four only", f"{c2}")
     oh = sensitive_hits(OUTPUT.getvalue())
     check(not oh, "this script's own output never printed a tax id or a date of birth", f"{oh[:3]}")
-    leaks = [x for b in S["bodies"] for x in secret_leaks(b) if "password" not in x]
-    check(not [x for x in leaks if not x.startswith("cpsim_rtpw")], "no response body carried a simulator key or "
-          "token (the shown-once user password excepted, by design)", f"{leaks[:3]}")
+    leaks = [x for b in S["bodies"] for x in secret_leaks(b)]
+    check(not leaks, "no response body carried a simulator key, password or token (the shown-once create answers "
+          "are the only place one appears, by design)", f"{leaks[:3]}")
 
 
 async def y_guard(conn):
@@ -1486,6 +1495,8 @@ async def y_guard(conn):
     async def demo_rule(c):
         await c.execute("INSERT INTO organizations (id, name, slug, is_test) VALUES ($1, $2, $3, false)", OUTSIDE_ORG,
                         "CPSIM06 VERIFY rolled-back real-shaped org", f"{TAG}-outside")
+        if await c.fetchval("SELECT is_test FROM organizations WHERE id = $1", OUTSIDE_ORG) is not False:
+            raise RuntimeError("the rolled-back org is not a NON-test org (is_test forced true)")
         for k, v in (("counterparty_sim.allowed", "true"), ("counterparty_sim.altruist_counterparty",
                                                             json.dumps(SLUG_PREFIX + "main"))):
             await c.execute("INSERT INTO org_settings (org_id, setting_key, setting_value) VALUES ($1, $2, $3::jsonb)",
@@ -1580,11 +1591,18 @@ async def y_unchanged(conn):
 
 async def y_conformance(conn):
     section("[Y] Conformance: the realtime_open group passes, labelled 'ASSUMED — Realtime API paths not published'")
-    code, out, err = run_cmd([sys.executable, str(CONFORMANCE), "--target", "simulator"], REPO, timeout=1500)
-    rows = [ln for ln in out.splitlines() if re.match(r"^R\d\d\s", ln)]
-    fails = [ln for ln in rows if " FAIL " in ln]
+    jpath = pathlib.Path(f"/tmp/verify_cpsim06_conformance_{os.getpid()}.json")
+    code, out, err = run_cmd([sys.executable, str(CONFORMANCE), "--target", "simulator", "--json-out", str(jpath)],
+                             REPO, timeout=1500)
+    try:
+        results = json.loads(jpath.read_text(encoding="utf-8")).get("results") or []
+    except (OSError, ValueError):
+        results = []
+    # the runner's table truncates the contract to 28 characters — the full label is read from its JSON output
+    rows = [r for r in results if str(r.get("id", "")).startswith("R") and r.get("id") != "R00"]
+    fails = [r["id"] for r in rows if r.get("passed") is not True]
     check(code == 0 and len(rows) >= CONFORMANCE_R_ROWS and not fails and
-          all("ASSUMED — Realtime API paths not published" in ln for ln in rows) and
+          all(str(r.get("contract", "")).startswith("ASSUMED — Realtime API paths not published") for r in rows) and
           re.search(r"CONFORMANCE .*: \d+ PASS, 0 FAIL", out) is not None,
           f"the in-process conformance run: {len(rows)} realtime_open rows, all PASS, all labelled ASSUMED",
           f"{code} {fails[:3]} {(out + err)[-300:]}")
@@ -1603,9 +1621,12 @@ async def y_safety(conn):
         check(denied, f"the app role cannot read cpsim.{t} (permission denied)")
     usage = await platform(conn, "SELECT has_schema_privilege('app_service', 'cpsim', 'USAGE')", fetch="fetchval")
     check(usage is False, "app_service has no USAGE on schema cpsim")
+    app_role = await platform(conn, "SELECT oid FROM pg_roles WHERE rolname = 'cpsim_app'", fetch="fetchval")
     for t, want in NEW_CPSIM_PRIVS.items():
-        got = {p for p in ("SELECT", "INSERT", "UPDATE", "DELETE") if await platform(
-            conn, "SELECT has_table_privilege('cpsim_app', $1, $2)", f"cpsim.{t}", p, fetch="fetchval")}
+        # from the catalog ACL (the app role holds no USAGE on cpsim, so has_table_privilege cannot be asked)
+        got = {r["privilege_type"] for r in await platform(
+            conn, "SELECT x.privilege_type, x.grantee FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, "
+                  "aclexplode(c.relacl) x WHERE n.nspname = 'cpsim' AND c.relname = $1", t) if r["grantee"] == app_role}
         check(got == want, f"cpsim_app on cpsim.{t} = {sorted(want)} (as documented)", f"{sorted(got)}")
 
 
