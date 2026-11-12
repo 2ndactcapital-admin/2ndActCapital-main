@@ -317,3 +317,45 @@ position's as-of). A position without a cost basis yields no lot — the simulat
 
 Upload dates stay ISO (the template); only RESPONSES use `YYYY/MM/DD`.
 
+## 14. FIX — the simulated FIX counterparty (cpsim05)
+
+**SIMULATED, demo only.** A simulated Altruist-compatible custodian now also answers **FIX 4.4** tag=value messages
+carried over HTTP (`POST /cpsim/c/<slug>/fix`, the same access-token auth as the orders API): one message in, the reply
+message(s) out. There is no FIX engine — no session, logon, heartbeat or sequence-number recovery. No Altruist FIX
+contract has been seen; this is a simulated counterparty only. Full detail: `CPSIM05_NOTES.md`.
+
+**The FIX tab** (every counterparty whose type carries the `fix` group — the `altruist` type does since cpsim05):
+- the session fields: BeginString, SenderCompID (Hollisworks, default `HOLLISWORKS`), TargetCompID (this counterparty,
+  default its slug upper-cased). Every inbound message's 49 / 56 must match them, or the answer is a Reject (35=3).
+  A counterparty created before cpsim05 has no session until a Super Admin saves this tab once (the defaults are
+  filled in);
+- the **message log** (read-only, newest first): every message received and sent, valid or the Reject reason, each
+  readable as tag / name / value. Passwords are never stored.
+
+**How the automatic path works.** When a proposal for an account at the simulated custodian is APPROVED (its own
+maker-checker: a person made it, a different person approved it), its trades are sent automatically after the approval
+request returns:
+1. an approval-of-record event ("approved via proposal maker-checker (simulated counterparty)", naming the checker);
+2. a NewOrderSingle (35=D) per trade;
+3. the ExecutionReports' fills (150=F) booked through the existing fill entry, as the checker;
+4. the account synced, each fill reconciled against the synced transaction, and the tax engine's realized gains
+   computed. The proposal page then shows realized ST / LT and unrealized P/L, all labelled SIMULATED.
+
+A SYSTEM proposal (harvest, drift…) still needs rep2's second-person approval of its instructions; that approval then
+starts the same steps. A refused order (behaviour reject, no price, insufficient position, a fixed-income par line,
+"unsupported instrument") leaves the instruction approved, with the reason and a to-do for the checker. Fills that come
+later (partial, delay, an unmarketable limit) are collected when you press **Advance one business day** on the Clock
+tab. A block whose every member is at the simulated custodian may take the `fix_sim` route: after the block's own
+approval it is sent, filled, allocated (AllocationInstruction 35=J / Ack 35=P) and settled the same way. Manual stays
+the default route and is always offered.
+
+**Why it is demo-only.** It engages ONLY for an instruction routed `fix_sim`. That happens only for an account
+crosswalked to a SIMULATED counterparty that meets every cpsim03 condition: the org's allowed flag, an active
+simulator connection, a demo household in a real org, integrated + managed, and the simulator capability evidenced
+'yes'. The database refuses an automatic / fix_sim event on any other instruction. The automatic step is not an
+unattended verb (declared NEVER, not registered). Real Altruist accounts and every real custodian stay manual: a person
+sends, a person imports. The real `fix` router is still not connected.
+
+Schema: `docs/cpsim05_part1.sql` (applied 2026-11-11). Conformance: the `fix` group F01–F20 (75 PASS, 0 FAIL
+in-process). Verify: `apps/api/scripts/verify_cpsim05.py` (written, not yet run).
+

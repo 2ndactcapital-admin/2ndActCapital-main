@@ -186,3 +186,23 @@ contract has been seen.
     readable framing. Both codecs now strip delimiters from every value.
 15. `cpsim.orders` webhooks still fire for FIX orders on a clock advance. The receiver's order to-do skips a `fix_sim`
     instruction (its fills are collected over FIX), so nothing is booked twice and no stray to-do appears.
+16. **Found while writing the verify (CODE, fixed):** `collect_after_advance` would have run the automatic guard on a
+    PERSON-sent fix_sim instruction and recorded `automatic_failed` ("not from a proposal"). It now leaves such an
+    instruction's fills for its sender: a "Fills available — import them" to-do. The automatic path books proposals'
+    fills only (D5), and the person presses Import fills.
+
+## 6. The verify (Task 9) — `apps/api/scripts/verify_cpsim05.py`, WRITTEN, NOT RUN
+
+Built on verify_cpsim03's harness (the same output, DB helpers, shared cleanup, stubs, in-process transports). Its own
+fixture ids are `…c955…`, the slug prefix is `cpsim5verify-`, and the capability code is `zz_cpsim5v_sim`. The clock
+dates are four business days before today, so the sync window and the `<= today` price reads see them.
+`--self-checks-only`: 28 PASS, 0 FAIL (2026-11-11). Sections: task1 · schema · endpoint · auto (model sell with LT + ST
+lots and a fund buy; a cash proposal's fund line and par line) · outcomes (reject, partial + advance, delay + advance,
+no price, oversell, a person's limit + advance + Import) · idempotency · system (harvest → rep2 second person → automatic)
+· guard (every D2 condition, the DB trigger + CHECK, the call-site scan, NEVER, cpsim03 REST still callable) · blocks ·
+unsupported (options static + CHECK, sell short refused) · isolation · timing (the after-response gate, the 15 s budget,
+the message log with one query) · unchanged · conformance · safety · routes · front end · teardown · regressions (fast).
+Honest limits, each printed as a [FIND] by the script: tilts are proven through the model path (they are not a kind);
+the demo-household condition is proven by verify_cpsim03's rolled-back non-test org section (same `simulator_route`).
+Proposals are seeded as DRAFTS through the privileged insert path (the generator is rep5's, not under test); submit,
+approval, execute and the hook all run the real path.

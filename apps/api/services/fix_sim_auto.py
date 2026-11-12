@@ -181,7 +181,7 @@ async def guard(conn, org_id, row: dict, acct: dict, *, mode: str = ON_BEHALF) -
     if row["routed_via"] != ROUTE:
         return (f"not routed to the simulated FIX counterparty (routed {row['routed_via']}) — the automatic path is "
                 "the simulated route's only")
-    if mode == ON_BEHALF and row.get("source") != "proposal":
+    if mode == ON_BEHALF and row.get("source") != "proposal":     # sending AND collecting: proposals only (D5)
         return "not from a proposal — the automatic path runs only for an approved proposal's trades"
     if RT.simulated_router() is None:
         return "the simulated FIX router is not connected"
@@ -484,13 +484,23 @@ async def _collect(client_order_ids: list[str]) -> None:
     tokens = set_rls_context(None, True)
     try:
         async with pool.acquire() as conn:
-            rows = await conn.fetch(f"SELECT id, org_id, sent_by FROM {X.T_INS} WHERE id = ANY($1::uuid[]) AND "
-                                    "system_to IS NULL AND sent_channel = $2 AND status = ANY($3::text[])",
+            rows = await conn.fetch(f"SELECT id, org_id, sent_by, source FROM {X.T_INS} WHERE id = ANY($1::uuid[]) "
+                                    "AND system_to IS NULL AND sent_channel = $2 AND status = ANY($3::text[])",
                                     ids, CHANNEL, list(WORKING))
     finally:
         reset_rls_context(tokens)
     by_org: dict[str, list] = {}
     for r in rows:
+        if r["source"] != "proposal":
+            # D5 — the automatic path books a PROPOSAL's fills only: a person sent this one, so its sender is told
+            tokens = set_rls_context(str(r["org_id"]), False)
+            try:
+                await _todo(pool, str(r["org_id"]), str(r["sent_by"]), str(r["id"]), "Fills available — import them",
+                            "The simulated counterparty filled more of this order at the clock advance. Open the "
+                            "instruction and press Import fills (nothing is booked until you do).")
+            finally:
+                reset_rls_context(tokens)
+            continue
         by_org.setdefault(str(r["org_id"]), []).append(r)
     for org, rs in by_org.items():
         tokens = set_rls_context(org, False)

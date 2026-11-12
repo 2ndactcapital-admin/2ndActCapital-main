@@ -346,7 +346,31 @@ This file starts with the email item below.
 
 ## CPSIM05 — a SIMULATED FIX counterparty: approved proposals' trades for simulated-custodian accounts sent automatically as FIX 4.4 over HTTP, fills booked, synced, reconciled, P/L shown
 
-STATUS: IN PROGRESS — branch cpsim05-work (2026-11-11). Notes `docs/cpsim/CPSIM05_NOTES.md`. Task 1 (discovery) done.
+STATUS: BUILT — branch cpsim05-work (2026-11-11), all 10 tasks committed. Notes `docs/cpsim/CPSIM05_NOTES.md`
+(D1–D8 as built, the FIX message catalogue, findings 1–15). HELD for review (not merged).
+
+- **Schema** `docs/cpsim05_part1.sql` APPLIED (`scripts/_apply_cpsim05.py --all`, 25/25 read back): cpsim.fix_messages +
+  fix_allocations (append-only, cpsim_app S/I — the shared withheld list), cpsim.orders.protocol / is_block, the
+  `altruist` institution type + the `fix` group; public: custodian_order_chk admits a FIX OrderID, fix_sim_chk, two event
+  actions (approve_upstream, automatic_failed), the D5 event trigger (BEFORE INSERT), trade_blocks_route_chk manual +
+  fix_sim. RLS unchanged. Snapshot refreshed.
+- **Simulator** `POST /cpsim/c/<slug>/fix` (cpsim/fix.py): FIX 4.4 over HTTP, D/F/H/J → 8/9/P, Reject 35=3 (checksum,
+  BodyLength, CompIDs, missing tags; never a 500), cpsim03's outcomes, a FIX partial's rest on advance, block orders +
+  allocations, the message log; Admin → Counterparties → FIX tab.
+- **Hollisworks**: fix_sim_client (its own codec), SimulatedFixRouter (`fix_sim`; the real `fix` still NotConnected),
+  the adapter routes simulated accounts `fix_sim`; **fix_sim_auto** — after an approved human-maker proposal executes,
+  automatically (after the response): approval-of-record event → NewOrderSingle → mark_sent → enter_fill per ExecID →
+  post-fill sync → auto-reconcile → loss_bank.ingest; system proposals via rep2's approval; collect after a clock advance;
+  failure → automatic_failed + to-do; D5 guard + DB backstop; verb declared NEVER. Blocks on fix_sim (fix_sim_blocks).
+  P/L on the proposal page (fix_sim_pl, SIMULATED); the instruction page's FIX exchange.
+- **Conformance** fix group F01–F20: in-process 75 PASS, 0 FAIL (it found and fixed a '|' inside a Reject Text).
+  Render tests `tests/cpsim05` 8/8; `node --test tests/` 770 pass / 0 fail. Boundary check OK (it failed on main:
+  verify_altread1 was never allow-listed — fixed). AUTHZ1 / VISIBILITY1 route docs regenerated.
+- **Verify** `apps/api/scripts/verify_cpsim05.py` (in scripts/regression_set.txt) — WRITTEN, NOT RUN (self-checks only);
+  npm run build not run. Re-pinned for cpsim05: verify_cpsim01 (altruist now has a FIX session), verify_cpsim03 (REST
+  protocol pinned, the widened CHECKs), verify_rep9 (the simulated router).
+- **Operator**: to demo it, apply `cpsim03_capabilities.py --apply` (the simulator capability) and save each existing
+  simulated counterparty's FIX tab once; then run verify_cpsim05.py.
 
  matches Altruist's PUBLISHED Open API (developer.altruist.com, read 2026-11-11); cost basis (tax lots) + account balance; simulator + conformance on the documented shapes
 
