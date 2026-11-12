@@ -51,9 +51,9 @@ function requestFor(route, { search = "", body } = {}) {
 
 const ctxFor = (route) => (route.param ? { params: Promise.resolve({ [route.param]: "row-1" }) } : undefined);
 
-test("there are exactly eleven routes, one per backend route in the API contract", () => {
+test("there are exactly twelve routes, one per backend route in the API contract (dailyops1: + security search)", () => {
   const expected = [
-    "GET /market/catalog", "GET /market/series", "POST /market/grid", "POST /market/correlations",
+    "GET /market/catalog", "GET /market/securities/search", "GET /market/series", "POST /market/grid", "POST /market/correlations",
     "GET /market/key-dates", "POST /market/key-dates/custom", "DELETE /market/key-dates/custom/{id}",
     "GET /market/views", "POST /market/views", "PUT /market/views/{id}", "DELETE /market/views/{id}",
   ];

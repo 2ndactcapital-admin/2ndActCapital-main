@@ -37,6 +37,8 @@ export const API_PREFIX = "/api/v1";
 export const MARKET_ROUTES = [
   { id: "catalog", method: "GET", web: "/api/market/catalog", backend: "/market/catalog" },
   { id: "series", method: "GET", web: "/api/market/series", backend: "/market/series", query: true },
+  // dailyops1 — the catalog lists only selectable securities; the rest of the master is searched.
+  { id: "securitySearch", method: "GET", web: "/api/market/securities/search", backend: "/market/securities/search", query: true },
   { id: "grid", method: "POST", web: "/api/market/grid", backend: "/market/grid", body: true },
   { id: "correlations", method: "POST", web: "/api/market/correlations", backend: "/market/correlations", body: true },
   { id: "keyDates", method: "GET", web: "/api/market/key-dates", backend: "/market/key-dates" },

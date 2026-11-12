@@ -98,6 +98,7 @@ TESTS = WEB / "tests" / "market"
 ROUTE_FILES = {
     "market/catalog": {"GET": "catalog"},
     "market/series": {"GET": "series"},
+    "market/securities/search": {"GET": "securitySearch"},   # dailyops1
     "market/grid": {"POST": "grid"},
     "market/correlations": {"POST": "correlations"},
     "market/key-dates": {"GET": "keyDates"},
@@ -110,6 +111,7 @@ ROUTE_FILES = {
 BACKEND = {
     "catalog": ("GET", "/market/catalog"),
     "series": ("GET", "/market/series"),
+    "securitySearch": ("GET", "/market/securities/search"),   # dailyops1
     "grid": ("POST", "/market/grid"),
     "correlations": ("POST", "/market/correlations"),
     "keyDates": ("GET", "/market/key-dates"),
@@ -227,8 +229,8 @@ def route_table() -> list[dict] | None:
 
 def routes_static() -> None:
     table = route_table()
-    if not check(isinstance(table, list) and len(table) == 11,
-                 "MARKET_ROUTES lists exactly eleven routes",
+    if not check(isinstance(table, list) and len(table) == len(BACKEND) == 12,
+                 "MARKET_ROUTES lists exactly twelve routes (dailyops1: + securitySearch)",
                  "one handler per backend route in the API contract, no more, no fewer",
                  f"got {None if table is None else len(table)}"):
         return
@@ -239,10 +241,10 @@ def routes_static() -> None:
               f"route {rid} forwards to {method} /api/v1{backend}",
               "a handler aimed at the wrong backend path or method silently breaks one feature",
               f"table has {r.get('method')} {r.get('backend')}")
-    check(all(r.get("query") is True for r in table if r["id"] == "series")
-          and not any(r.get("query") for r in table if r["id"] != "series"),
-          "only GET series passes the browser's query string through",
-          "series is the only endpoint that takes query parameters; the catalog refuses any")
+    check(all(r.get("query") is True for r in table if r["id"] in ("series", "securitySearch"))
+          and not any(r.get("query") for r in table if r["id"] not in ("series", "securitySearch")),
+          "only GET series and GET securities/search (dailyops1) pass the browser's query string through",
+          "they are the only endpoints that take query parameters; the catalog refuses any")
     check({r["id"] for r in table if r.get("body")} == {"grid", "correlations", "customDateCreate", "viewCreate", "viewUpdate"},
           "exactly the POST and PUT routes forward a body", "a GET or DELETE must never carry a body")
 
