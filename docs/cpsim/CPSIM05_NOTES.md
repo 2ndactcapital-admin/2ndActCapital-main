@@ -266,3 +266,35 @@ Not re-run by fix 2 (the cap): `auto` within 600 s. Its 17 section assertions al
 and a separate `--cleanup-only` removed what it left. Splitting `auto` would not help, because each half needs its own
 executed proposal, and the fixed overhead (seed ≈ 82 s, two teardowns, counts + fingerprints) is ≈ 300 s of every
 one-off.
+
+## 9. Fix 3 findings — approval-request latency (2026-11-12)
+
+Probe: `apps/api/scripts/_probe_cpsim05_fix3.py` (one-off, NOT a verify; reuses verify_cpsim05's seed + teardown via
+`--only=timing` with the timing section swapped). It wraps `asyncpg.connection.Connection.{execute, executemany, fetch,
+fetchrow, fetchval}` at class level (every connection the app's pool hands out) while the approval request is in
+flight, and attributes each round-trip by its app call stack. Same proposal shape on both routes: N buy lines of
+SEC_FUND, human maker U_MK, checker U_CK, through the REAL `POST /proposals/{id}/approve`. Manual baseline = ACC_OTHER
+(custodian with no adapter → `manual`); simulated = ACC_SIM (`fix_sim`). Run 1 (`sprint_prompts/logs/cpsim05fix3_probe1.out`, git-ignored):
+91 PASS / 0 FAIL, teardown zero.
+
+| run | lines | routed | round-trips in request | seconds | DB seconds |
+|---|---|---|---|---|---|
+| manual_2 | 2 | manual ×2 | 229 | 7.16 | 7.10 |
+| sim_2 | 2 | fix_sim ×2 | 244 | 7.40 | 7.35 |
+| manual_6 | 6 | manual ×6 | 285 | 8.92 | 8.86 |
+| sim_6 | 6 | fix_sim ×6 | 300 | 9.33 | 9.26 |
+
+Breakdown (manual_2 / sim_2 / manual_6 / sim_6): human-task complete 77/77/77/77; choke-point routing + instruction
+creation 40/53/84/97; execute (proposal load + per-line restatement) 32/32/40/40; pool overhead with no app frame
+(asyncpg's release reset `pg_advisory_unlock_all(); CLOSE ALL; UNLISTEN *; RESET ALL;`) 29/31/33/35; rep7 held-away
+precheck 23 each; approval load/lock/update/audit/publish 15 each; SoD gate 8 each; middleware 5 each. Zero round-trips
+after the response were counted inside the request window (the automatic step is entirely after-response).
+
+Findings:
+- **Every round-trip is ≈ 31 ms from this host** (7.10 s / 229); the request's wall clock is ≈ 99 % DB time.
+- **cpsim05 adds a CONSTANT +15** round-trips (+13 in routing — the simulator route conditions — and +2 pool
+  acquires), identical at 2 and 6 lines. It does no fix_sim work before the response. cpsim05 is NOT the latency.
+- **The baseline itself exceeds the 5 s bound** at 2 lines (manual_2 = 7.16 s, no simulator at all), so the 5 s bound
+  measured the WSL → Supabase latency of the pre-existing approve path, not cpsim05.
+- **But the baseline grows ≈ 14 round-trips per line** (229 → 285 for +4 lines) — a per-line N+1 in the pre-existing
+  approve → execute path (rep2 / rep5 code). Identified per statement in run 2 below.
