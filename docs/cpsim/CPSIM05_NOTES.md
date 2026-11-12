@@ -230,3 +230,4 @@ nothing else heavy alongside).
 | Run | Result | Notes |
 |---|---|---|
 | `--cleanup-only` (start) | **17 PASS, 0 FAIL** (183 s) | fixture rows before: **0** in all 55 counted tables (the killed fix 1 one-off left nothing); after: 0 per table, 0 leftovers; 15 real-row fingerprints (count + checksum) unchanged |
+| `--self-checks-only` | **28 PASS, 0 FAIL** (14 s) | git / route / changed-line self-checks |
