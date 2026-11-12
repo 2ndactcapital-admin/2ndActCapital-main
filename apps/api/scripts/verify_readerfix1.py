@@ -251,8 +251,8 @@ async def self_checks():
     check(nc.status == "ok" and [x["max_tokens"] for x in CALLS] == [16_000, 32_000] and nc.retry["made"] is True,
           "note reader: the same retry (16,000 → 32,000) through the same function", f"{nc.status} {nc.retry}")
     row = CS._call_row(NSDOC, nc, run_id=None, origin="cascade", ensemble_config_id=None)
-    check(row.metadata.get("retry", {}).get("made") is True and row.reasoning_effort == "low",
-          "the note call row records the retry and the effort", f"{row.metadata.get('retry')}")
+    check(row.metadata.get("allowance_retry", {}).get("made") is True and row.reasoning_effort == "low",
+          "the note call row records the retry and the effort", f"{row.metadata.get('allowance_retry')}")
 
     section("[S4] a second empty answer → invalid 'the model used its whole output allowance' — never a third call")
     reset()
@@ -334,9 +334,10 @@ async def teardown(conn) -> int:
     return int(st.rsplit(" ", 1)[-1])
 
 
-async def leftovers(conn) -> int:
+async def leftovers(conn, *, readings_only: bool = False) -> int:
     async with platform_tx(conn):
-        n = await conn.fetchval("SELECT count(*) FROM public.ai_daily_usage WHERE deployment LIKE $1", FX + "%")
+        n = 0 if readings_only else await conn.fetchval(
+            "SELECT count(*) FROM public.ai_daily_usage WHERE deployment LIKE $1", FX + "%")
         n += await conn.fetchval("SELECT count(*) FROM portfolio.replica_term_readings WHERE prompt_version LIKE "
                                  "'readerfix1.fx%'")
         n += await conn.fetchval("SELECT count(*) FROM portfolio.note_term_readings WHERE deployment_name LIKE $1",
@@ -492,7 +493,8 @@ async def y_reread(conn):
             raise _Rollback()
     except _Rollback:
         pass
-    check(await leftovers(conn) == 0, "the transaction was rolled back — zero fixture readings remain")
+    check(await leftovers(conn, readings_only=True) == 0,
+          "the transaction was rolled back — zero fixture readings remain")
 
 
 # ═══ N — the real cascade's Model-2-only re-read ═════════════════════════════
@@ -519,10 +521,15 @@ async def y_note_cascade(conn):
     models = [c["model"] for c in CALLS]
     check(models and set(models) == {n2}, "only Model 2 was called (the empty answer + its one retry)", f"{models}")
     check(not [r for r in out.readings if r.source == "model_1"], "no Model 1 reading is written again (kept as-is)")
-    call_rows = [r for r in out.readings if r.field_key == NSTORE.CALL_FIELD and r.source == "model_2"]
+    call_rows = [r for r in out.readings if r.field_key == NSTORE.CALL_FIELD and r.source == "model_2"
+                 and r.metadata.get("retry") != "fuller_text"]
+    fuller = [r for r in out.readings if r.field_key == NSTORE.CALL_FIELD and r.metadata.get("retry") == "fuller_text"]
+    check(all(r.source == "model_2" and r.metadata.get(CS.REREAD_MODEL_2) is True for r in fuller),
+          "the fuller-text retry (if the note needed one) also called Model 2 only, marked as the re-read",
+          f"{len(fuller)} fuller-text call(s)")
     check(len(call_rows) == 1 and call_rows[0].metadata.get(CS.REREAD_MODEL_2) is True
           and call_rows[0].metadata.get("model_1_call_id") == "fx-model-1-call"
-          and call_rows[0].metadata.get("retry", {}).get("made") is True,
+          and call_rows[0].metadata.get("allowance_retry", {}).get("made") is True,
           "Model 2's call row records the re-read, the Model 1 call it pairs with, and the retry",
           f"{call_rows[0].metadata if call_rows else None}")
     check(out.status != "failed", "the note is compared and staged from the pair (status not 'failed')",
@@ -539,7 +546,7 @@ async def y_live(conn, fp_before):
         ivv = await conn.fetchrow(
             "SELECT s.global_security_id, d.extracted_text, d.form_type FROM portfolio.replica_securities s "
             "JOIN portfolio.replica_source_documents d ON d.fund_global_security_id = s.global_security_id "
-            "WHERE upper(s.ticker) = 'IVV' AND s.system_to IS NULL ORDER BY d.created_at DESC LIMIT 1")
+            "WHERE upper(s.ticker) = 'IVV' AND s.system_to IS NULL AND d.system_to IS NULL ORDER BY d.fetched_at DESC LIMIT 1")
         notes = await DR.note_reread_due(conn, "gpt-5-mini", "gpt-5-nano")
         due = await conn.fetchval(f"SELECT {RT.reread_due_sql('$1::uuid', '$2', '$3', '$4')}",
                                   ivv["global_security_id"], RT.PROMPT_VERSION, "gpt-5-mini",

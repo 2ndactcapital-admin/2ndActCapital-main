@@ -685,7 +685,7 @@ async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | No
                 call.output_tokens, Decimal(repr(call.cost_usd)) if call.cost_usd is not None else None,
                 call.latency_ms, call.call_id)
         meta = _dumps({k: v for k, v in (("reasoning_effort", call.reasoning_effort),
-                                        ("max_tokens", call.max_tokens), ("retry", call.retry),
+                                        ("max_tokens", call.max_tokens), ("allowance_retry", call.retry),
                                         ("reread", True if reread else None)) if v is not None})
         if call.status != "ok":
             records.append(base + ("__call__", None, None, call.status, call.error, None, None, None, None, None,
