@@ -92,6 +92,7 @@ OPEN_READS = {
     "/api/v1/investment-profile/questions": "PUBLIC-TO-ORG: the question set (answers are entity-gated)",
     "/api/v1/market/catalog": "PUBLIC-TO-ORG: market indicator catalog",
     "/api/v1/market/series": "PUBLIC-TO-ORG: market indicator series",
+    "/api/v1/market/securities/search": "PUBLIC-TO-ORG: security-master search for the market picker (dailyops1)",
     "/api/v1/deal-room/templates": "PUBLIC-TO-ORG: platform NDA templates (+ the caller's own publisher templates)",
     # OWN ROWS: filtered by the caller's own user id in SQL.
     "/api/v1/assistant/conversation": "OWN ROWS: the caller's conversation",
