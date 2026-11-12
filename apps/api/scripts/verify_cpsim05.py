@@ -209,6 +209,7 @@ from cpsim import mirror as SM  # noqa: E402
 from cpsim import oauth as SO  # noqa: E402
 from cpsim import registry as R  # noqa: E402
 from cpsim import webhooks as SW  # noqa: E402
+from services import account_models as AM  # noqa: E402
 from services import altruist_oauth as AO  # noqa: E402
 from services import altruist_webhook as AW  # noqa: E402
 from services import blocks as BK  # noqa: E402
@@ -1178,13 +1179,19 @@ async def make_proposal(conn, account, lines: list[dict], *, kind="model", trigg
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
         model = kind == "model"
+        # CPSIM05 FIX 1 (FAIL E): the proposal is stamped with THE account's valuation as-of (AM.valuation_as_of — the
+        # ONE definition the generator stamps and rep5's expiry compares against), read here, right before submit.
+        # The first run stamped the counterparty clock's D0, but the connect / post-fill syncs write positions at the
+        # wall-clock sync date (altruist_positions_sync: as_of = date.today()), so _expire_if_due saw "the valuation
+        # moved" and every submit was 409 "expired". The expiry rule and the TTL are unchanged.
+        val_as_of = await AM.valuation_as_of(conn, ORG_A, account)
         await conn.execute(
             "INSERT INTO rebalance_proposals (id, org_id, account_id, link_id, model_id, model_version_id, trigger, "
             "trigger_ref, status, expires_at, maker_kind, maker_id, proposal_kind, valuation_as_of) VALUES ($1, $2, $3, "
             "$4, $5, $6, $7, $8::jsonb, 'draft', now() + interval '7 days', $9, $10, $11, $12)", pid, ORG_A, account,
             LINK_A if model else None, MODEL_A if model else None, VERSION_A if model else None, trigger,
             json.dumps({} if model else {"cash_policy_id": str(uuid.uuid4())}), "system" if system else "user",
-            None if system else U_MK, kind, D0)
+            None if system else U_MK, kind, val_as_of)
         for n, ln in enumerate(lines, start=1):
             await conn.execute(
                 "INSERT INTO rebalance_proposal_trades (org_id, proposal_id, line_no, global_security_id, side, "
