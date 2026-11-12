@@ -66,6 +66,7 @@ CAP_ENV = "AI_DAILY_RUN_SPEND_CAP_USD"           # optional per-run dollar cap f
 DEFAULT_SLICE, DEFAULT_LEASE, DEFAULT_START = 240, 600, "00:05"
 BATCH = 25
 HISTORY_DAYS = 30
+NOTE_PUBLIC_FORMS = ("424B2", "FWP")             # the note corpus: EDGAR pricing supplements / free-writing prospectuses
 
 
 def _env_int(name: str, default: int) -> int:
@@ -115,6 +116,25 @@ def spend_cap():
     return None if not raw else float(checked_spend_cap(raw, source=CAP_ENV))
 
 
+# ── the public-data guard (dailyops1) ───────────────────────────────────────
+# The daily jobs run on the data-sharing OpenAI models (public_data_only in
+# platform_model_catalog): ONLY public documents may ever reach them. A job is
+# run only when its task key is a public-data task (services.model_catalog.
+# PUBLIC_DATA_TASK_KEYS — the one source of that rule), checked in drive()
+# BEFORE a single item is selected. statement_positions (member statements) is
+# not one, and is also never scheduled. Each job's queue reads only the public
+# corpus: the note queue keeps only reference filings classified
+# 'public_reference' (EDGAR 424B2/FWP); the replica job reads fund
+# prospectuses pulled from EDGAR into the platform-only source-document store.
+def public_job_refusal(task_key: str) -> str | None:
+    from services import model_catalog as MC
+
+    if task_key in NEVER_SCHEDULED or task_key not in MC.PUBLIC_DATA_TASK_KEYS:
+        return (f"'{task_key}' is not a public-data job: the daily run reads documents with data-sharing models "
+                f"and may run only {sorted(MC.PUBLIC_DATA_TASK_KEYS)} — refused before any item was selected")
+    return None
+
+
 # ── jobs ────────────────────────────────────────────────────────────────────
 @dataclass
 class BatchResult:
@@ -150,8 +170,13 @@ async def _note_queue(pool, *, exclude=(), limit: int = BATCH, include_test_orgs
         ready = await selection.ready_notes(conn)
         staged = {str(r["reference_filing_id"]) for r in await conn.fetch(
             "SELECT DISTINCT reference_filing_id FROM portfolio.note_extraction_staging")}
+        # dailyops1 public-data guard: only the public EDGAR corpus, never anything else.
+        public = {str(r["id"]) for r in await conn.fetch(
+            "SELECT id FROM portfolio.reference_filings WHERE id = ANY($1::uuid[]) "
+            "AND retention_classification = 'public_reference' AND form_type = ANY($2::text[])",
+            [n.reference_filing_id for n in ready], list(NOTE_PUBLIC_FORMS))}
     skip = staged | {str(x) for x in exclude}
-    todo = [n for n in ready if n.reference_filing_id not in skip]
+    todo = [n for n in ready if n.reference_filing_id not in skip and n.reference_filing_id in public]
     return [{"id": n.reference_filing_id, "issuer": n.issuer} for n in selection.stratify(todo, limit)]
 
 
@@ -378,6 +403,9 @@ async def drive(pool, run_id, *, jobs: dict[str, Job] | None = None, deadline: f
         deadline = clock() + slice_seconds()
     if job is None:
         return await _finish(pool, run_id, STOPPED_ERROR, detail=f"'{run['task_key']}' is not a daily job") or run
+    refusal = public_job_refusal(job.task_key)
+    if refusal is not None:
+        return await _finish(pool, run_id, STOPPED_ERROR, detail=refusal) or run
     done, failed, base_usage = int(run["documents_done"]), list(run["failed_items"] or []), run["usage"] or {}
     scope = None
     try:
@@ -473,6 +501,9 @@ async def daily_tick(pool, *, now_utc: datetime | None = None, jobs: dict[str, J
     for task_key, job in jobs.items():
         if task_key in NEVER_SCHEDULED:
             out["jobs"][task_key] = {"action": "never_scheduled"}
+            continue
+        if public_job_refusal(task_key) is not None:
+            out["jobs"][task_key] = {"action": "not_public_data"}
             continue
         try:
             async with ai_budget._platform_tx(pool) as conn:

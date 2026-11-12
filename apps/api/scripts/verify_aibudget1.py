@@ -433,6 +433,13 @@ def install_stubs():
     AE.KNOWN_TASK_KEYS = frozenset({*AE.KNOWN_TASK_KEYS, T_PICK, T_PUB})
     RAE.KNOWN_TASK_KEYS = AE.KNOWN_TASK_KEYS
     AE.PUBLIC_DATA_TASK_KEYS = frozenset({*AE.PUBLIC_DATA_TASK_KEYS, T_PUB})
+    # dailyops1: the daily run now runs ONLY public-data task keys (ai_daily_runs.public_job_refusal reads
+    # services.model_catalog.PUBLIC_DATA_TASK_KEYS). This script's fixture daily jobs stand in for public-data
+    # jobs, so they are registered as such for this run (fixture setup — no assertion changes);
+    # statement_positions stays out of the set.
+    import services.model_catalog as MC
+    MC.PUBLIC_DATA_TASK_KEYS = frozenset({*MC.PUBLIC_DATA_TASK_KEYS, T_TOK, T_USD, T_UNL, T_SHA, T_SHB, T_CON1,
+                                          T_CON2, T_DAILY, T_BUSY})
 
     async def refuse_async(self, request):
         NETWORK_CALLS.append(str(request.url))
