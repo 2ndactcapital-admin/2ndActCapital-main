@@ -301,3 +301,9 @@ scan list. New checks: (a) logged token calls = the script's direct grant tests 
 (b) no `/api/v1` body, fixture audit row, fixture `cpsim.request_log` row or this script's output carries a
 `cpsim_rt*` token or the simulator password; (c) each token call's request_log row records `realtime.token.<grant>`
 only (no token, password, user name, client id or secret). `--only=sensitive` now also runs `token`.
+
+**Fix 2 proof (one-offs, `timeout 600` each):** `--only=sensitive` (seed + token + refusals + sensitive) **148 PASS /
+0 FAIL**. The two successful token-endpoint answers (password grant, refresh grant; four leak lines) are listed as exempt. The 36 remaining bodies are clean; (a) logged token calls =
+direct + client; (b) /api/v1 bodies 33, audit rows 27, request_log rows 102 and the output are all clean; (c) 10 token
+request_log rows, grant type only. `--self-checks-only` 27/0; `--cleanup-only` 12/0, zero fixture rows. The full run is
+still owed (by the runner).
