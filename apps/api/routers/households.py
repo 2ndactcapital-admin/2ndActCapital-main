@@ -65,6 +65,51 @@ class AccountAdd(BaseModel):
     add_owner_as_member: bool = False
 
 
+class CustodianOwner(BaseModel):
+    """cpsim06 — one owner of an account opened at the simulated custodian: a household member and its role. Overrides
+    are what the opener typed for THIS request (a tax id / date of birth among them): sent once, never stored."""
+    model_config = ConfigDict(extra="forbid")
+    entity_id: UUID
+    role: str = Field(max_length=30)
+    overrides: dict | None = None
+
+
+class CustodianBeneficiary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tier: str | None = None
+    name: str | None = Field(default=None, max_length=120)
+    kind: str | None = None
+    entity_id: UUID | None = None
+    relationship: str | None = Field(default=None, max_length=60)
+    percentage: str | None = Field(default=None, max_length=20)   # Decimal text, never a float
+
+
+class CustodianTrusted(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, max_length=120)
+    email: str | None = Field(default=None, max_length=254)
+    phone: str | None = Field(default=None, max_length=40)
+    relationship: str | None = Field(default=None, max_length=60)
+    entity_id: UUID | None = None
+
+
+class CustodianAccountIn(BaseModel):
+    """cpsim06 D4 — "Open account at custodian" (Check / Open). No org_id (Rule 6): the org is the caller's."""
+    model_config = ConfigDict(extra="forbid")
+    account_type: str = Field(max_length=60)
+    owners: list[CustodianOwner] = Field(default_factory=list, max_length=6)
+    beneficiaries: list[CustodianBeneficiary] = Field(default_factory=list, max_length=20)
+    trusted_contact: CustodianTrusted | None = None
+    account_group: str | None = Field(default=None, max_length=120)
+    draft_reference: str | None = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
+    environment: str = "simulator"
+
+    def as_body(self) -> dict:
+        d = self.model_dump(mode="json")
+        d.pop("environment", None)
+        return d
+
+
 class AccountEdit(BaseModel):
     """PORTENTRY2 (H-01) — the account fields a household corrects (system-axis archive, id kept)."""
     model_config = ConfigDict(extra="forbid")
@@ -345,6 +390,12 @@ async def get_household(request: Request, household_id: UUID):
         except HA.HouseholdNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
     perms = _household_permissions(request)
+    # cpsim06 D5 — the "Open account at custodian" action: present only when it is available here, else the reason
+    from services import custodian_account_opening as CAO
+
+    async with pool.acquire() as conn:
+        opening = await CAO.availability(conn, org_id, household_id)
+    detail["custodian_account_opening"] = {**opening, "can_open": bool(perms["can_write"] and opening["available"])}
     return {**detail, "permissions": perms,
             "vocabularies": {**AUTH.vocabularies(), **liability_vocab(),   # CRMDETAIL1 — net-worth line labels
                              **(await _account_vocab(org_id)),
@@ -452,3 +503,86 @@ async def household_summary(request: Request, household_id: UUID):
     return {"household": {"id": str(household_id), "name": name}, "total": total, "actions": actions,
             "permissions": perms, "vocabularies": {**HT_.vocabularies(), "editable": [], "inline_editable": []}}
 
+
+
+# --------------------------------------------------------------------------
+# cpsim06 D4 / D5 — "Open account at custodian" (the SIMULATED custodian only). Gate = add_account's own
+# (_require_household_admin: Super Admin first, staff, an internal role holding manage_members; never a member).
+# --------------------------------------------------------------------------
+def _opening_errors(exc):
+    from services import custodian_account_opening as CAO
+    from services.altruist_oauth import AltruistOAuthError
+    from services.altruist_realtime_sim import RealtimeRefused
+
+    if isinstance(exc, HA.HouseholdNotFound):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, CAO.OpeningRefused):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, (HA.HouseholdAdminError,)):
+        return HTTPException(status_code=422, detail=str(exc))
+    if isinstance(exc, RealtimeRefused):
+        return HTTPException(status_code=502, detail={"message": "the simulated custodian refused the request",
+                                                      "status": exc.status, "detail": exc.detail,
+                                                      "problems": exc.problems})
+    if isinstance(exc, AltruistOAuthError):
+        return HTTPException(status_code=409, detail=str(exc))
+    return None
+
+
+@router.get("/admin/households/{household_id}/custodian-account")
+async def custodian_account_context(request: Request, household_id: UUID, environment: str = "simulator"):
+    """The form's envelope: availability (with the reason), the members pre-filled from the CRM (tax ids as last four
+    only; no date of birth), suggestions, the custodian's account types (YES with registration type, NO disabled with
+    the reason) and the permission envelope."""
+    from services import custodian_account_opening as CAO
+
+    _require_household_admin(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    await require_visible(request, pool, household_ids=[household_id])
+    try:
+        ctx = await CAO.context(pool, org_id=org_id, household_id=household_id, environment=environment)
+    except Exception as exc:  # noqa: BLE001
+        http = _opening_errors(exc)
+        if http is None:
+            raise
+        raise http from exc
+    perms = _household_permissions(request)
+    can = bool(perms["can_write"] and ctx["availability"]["available"])
+    return {**ctx, "permissions": {**perms, "can_open": can},
+            "vocabularies": {**ctx["vocabularies"],
+                             "editable": (["owners", "beneficiaries", "trusted_contact", "account_type"] if can else []),
+                             "inline_editable": []}}
+
+
+async def _custodian_action(request: Request, household_id: UUID, body: CustodianAccountIn, which: str):
+    from services import custodian_account_opening as CAO
+
+    p = _require_household_admin(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    await require_visible(request, pool, household_ids=[household_id],
+                          entity_ids=[o.entity_id for o in body.owners])
+    fn = CAO.check if which == "check" else CAO.open_account
+    try:
+        return await fn(pool, org_id=org_id, actor_id=p.user_id, household_id=household_id, body=body.as_body(),
+                        environment=body.environment)
+    except Exception as exc:  # noqa: BLE001
+        http = _opening_errors(exc)
+        if http is None:
+            raise
+        raise http from exc
+
+
+@router.post("/admin/households/{household_id}/custodian-account/check")
+async def custodian_account_check(request: Request, household_id: UUID, body: CustodianAccountIn):
+    """Check: the simulated custodian validates the request — every problem, field by field; nothing is opened and
+    nothing is written in Hollisworks."""
+    return await _custodian_action(request, household_id, body, "check")
+
+
+@router.post("/admin/households/{household_id}/custodian-account/open")
+async def custodian_account_open(request: Request, household_id: UUID, body: CustodianAccountIn):
+    """Open: in good order → opened at once at the simulated custodian, recorded through add_account + the crosswalk
+    (one transaction), then synced. Refused → every problem; nothing created. Repeat → the same account."""
+    return await _custodian_action(request, household_id, body, "open")

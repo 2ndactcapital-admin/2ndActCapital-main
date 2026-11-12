@@ -1,5 +1,5 @@
 {
- "app_route_count": 1074,
+ "app_route_count": 1077,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -7356,6 +7356,69 @@
    "path": "/api/v1/households/{household_id}/summary",
    "public": false,
    "write": false
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.households",
+   "name": "custodian_account_context",
+   "note": "",
+   "path": "/api/v1/admin/households/{household_id}/custodian-account",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.households",
+   "name": "custodian_account_check",
+   "note": "",
+   "path": "/api/v1/admin/households/{household_id}/custodian-account/check",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.households",
+   "name": "custodian_account_open",
+   "note": "",
+   "path": "/api/v1/admin/households/{household_id}/custodian-account/open",
+   "public": false,
+   "write": true
   },
   {
    "after": "authz view_portfolio; internal + any(view_portfolio)",
@@ -21987,6 +22050,69 @@
    "module": "cpsim.app",
    "name": "oauth_token",
    "path": "/cpsim/c/{slug}/oauth2/token"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "POST"
+   ],
+   "module": "cpsim.app",
+   "name": "realtime_draft",
+   "path": "/cpsim/c/{slug}/realtime/api/account-drafts"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "GET"
+   ],
+   "module": "cpsim.app",
+   "name": "realtime_draft_get",
+   "path": "/cpsim/c/{slug}/realtime/api/account-drafts/{draft_id}"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "POST"
+   ],
+   "module": "cpsim.app",
+   "name": "realtime_submit",
+   "path": "/cpsim/c/{slug}/realtime/api/account-drafts/{draft_id}/submit"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "POST"
+   ],
+   "module": "cpsim.app",
+   "name": "realtime_validate",
+   "path": "/cpsim/c/{slug}/realtime/api/account-drafts/{draft_id}/validate"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "POST"
+   ],
+   "module": "cpsim.app",
+   "name": "realtime_contact",
+   "path": "/cpsim/c/{slug}/realtime/api/contacts"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "POST"
+   ],
+   "module": "cpsim.app",
+   "name": "realtime_household",
+   "path": "/cpsim/c/{slug}/realtime/api/households"
+  },
+  {
+   "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",
+   "methods": [
+    "POST"
+   ],
+   "module": "cpsim.app",
+   "name": "realtime_token",
+   "path": "/cpsim/c/{slug}/realtime/realms/altruist/protocol/openid-connect/token"
   },
   {
    "auth": "own auth \u2014 simulator key (Authorization: Bearer cpsim_\u2026, cpsim/auth.py); a Hollisworks session / JWT never authenticates; X-Counterparty-Simulated on every response",

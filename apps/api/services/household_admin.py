@@ -300,14 +300,19 @@ async def add_account(pool, *, org_id, actor_id, household_id, custodian_code: s
                       tax_status: str | None = None, reason: str | None = None,
                       receiving: dict | None = None, today: date | None = None,
                       is_billable: bool | None = None, is_discretionary: bool | None = None,
-                      service_model: str | None = None, add_owner_as_member: bool = False) -> dict:
+                      service_model: str | None = None, add_owner_as_member: bool = False,
+                      on_created=None) -> dict:
     """Insert the account (mask + hash only) at REP7B's default; a non-default authority / custody becomes a
     REP7B draft change awaiting a second person. Returns the account (masked) and the pending change, if any.
 
     PORTENTRY2: the owner is any household member — a person or a legal entity (H-02). With
     ``add_owner_as_member`` a legal entity a member owns (``owner_candidates``) is linked as a member in the same
     transaction. Registration type / tax status come from the org's config vocabulary (H-01); ``is_billable``
-    defaults OFF for a demo household (every member tagged demo-*), ON otherwise."""
+    defaults OFF for a demo household (every member tagged demo-*), ON otherwise.
+
+    cpsim06 D4: ``on_created(conn, row)`` (optional) runs INSIDE this transaction right after the account row and its
+    audit row — the simulated custodian's crosswalk is written there, so the account and its link commit together or
+    not at all. Default None: unchanged."""
     today = today or date.today()
     custodian_code = (custodian_code or "").strip()
     if not custodian_code:
@@ -387,6 +392,8 @@ async def add_account(pool, *, org_id, actor_id, household_id, custodian_code: s
                           "default": list(default), "owner": str(owner), "owner_linked_now": linked_now,
                           "registration_type": registration_type, "tax_status": tax_status,
                           "is_billable": bool(is_billable), "is_discretionary": bool(is_discretionary)})
+            if on_created is not None:
+                await on_created(conn, row)
     out = {"id": str(row["id"]), "account_number_masked": row["account_number_masked"],
            "custodian_code": custodian_code, "household_id": str(hh["id"]),
            "authority": default[0], "custody": default[1], "pending_change": None,
