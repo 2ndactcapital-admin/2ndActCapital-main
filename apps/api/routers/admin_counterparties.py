@@ -394,6 +394,11 @@ async def advance_clock(request: Request, counterparty_id: UUID):
         await SW.after_transfers(counterparty_id=counterparty_id, slug=slug, behaviour=beh,
                                  items=[{k: t[k] for k in ("transfer_id", "client_transfer_id", "account_id")}
                                         for t in out["transfers"]])
+    # cpsim05 — the FIX orders this advance filled: their instructions (sent automatically over simulated FIX) collect
+    # the new fills (OrderStatusRequest), book, sync and reconcile — AFTER this response; never a new order
+    from services import fix_sim_auto
+
+    fix_sim_auto.collect_after_advance(out["filled"])
     return _envelope(principal, out, types)
 
 

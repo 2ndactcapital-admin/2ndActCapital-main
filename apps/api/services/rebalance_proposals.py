@@ -1371,6 +1371,12 @@ async def execute(pool, *, org_id, proposal_id, actor_id, manual: bool = False) 
                                                                         "routed_to": result.routed_to,
                                                                         "reason": result.reason})
     await _publish(pool, org_id, "routed", p["id"], {"instruction_ids": ids}, actor["id"])
+    # cpsim05 D4 — the ONE choke point: a human-maker proposal routed to the SIMULATED FIX counterparty is sent,
+    # booked, synced and reconciled automatically AFTER this request (the proposal's maker-checker is the approval of
+    # record). Only schedules — nothing is sent inside this request. Every other route: nothing happens here.
+    from services import fix_sim_auto
+
+    fix_sim_auto.after_proposal_routed(pool, org_id=org_id, proposal=p, routing=result.as_dict(), instruction_ids=ids)
     return new
 
 

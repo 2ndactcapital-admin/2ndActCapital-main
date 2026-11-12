@@ -594,6 +594,13 @@ async def health() -> dict:
     return {"status": "ok", "version": API_VERSION}
 
 
+# cpsim05 — OUTERMOST (added after every other middleware): an automatic simulated-FIX step scheduled inside a request
+# starts only after that request's response has been sent (services/fix_sim_auto.py)
+from services.fix_sim_auto import AfterResponseGate as _FixSimAfterResponseGate  # noqa: E402
+
+app.add_middleware(_FixSimAfterResponseGate)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     from services import authz
@@ -631,6 +638,9 @@ async def _startup() -> None:
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
+    from services import fix_sim_auto
+
+    await fix_sim_auto.drain(30)      # cpsim05 — in-flight simulated-FIX steps finish before the pool closes
     await close_pool()
     from cpsim import db as cpsim_db
 

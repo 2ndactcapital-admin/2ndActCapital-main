@@ -193,6 +193,23 @@ async def send_to_custodian(pool, *, org_id, instruction_id, actor_id, transport
         row = await X.load(conn, org_id, instruction_id)
         X._need(row, ("approved",), "send to the custodian")
         await X._refuse_in_block(conn, row["id"], "send")
+        if row["routed_via"] == X.FIX_SIM_CHANNEL:
+            if row["source"] == "proposal":
+                raise X.ExecutionConflict("a proposal's simulated-FIX trade is sent automatically after its approval "
+                                          "— see its events (Automatic step stopped → carry it out manually)")
+            fix_person = True
+        else:
+            fix_person = False
+    if fix_person:      # cpsim05 — a PERSON sends a non-proposal fix_sim instruction over simulated FIX
+        from services import fix_sim_auto as FA
+
+        out = await FA.run_person(pool, org_id=org_id, instruction_id=row["id"], actor_id=actor["id"],
+                                  transport=transport)
+        async with pool.acquire() as conn:
+            cur = await X.load(conn, org_id, row["id"])
+        return {"instruction": cur, "outcome": out.get("outcome"), "reason": out.get("reason"), "fix": out.get("fix"),
+                "protocol": "fix", "simulated": True}
+    async with pool.acquire() as conn:
         if row["routed_via"] != ROUTE:
             raise X.ExecutionConflict("this instruction was routed to manual execution — a person carries it out and "
                                       "marks it sent (Mark sent)")
@@ -284,6 +301,16 @@ async def import_fills(pool, *, org_id, instruction_id, actor_id, transport: Any
         actor = await X._human(conn, actor_id, org_id)
         row = await X.load(conn, org_id, instruction_id)
         X._need(row, ("sent", "partially_filled"), "import fills for")
+    if row["sent_channel"] == X.FIX_SIM_CHANNEL:     # cpsim05 — collect over FIX (35=H), book, sync, reconcile
+        from services import fix_sim_auto as FA
+
+        out = await FA.run_person(pool, org_id=org_id, instruction_id=row["id"], actor_id=actor["id"],
+                                  transport=transport)
+        async with pool.acquire() as conn:
+            cur = await X.load(conn, org_id, row["id"])
+        return {"instruction": cur, "booked": out.get("booked") or [], "already_booked": [], "fix": out.get("fix"),
+                "protocol": "fix", "simulated": True}
+    async with pool.acquire() as conn:
         if row["sent_channel"] != CHANNEL:
             raise X.ExecutionConflict("this instruction was not sent to a custodian API — enter its fills by hand")
         order = await _order_of(conn, org_id, row, transport)
@@ -370,10 +397,12 @@ async def order_event_todo(conn, *, org_id, payload: dict) -> dict | None:
     except (TypeError, ValueError):
         return {"todo": None, "reason": "client_order_id is not an instruction id"}
     row = await conn.fetchrow(
-        f"SELECT id, sent_by, status, custodian_order_id FROM {X.T_INS} WHERE id = $1::uuid AND org_id = $2::uuid "
-        "AND system_to IS NULL", iid, str(org_id))
+        f"SELECT id, sent_by, status, custodian_order_id, sent_channel FROM {X.T_INS} WHERE id = $1::uuid AND "
+        "org_id = $2::uuid AND system_to IS NULL", iid, str(org_id))
     if row is None or row["custodian_order_id"] != payload.get("order_id"):
         return {"todo": None, "reason": "no instruction of this organization carries that order"}
+    if row["sent_channel"] == X.FIX_SIM_CHANNEL:     # cpsim05 — its fills are collected over FIX, no to-do
+        return {"todo": None, "reason": "sent over simulated FIX — its fills are collected by the FIX path"}
     if row["status"] not in ("sent", "partially_filled") or not row["sent_by"]:
         return {"todo": None, "reason": f"the instruction is {row['status']}"}
     tid = await _todo(conn, org_id=org_id, user_id=row["sent_by"], source=TODO_SOURCE_FILLS, instruction_id=row["id"],
@@ -388,8 +417,24 @@ async def panel(conn, org_id, row: dict, acct: dict) -> dict:
     """What the instruction page shows about the custodian route (no network): routed via, whether Send is available
     now (D2 + the per-trade rules, re-read) and why not."""
     out = {"routed_via": row["routed_via"], "custodian_order_id": row.get("custodian_order_id"),
-           "simulated": row["routed_via"] == ROUTE, "send_available": False, "send_refused": None,
-           "counterparty": None, "import_available": False}
+           "simulated": row["routed_via"] in (ROUTE, X.FIX_SIM_CHANNEL), "send_available": False,
+           "send_refused": None, "counterparty": None, "import_available": False,
+           "protocol": "fix" if row["routed_via"] == X.FIX_SIM_CHANNEL else ("rest" if row["routed_via"] == ROUTE
+                                                                             else None)}
+    if row["routed_via"] == X.FIX_SIM_CHANNEL:      # cpsim05
+        r = await simulator_route(conn, org_id, acct)
+        out["counterparty"] = r["slug"]
+        out["automatic"] = row.get("source") == "proposal"
+        if row["status"] == "approved" and not out["automatic"]:
+            why = None if r["ok"] else r["reason"]
+            why = why or trade_refusal([row])
+            out["send_available"] = why is None
+            out["send_refused"] = why
+        elif row["status"] == "approved":
+            out["send_refused"] = "sent automatically after the proposal's approval (simulated counterparty)"
+        out["import_available"] = row["status"] in ("sent", "partially_filled") and \
+            row.get("sent_channel") == X.FIX_SIM_CHANNEL
+        return out
     if row["routed_via"] != ROUTE:
         if acct.get("custodian_code") and str(acct["custodian_code"]).upper().startswith("ALTRUIST"):
             r = await simulator_route(conn, org_id, acct)
