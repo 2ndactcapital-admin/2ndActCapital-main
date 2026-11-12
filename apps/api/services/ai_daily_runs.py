@@ -161,23 +161,56 @@ async def _note_config(pool) -> dict | None:
         return await active_ensemble(conn, "note_terms_extraction")
 
 
+NOTE_REREAD_SQL = """
+SELECT r2.reference_filing_id::text AS id, max(r2.created_at) AS at
+  FROM portfolio.note_term_readings r2
+ WHERE r2.field_key = '__call__' AND r2.source = 'model_2' AND r2.deployment_name = $2 AND r2.status <> 'ok'
+   AND EXISTS (SELECT 1 FROM portfolio.note_term_readings r1
+                WHERE r1.reference_filing_id = r2.reference_filing_id AND r1.run_id = r2.run_id
+                  AND r1.field_key = '__call__' AND r1.source = 'model_1' AND r1.deployment_name = $1
+                  AND r1.status = 'ok')
+   AND NOT EXISTS (SELECT 1 FROM portfolio.note_term_readings ok2
+                    WHERE ok2.reference_filing_id = r2.reference_filing_id AND ok2.field_key = '__call__'
+                      AND ok2.source = 'model_2' AND ok2.deployment_name = $2 AND ok2.status = 'ok')
+   AND NOT EXISTS (SELECT 1 FROM portfolio.note_term_readings rr
+                    WHERE rr.reference_filing_id = r2.reference_filing_id
+                      AND rr.metadata ->> 'reread_model_2' = 'true')
+ GROUP BY r2.reference_filing_id
+ ORDER BY max(r2.created_at) DESC, r2.reference_filing_id
+"""
+
+
+async def note_reread_due(conn, model_1: str, model_2: str) -> list[str]:
+    """readerfix1: notes read with a usable Model 1 call and an empty / invalid
+    Model 2 call in the same run, Model 2 never successful since, and not yet
+    re-read — newest first. Each gets ONE Model-2-only re-read."""
+    return [r["id"] for r in await conn.fetch(NOTE_REREAD_SQL, model_1, model_2)]
+
+
 async def _note_queue(pool, *, exclude=(), limit: int = BATCH, include_test_orgs: bool = False,
                       cfg: dict | None = None) -> list[dict]:
-    """The note corpus is global (no org): include_test_orgs and cfg do not apply."""
+    """The note corpus is global (no org): include_test_orgs does not apply.
+    readerfix1: the Model-2-only re-reads (newest first) come before new notes."""
     from services.note_extraction import selection
 
+    cfg = cfg if cfg is not None else await _note_config(pool)
     async with ai_budget._platform_tx(pool) as conn:
         ready = await selection.ready_notes(conn)
         staged = {str(r["reference_filing_id"]) for r in await conn.fetch(
             "SELECT DISTINCT reference_filing_id FROM portfolio.note_extraction_staging")}
+        rereads = (await note_reread_due(conn, cfg["model_1"], cfg["model_2"])) if cfg else []
         # dailyops1 public-data guard: only the public EDGAR corpus, never anything else.
         public = {str(r["id"]) for r in await conn.fetch(
             "SELECT id FROM portfolio.reference_filings WHERE id = ANY($1::uuid[]) "
             "AND retention_classification = 'public_reference' AND form_type = ANY($2::text[])",
-            [n.reference_filing_id for n in ready], list(NOTE_PUBLIC_FORMS))}
-    skip = staged | {str(x) for x in exclude}
-    todo = [n for n in ready if n.reference_filing_id not in skip and n.reference_filing_id in public]
-    return [{"id": n.reference_filing_id, "issuer": n.issuer} for n in selection.stratify(todo, limit)]
+            list({*(n.reference_filing_id for n in ready), *rereads}), list(NOTE_PUBLIC_FORMS))}
+    skip = {str(x) for x in exclude}
+    out = [{"id": f, "issuer": None, "reread_model_2": True} for f in rereads
+           if f in public and f not in skip][:limit]
+    todo = [n for n in ready if n.reference_filing_id not in skip | staged | {o["id"] for o in out}
+            and n.reference_filing_id in public]
+    out += [{"id": n.reference_filing_id, "issuer": n.issuer} for n in selection.stratify(todo, limit - len(out))]
+    return out
 
 
 async def _note_read(pool, run: dict, cfg: dict, items: list[dict], stop_when) -> BatchResult:
@@ -203,16 +236,28 @@ async def _note_read(pool, run: dict, cfg: dict, items: list[dict], stop_when) -
             model_1=runner.reader_config("model_1", cfg["model_1"], catalog=catalog),
             model_2=runner.reader_config("model_2", cfg["model_2"], catalog=catalog),
             jev_route=cfg.get("jev_route"), escalation=None, ensemble_config_id=str(cfg["id"]))
+        # readerfix1: a Model-2-only re-read reuses Model 1's stored call (no Model 1 tokens).
+        prior, unbuilt = {}, []
+        for i in items:
+            if i.get("reread_model_2"):
+                c1 = await cascade.prior_model_1_call(conn, i["id"], cfg["model_1"])
+                if c1 is None:
+                    unbuilt.append({"id": i["id"], "reason": "re-read: Model 1's call could not be rebuilt"})
+                else:
+                    prior[i["id"]] = c1
+        ids = [i["id"] for i in items if not i.get("reread_model_2") or i["id"] in prior]
         try:
             summary = await runner.run_notes(
-                conn, [i["id"] for i in items], specs, slots, catalog=catalog, spend_cap_usd=cap,
-                run_kind="cascade", config={"daily_run_id": str(run["id"]), "trigger": run["trigger"]},
-                participant_rows=parts, issuer_groups=groups, stop_when=stop_when)
+                conn, ids, specs, slots, catalog=catalog, spend_cap_usd=cap,
+                run_kind="cascade", config={"daily_run_id": str(run["id"]), "trigger": run["trigger"],
+                                            "reread_model_2": sorted(prior)},
+                participant_rows=parts, issuer_groups=groups, stop_when=stop_when, prior_model_1=prior)
         except UnpricedModelError as exc:
             return BatchResult(error=str(exc))
     finally:
         await conn.close()
-    res = BatchResult(done=summary.notes_done, failed=[{"id": f, "reason": "load failed"} for f in summary.failed_ids])
+    res = BatchResult(done=summary.notes_done,
+                      failed=[{"id": f, "reason": "load failed"} for f in summary.failed_ids] + unbuilt)
     if isinstance(summary.stop_exc, ai_budget.BudgetReached):
         res.budget = summary.stop_exc
     elif summary.stop_exc is not None:
@@ -243,11 +288,12 @@ async def _replica_queue(pool, *, exclude=(), limit: int = BATCH, include_test_o
                    AND s.global_security_id IS NOT NULL AND s.ticker IS NOT NULL
                    AND ($1::boolean OR {ORGS.not_test_org_sql("s.org_id")})
                    AND NOT (s.global_security_id::text = ANY($2::text[]))
-                   AND NOT EXISTS (
+                   AND (NOT EXISTS (
                        SELECT 1 FROM {T.T_READ} r JOIN public.ai_ensemble_configs e ON e.id = r.ensemble_config_id
                         WHERE r.fund_global_security_id = s.global_security_id AND r.prompt_version = $3
                           AND r.system_to IS NULL AND r.source IN ('model_1', 'model_2')
                           AND e.model_1 = $4 AND e.model_2 = $5)
+                        OR {T.reread_due_sql("s.global_security_id", "$3", "$4", "$5")})
                  GROUP BY s.global_security_id
                  ORDER BY min(s.created_at), s.global_security_id
                  LIMIT $6""",

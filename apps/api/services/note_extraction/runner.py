@@ -81,7 +81,8 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
                     catalog: dict, spend_cap_usd: float | None, run_kind: str, config: dict,
                     participant_rows: list[dict], created_by=None, downloader=None,
                     keep_outcomes: bool = False, progress=None,
-                    issuer_groups: dict[str, str] | None = None, stop_when=None) -> RunSummary:
+                    issuer_groups: dict[str, str] | None = None, stop_when=None,
+                    prior_model_1: dict | None = None) -> RunSummary:
     """Sequential over notes (the two readers inside a note run concurrently).
     Stops CLEANLY when the next call would cross the cap: the note in flight is
     not staged; every finished note is.
@@ -108,12 +109,13 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
         return await _run_notes(conn, filing_ids, specs, slots, catalog=catalog, spend_cap_usd=spend_cap_usd,
                                 run_kind=run_kind, config=config, participant_rows=participant_rows,
                                 created_by=created_by, downloader=downloader, keep_outcomes=keep_outcomes,
-                                progress=progress, issuer_groups=issuer_groups, stop_when=stop_when)
+                                progress=progress, issuer_groups=issuer_groups, stop_when=stop_when,
+                                prior_model_1=prior_model_1)
 
 
 async def _run_notes(conn, filing_ids, specs, slots, *, catalog, spend_cap_usd, run_kind, config,
                      participant_rows, created_by, downloader, keep_outcomes, progress, issuer_groups,
-                     stop_when) -> RunSummary:
+                     stop_when, prior_model_1=None) -> RunSummary:
     spend = SpendTracker(cap_usd=spend_cap_usd)
     run_id = await store.create_run(conn, run_kind=run_kind, spend_cap_usd=spend_cap_usd,
                                     config=config, ensemble_config_id=slots.ensemble_config_id,
@@ -135,7 +137,8 @@ async def _run_notes(conn, filing_ids, specs, slots, *, catalog, spend_cap_usd, 
             try:
                 outcome = await run_note(doc, specs, slots, catalog=catalog, spend=spend, run_id=run_id,
                                          origin="evaluation" if run_kind == "evaluation" else "cascade",
-                                         participant_rows=participant_rows, issuer_groups=issuer_groups)
+                                         participant_rows=participant_rows, issuer_groups=issuer_groups,
+                                         prior_model_1=(prior_model_1 or {}).get(fid))
             except SpendCapReached as exc:
                 # Calls already made for the interrupted note cost money: record
                 # them (readings only — the note is not staged).

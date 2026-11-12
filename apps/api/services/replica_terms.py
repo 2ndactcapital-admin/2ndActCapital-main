@@ -605,6 +605,23 @@ class ExtractionRun:
     budget_reached: Any = None                        # aibudget1: the ai_budget.BudgetReached that stopped it
 
 
+def reread_due_sql(fund_expr: str, p_prompt: str, p_m1: str, p_m2: str) -> str:
+    """readerfix1 — ONE re-read: true when the fund's LATEST model run (same
+    prompt + same two models) has a model call that did not succeed (e.g.
+    gpt-5-nano's empty answer on IVV) and no re-read of this fund has been
+    made yet (a reading with metadata.reread). A re-read is the pair again —
+    both readers; it is never repeated, whatever it returns."""
+    def joined(alias, ealias):
+        return (f"{T_READ} {alias} JOIN public.ai_ensemble_configs {ealias} ON {ealias}.id = {alias}.ensemble_config_id "
+                f"WHERE {alias}.fund_global_security_id = {fund_expr} AND {alias}.prompt_version = {p_prompt} "
+                f"AND {alias}.system_to IS NULL AND {alias}.source IN ('model_1', 'model_2') "
+                f"AND {ealias}.model_1 = {p_m1} AND {ealias}.model_2 = {p_m2}")
+    return (f"(EXISTS (SELECT 1 FROM {joined('rf', 'rfe')} AND rf.field_key = '__call__' AND rf.status <> 'ok' "
+            f"AND rf.extraction_run_id = (SELECT rl.extraction_run_id FROM {joined('rl', 'rle')} "
+            f"ORDER BY rl.created_at DESC LIMIT 1)) "
+            f"AND NOT EXISTS (SELECT 1 FROM {joined('rr', 'rre')} AND rr.metadata ->> 'reread' = 'true'))")
+
+
 async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | None, http: httpx.AsyncClient,
                          catalog_loader=None, instrument_class: str | None = None) -> ExtractionRun:
     """Pull the prospectus, run both readers, write readings (platform).
@@ -640,12 +657,13 @@ async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | No
             "r.ensemble_config_id WHERE r.source_document_id = $1::uuid AND r.prompt_version = $2 "
             "AND r.system_to IS NULL AND e.model_1 = $3 AND e.model_2 = $4 ORDER BY r.created_at DESC LIMIT 1",
             run.document_id, PROMPT_VERSION, slots[0], slots[1])
-        if prior:
+        reread = bool(prior) and bool(await conn.fetchval(
+            f"SELECT {reread_due_sql('$1::uuid', '$2', '$3', '$4')}", fund_id, PROMPT_VERSION, slots[0], slots[1]))
+        if prior and not reread:
             run.run_id, run.status = str(prior), "reused"
             run.readings = [dict(r) for r in await conn.fetch(
                 f"SELECT * FROM {T_READ} WHERE extraction_run_id = $1::uuid AND system_to IS NULL", str(prior))]
             return run
-    reread = False
     specs = build_specs(registry)
     window, offset = doc_window(doc["extracted_text"] or "", ticker)
     messages, prefix_hash = build_messages(specs, window, fund_label=ticker.upper(), form_type=doc["form_type"])
