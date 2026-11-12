@@ -277,7 +277,7 @@ ACC_SIM, ACC_REAL, ACC_NOX, ACC_HELD, ACC_OTHER, ACC_B = _id(50), _id(51), _id(5
 ACC_SIM2, ACC_SIM3 = _id(56), _id(57)
 SEC_EQ, SEC_FUND, SEC_NOPX, SEC_BOND = _id(60), _id(61), _id(62), _id(63)
 MODEL_A, VERSION_A, LINK_A = _id(80), _id(81), _id(82)
-POS_EQ, LOT_LT_ID, LOT_ST_ID = _id(90), _id(91), _id(92)
+POS_EQ, LOT_LT_ID, LOT_ST_ID, POS_HELD = _id(90), _id(91), _id(92), _id(93)
 HOUSEHOLDS = [H_A, H_B]
 ACCOUNTS = [ACC_SIM, ACC_REAL, ACC_NOX, ACC_HELD, ACC_OTHER, ACC_B, ACC_SIM2, ACC_SIM3]
 SECURITIES = [SEC_EQ, SEC_FUND, SEC_NOPX, SEC_BOND]
@@ -1104,6 +1104,13 @@ async def seed(conn) -> None:
         await conn.execute("INSERT INTO portfolio.positions (id, org_id, owner_entity_id, asset_id, as_of_date, quantity, "
                            "authority, source_system, account_id) VALUES ($1, $2, $3, $4, $5, $6, 'manual', 'manual', "
                            "$7)", POS_EQ, ORG_A, E_A, S["asset_eq"], THU, LOT_LT[0] + LOT_ST[0], ACC_SIM)
+        # CPSIM05 FIX 1: the household's held-away account (rep7) needs its OWN current data — with none ("as of
+        # never") every proposal of the household is held at approval for an adviser's confirm_held_away_data (the
+        # gate is correct; the first run never reached it because every submit had already expired). One fund
+        # position as of THU (inside the 30-day stale limit); not the equity, so no wash-sale interaction.
+        await conn.execute("INSERT INTO portfolio.positions (id, org_id, owner_entity_id, asset_id, as_of_date, quantity, "
+                           "authority, source_system, account_id) VALUES ($1, $2, $3, $4, $5, 1, 'manual', 'manual', "
+                           "$6)", POS_HELD, ORG_A, E_A, S["asset_fund"], THU, ACC_HELD)
         for lid, (q, cost, acq), term in ((LOT_LT_ID, LOT_LT, "long"), (LOT_ST_ID, LOT_ST, "short")):
             await conn.execute("INSERT INTO portfolio.tax_lots (id, org_id, position_id, acquired_date, quantity, "
                                "adjusted_cost, original_cost, term, status) VALUES ($1, $2, $3, $4, $5, $6, $6, $7, "
