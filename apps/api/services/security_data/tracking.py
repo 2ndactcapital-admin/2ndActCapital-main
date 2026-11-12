@@ -103,8 +103,9 @@ async def live_rows(conn, gsids: list[str]) -> dict[str, dict]:
 
 
 async def track(conn, gsids, *, actor_id, note: str | None = None, list_key: str | None = None,
-                how: str = "ids", filters: dict | None = None, cap: int = TRACK_CAP) -> dict:
+                how: str = "ids", filters: dict | None = None, cap: int | None = None) -> dict:
     """Track ``gsids``. Returns {requested, tracked, already_tracked, unknown: [ids]}. Caller holds platform scope."""
+    cap = TRACK_CAP if cap is None else cap
     ids = _ids(gsids)
     note = _clean_note(note)
     if not ids:
@@ -136,9 +137,10 @@ async def track(conn, gsids, *, actor_id, note: str | None = None, list_key: str
 
 
 async def untrack(conn, gsids, *, actor_id, note: str | None, how: str = "ids", filters: dict | None = None,
-                  cap: int = UNTRACK_CAP) -> dict:
+                  cap: int | None = None) -> dict:
     """Untrack ``gsids`` (a note is required). Returns {requested, untracked, not_tracked}. Prices already loaded
     stay; the security simply leaves the coverage set unless another reason keeps it there."""
+    cap = UNTRACK_CAP if cap is None else cap
     ids = _ids(gsids)
     note = _clean_note(note)
     if not ids:
@@ -179,9 +181,10 @@ def clean_filters(filters: dict | None) -> dict:
     return out
 
 
-async def select_by_filter(conn, filters: dict | None, *, cap: int = TRACK_CAP, scope: list | None = None) -> dict:
+async def select_by_filter(conn, filters: dict | None, *, cap: int | None = None, scope: list | None = None) -> dict:
     """{total, ids (only when total <= cap), filters} — the SAME predicates as the master's list
     (security_master_summary._where). An empty filter is refused (it would select the whole master)."""
+    cap = TRACK_CAP if cap is None else cap
     f = clean_filters(filters)
     if not f:
         raise TrackingRefused("choose at least one filter — an empty filter selects the whole master")
@@ -207,7 +210,7 @@ async def track_by_filter(conn, filters: dict | None, *, actor_id, note: str | N
 
 async def untrack_by_filter(conn, filters: dict | None, *, actor_id, note: str | None,
                             expected_total: int | None = None, scope: list | None = None) -> dict:
-    sel = await select_by_filter(conn, filters, scope=scope, cap=UNTRACK_CAP)
+    sel = await select_by_filter(conn, filters, scope=scope, cap=UNTRACK_CAP)  # read at call time
     _confirm(sel, expected_total, "untrack")
     return await untrack(conn, sel["ids"], actor_id=actor_id, note=note, how="filter", filters=sel["filters"])
 

@@ -377,9 +377,7 @@ async def master_tracked_estimate(request: Request, body: EstimateIn):
             async with platform_scope(conn):
                 ids, total, filters = await _resolve_ids(conn, body, kind, cap=cap)
                 over = total > cap
-                est = await TR.estimate(conn, ids) if (ids and not over) else None
-                if est is not None and body.removing:
-                    est = await TR.estimate(conn, ids, removing=True)
+                est = await TR.estimate(conn, ids, removing=body.removing) if (ids and not over) else None
     except TR.TrackingError as exc:
         _tracking_refusal(exc)
     return _tracked_envelope(principal, {"selection": kind, "total": total, "cap": cap, "over_cap": over,
