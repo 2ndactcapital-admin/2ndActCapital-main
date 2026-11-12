@@ -146,6 +146,7 @@ class Deployment:
     supports_response_schema: bool
     max_input_tokens: int | None
     duplicate: bool = False
+    supports_reasoning: bool | None = None   # readerfix1: the proxy's own flag, when it reports one
     price_source: str = "proxy"          # 'proxy' | 'manual' (platform_model_catalog) | 'none'
 
 
@@ -172,6 +173,7 @@ def deployment_catalog() -> dict[str, Deployment]:
             cache_read_cost_per_token=info.get("cache_read_input_token_cost"),
             supports_response_schema=bool(info.get("supports_response_schema")),
             max_input_tokens=info.get("max_input_tokens"),
+            supports_reasoning=info.get("supports_reasoning"),
         )
         if name in out:
             out[name].duplicate = True

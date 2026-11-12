@@ -14,7 +14,7 @@ from services.note_extraction import documents, store
 from services.note_extraction.cascade import (
     TASK_KEY, EnsembleSlots, NoteOutcome, run_note, run_static_sources,
 )
-from services.note_extraction.readers import ReaderConfig, build_messages
+from services.note_extraction.readers import NOTE_ANSWER_TOKENS, ReaderConfig, build_messages, reader_settings
 from services.note_extraction.schema import FieldSpec
 from services.note_extraction.spend import (
     Plan, PlannedCall, SpendCapReached, SpendTracker, estimate_call_cost, jev_cost_estimate,
@@ -173,9 +173,12 @@ def bulk_deployments(slots: EnsembleSlots) -> list[str]:
 
 
 def reader_config(slot: str, deployment: str, efforts: dict[str, str] | None = None,
-                  max_tokens: int = 4000) -> ReaderConfig:
-    return ReaderConfig(slot=slot, deployment=deployment,
-                        reasoning_effort=(efforts or {}).get(deployment), max_tokens=max_tokens)
+                  max_tokens: int | None = None, *, catalog: dict | None = None) -> ReaderConfig:
+    """readerfix1: the shared per-deployment reader setting
+    (readers.reader_settings) for the note task's answer allowance. ``efforts``
+    / ``max_tokens`` are the pilot / eval CLIs' explicit overrides."""
+    return reader_settings(slot, deployment, answer_tokens=NOTE_ANSWER_TOKENS, catalog=catalog,
+                           effort=(efforts or {}).get(deployment), max_tokens=max_tokens)
 
 
 async def gather_docs(conn, filing_ids, *, downloader=None, limit_concurrency: int = 4):

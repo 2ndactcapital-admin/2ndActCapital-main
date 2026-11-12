@@ -76,6 +76,7 @@ from services import ai_budget, edgar_fetch, html_text, storage
 from services import human_tasks as HT
 from services import replica_holdings as H
 from services.note_extraction import proxy
+from services.note_extraction import readers as NR
 from services.note_extraction import schema as NS
 from services.note_extraction.quote_match import TextIndex
 from services import sod  # S30 — the ONE maker-checker rule
@@ -92,7 +93,7 @@ TASK_KEY = "replica_terms_extraction"
 FALLBACK_TASK_KEY = "note_terms_extraction"
 PROMPT_VERSION = "replica.terms.reader.v1"
 DOC_WINDOW_CHARS = 60_000
-READER_MAX_TOKENS = 3000
+READER_MAX_TOKENS = 3000          # the fund answer allowance (unchanged for non-reasoning models)
 
 ORIGINS = ("extracted", "corrected", "deliberate")
 ORIGIN_LABELS = {"extracted": "Extracted", "corrected": "Corrected", "deliberate": "Deliberate change"}
@@ -502,6 +503,9 @@ class Call:
     latency_ms: int | None = None
     call_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     prefix_hash: str | None = None
+    reasoning_effort: str | None = None
+    max_tokens: int | None = None
+    retry: dict | None = None                         # readerfix1: the empty-answer retry, when one was needed
 
 
 def build_messages(specs, window: str, *, fund_label: str, form_type: str) -> tuple[list[dict], str]:
@@ -513,22 +517,35 @@ def build_messages(specs, window: str, *, fund_label: str, form_type: str) -> tu
             hashlib.sha256((system + "\x00" + prefix).encode()).hexdigest())
 
 
-async def read_one(slot: str, deployment: str, specs, messages, prefix_hash: str, catalog: dict) -> Call:
+def reader_cfg(slot: str, deployment: str, catalog: dict) -> "NR.ReaderConfig":
+    """readerfix1: the SAME per-deployment reader setting the note reader uses
+    (readers.reader_settings), for the fund answer allowance."""
+    return NR.reader_settings(slot, deployment, answer_tokens=READER_MAX_TOKENS, catalog=catalog)
+
+
+async def read_one(slot: str, deployment: str, specs, messages, prefix_hash: str, catalog: dict,
+                   cfg: "NR.ReaderConfig | None" = None) -> Call:
     dep = catalog.get(deployment)
-    call = Call(slot, deployment, prefix_hash=prefix_hash)
-    body = {"model": deployment, "messages": messages, "max_tokens": READER_MAX_TOKENS,
+    cfg = cfg or reader_cfg(slot, deployment, catalog)
+    call = Call(slot, deployment, prefix_hash=prefix_hash, reasoning_effort=cfg.reasoning_effort,
+                max_tokens=cfg.max_tokens)
+    body = {"model": deployment, "messages": messages, "max_tokens": cfg.max_tokens,
             "metadata": {"tags": ["usage:replica_terms_extraction", f"slot:{slot}"]}}
+    if cfg.reasoning_effort:
+        body["reasoning_effort"] = cfg.reasoning_effort
     if dep is not None and dep.supports_response_schema:
         body["response_format"] = {"type": "json_schema",
                                    "json_schema": {"name": "fund_terms", "schema": NS.json_schema(specs),
                                                    "strict": False}}
     else:
         body["response_format"] = {"type": "json_object"}
-    resp = await proxy.chat(body)
-    call.latency_ms = resp.latency_ms
+    sent = await NR.send(cfg, body, dep)
+    resp = sent.resp
+    call.retry = sent.retry
+    call.latency_ms = sent.latency_ms
     call.proxy_model_id = resp.headers.get("x-litellm-model-id")
-    call.input_tokens, call.output_tokens, _ = proxy.response_usage(resp.body)
-    call.cost_usd = proxy.header_cost(resp)
+    call.input_tokens, call.output_tokens = sent.input_tokens, sent.output_tokens
+    call.cost_usd = proxy.header_cost(resp) if sent.retry is None else sent.cost
     if resp.status != 200 or resp.body is None:
         call.error = f"HTTP {resp.status}: {resp.error or (resp.text or '')[:300]}"
         return call
@@ -543,6 +560,9 @@ async def read_one(slot: str, deployment: str, specs, messages, prefix_hash: str
     if not proxy.reported_model_matches(dep.upstream if dep else None, call.provider_model):
         call.status = "model_mismatch"
         call.error = f"asked for '{deployment}' but the provider reported '{call.provider_model}'"
+        return call
+    if sent.exhausted:
+        call.status, call.error = "invalid", NR.exhausted_error(sent)
         return call
     try:
         content = resp.body["choices"][0]["message"]["content"]
@@ -561,12 +581,15 @@ async def read_pair(ensemble: dict, slots: list[str], specs, messages, prefix_ha
     """Both readers, under the task's daily-budget scope (aibudget1): the two
     calls are reserved together before either is made — a model out of budget
     raises ai_budget.BudgetReached and NEITHER call is made (never a one-model
-    reading). Reuses the scope the daily run opened."""
+    reading). Reuses the scope the daily run opened. readerfix1: each slot's
+    allowance comes from the shared reader setting, and the pair reserves
+    exactly that; an empty-answer retry takes its own reservation."""
     chars = sum(len(m["content"]) for m in messages)
+    cfgs = [reader_cfg("model_1", slots[0], catalog), reader_cfg("model_2", slots[1], catalog)]
     async with ai_budget.job_scope(TASK_KEY, ensemble, catalog=catalog):
-        async with ai_budget.pair([(slots[0], chars, READER_MAX_TOKENS), (slots[1], chars, READER_MAX_TOKENS)]):
-            return list(await asyncio.gather(*(read_one(s, d, specs, messages, prefix_hash, catalog)
-                                               for s, d in (("model_1", slots[0]), ("model_2", slots[1])))))
+        async with ai_budget.pair([(c.deployment, chars, c.max_tokens) for c in cfgs]):
+            return list(await asyncio.gather(*(read_one(c.slot, c.deployment, specs, messages, prefix_hash,
+                                                        catalog, c) for c in cfgs)))
 
 
 @dataclass
@@ -622,6 +645,7 @@ async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | No
             run.readings = [dict(r) for r in await conn.fetch(
                 f"SELECT * FROM {T_READ} WHERE extraction_run_id = $1::uuid AND system_to IS NULL", str(prior))]
             return run
+    reread = False
     specs = build_specs(registry)
     window, offset = doc_window(doc["extracted_text"] or "", ticker)
     messages, prefix_hash = build_messages(specs, window, fund_label=ticker.upper(), form_type=doc["form_type"])
@@ -642,8 +666,12 @@ async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | No
                 call.proxy_model_id, run.ensemble_config_id, PROMPT_VERSION, call.prefix_hash, call.input_tokens,
                 call.output_tokens, Decimal(repr(call.cost_usd)) if call.cost_usd is not None else None,
                 call.latency_ms, call.call_id)
+        meta = _dumps({k: v for k, v in (("reasoning_effort", call.reasoning_effort),
+                                        ("max_tokens", call.max_tokens), ("retry", call.retry),
+                                        ("reread", True if reread else None)) if v is not None})
         if call.status != "ok":
-            records.append(base + ("__call__", None, None, call.status, call.error, None, None, None, None, None))
+            records.append(base + ("__call__", None, None, call.status, call.error, None, None, None, None, None,
+                                   meta))
             continue
         for key, item in call.fields.items():
             spec = smap[key]
@@ -653,18 +681,18 @@ async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | No
             records.append(base + (key, _dumps(value) if value is not None else None, NS.normalize(spec, value),
                                    "ok", None, quote, span is not None if quote else None,
                                    NS.value_in_quote(spec, value, quote), span[0] if span else None,
-                                   span[1] if span else None))
+                                   span[1] if span else None, meta))
     async with H.platform_tx(pool) as conn:
         rows = await conn.fetch(
             f"""INSERT INTO {T_READ} (fund_global_security_id, source_document_id, extraction_run_id, source,
                     deployment_name, provider_model, proxy_model_id, ensemble_config_id, prompt_version,
                     prompt_prefix_hash, input_tokens, output_tokens, cost_usd, latency_ms, call_id, field_key, value,
                     value_normalized, status, error, source_quote, quote_verified, value_in_quote, raw_char_start,
-                    raw_char_end)
+                    raw_char_end, metadata)
                 SELECT * FROM unnest($1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[],
                     $7::text[], $8::uuid[], $9::text[], $10::text[], $11::int[], $12::int[], $13::numeric[],
                     $14::int[], $15::text[], $16::text[], $17::jsonb[], $18::text[], $19::text[], $20::text[],
-                    $21::text[], $22::bool[], $23::bool[], $24::int[], $25::int[])
+                    $21::text[], $22::bool[], $23::bool[], $24::int[], $25::int[], $26::jsonb[])
                 RETURNING *""",
             *[list(col) for col in zip(*records)])
     run.readings = [dict(r) for r in rows]

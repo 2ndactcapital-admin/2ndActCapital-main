@@ -38,7 +38,8 @@ async def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--include-corpus", action="store_true")
     ap.add_argument("--escalation-model", default=common.escalation_default())
     ap.add_argument("--effort", action="append", help="deployment=low|medium|high (repeatable)")
-    ap.add_argument("--max-tokens", type=int, default=4000)
+    ap.add_argument("--max-tokens", type=int, default=None,
+                    help="override the output allowance (default: the shared reader setting, readerfix1)")
     args = ap.parse_args(argv)
 
     from services.note_extraction import cascade, documents, proxy, runner, selection

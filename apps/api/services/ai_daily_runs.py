@@ -200,8 +200,8 @@ async def _note_read(pool, run: dict, cfg: dict, items: list[dict], stop_when) -
         parts = await participants.load_participants(conn)
         groups = await participants.load_issuer_groups(conn)
         slots = cascade.EnsembleSlots(
-            model_1=runner.reader_config("model_1", cfg["model_1"]),
-            model_2=runner.reader_config("model_2", cfg["model_2"]),
+            model_1=runner.reader_config("model_1", cfg["model_1"], catalog=catalog),
+            model_2=runner.reader_config("model_2", cfg["model_2"], catalog=catalog),
             jev_route=cfg.get("jev_route"), escalation=None, ensemble_config_id=str(cfg["id"]))
         try:
             summary = await runner.run_notes(

@@ -114,7 +114,8 @@ def _call_row(doc, call: readers.ReaderCall, *, run_id, origin, ensemble_config_
         latency_ms=call.latency_ms, call_id=call.call_id,
         metadata={"response_format": call.response_format, "prompt_chars": call.prompt_chars,
                   "filings_in_call": call.filings_in_call,
-                  "attempted_fallbacks": call.attempted_fallbacks, **(extra or {})},
+                  "attempted_fallbacks": call.attempted_fallbacks,
+                  **({"retry": call.retry} if call.retry else {}), **(extra or {})},
     )
 
 
