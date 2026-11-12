@@ -45,6 +45,7 @@ _authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: set before main is importe
 
 import asyncio
 import hashlib
+import os
 import json
 import math
 import pathlib
