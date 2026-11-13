@@ -117,6 +117,12 @@ instructions are all done, re-sweep recent 'model.version_approved' events
 valuation (after the holdings refresh above). It only ever writes PROPOSALS;
 nothing trades. Its own step.
 
+SCHEDULED REBALANCING (dailyrebal1). Right after it, ``services.rebalance_schedule.daily_tick``: once per US
+business day per org (one public.rebalance_schedule_days row), at the org's New York run time (default 07:30), once
+the last close's prices are complete (or the org's fallback time passes — recorded as partial prices) and the nightly
+refresh has run: accounts whose model link asks for it (rebalance frequency due / drift past the threshold) get a
+SYSTEM proposal that a person approves; one summary to-do per approver. It never approves, routes or sends.
+
 DAILY DOCUMENT READING (aibudget1). Last, ``services.ai_daily_runs.daily_tick``:
 after 00:05 UTC (AI_DAILY_RUN_START_UTC), each public-data document job with an
 active ensemble config and a non-empty queue (note terms, fund prospectus terms)
@@ -278,6 +284,24 @@ async def main() -> int:
                 print(f"[scheduler] rebalance proposals: {e}", file=sys.stderr)
         except Exception as exc:  # noqa: BLE001
             print(f"[scheduler] rebalance proposals failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # DAILYREBAL1 — the daily scheduled rebalancer: once per US business day per org, at the org's New York run
+        # time, after the last close's prices are complete (or the fallback time, flagged partial) and the nightly
+        # refresh ran. SYSTEM proposals for opted-in accounts only — a person approves; nothing is sent. Never a test
+        # org; never raises (a failure is recorded on the org's day row).
+        try:
+            from services.rebalance_schedule import daily_tick as rebalance_daily_tick
+
+            rd = await rebalance_daily_tick(pool)
+            for org, o in (rd.get("orgs") or {}).items():
+                if o.get("action") in ("ran", "failed"):
+                    print(f"[scheduler] scheduled rebalancing ({org}): {o.get('action')} "
+                          f"proposed={o.get('proposed')} skipped={o.get('skipped')} failed={o.get('failed')}")
+                for e in o.get("errors") or []:
+                    print(f"[scheduler] scheduled rebalancing ({org}): {e}", file=sys.stderr)
+            if rd.get("action") == "failed":
+                print(f"[scheduler] scheduled rebalancing failed: {rd.get('error')}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] scheduled rebalancing failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         # REP10 — year-end gift reminders and completion staleness. Never a test org; never a backtest.
         try:
             r10 = await rep10_tick(pool)
