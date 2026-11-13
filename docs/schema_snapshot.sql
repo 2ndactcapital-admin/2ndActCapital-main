@@ -7937,6 +7937,39 @@
 --   account_id                               uuid
 --   PRIMARY KEY positions_pkey: (id)
 
+-- ===== portfolio.price_archive_state =====
+--   prefix                                   text NOT NULL
+--   watermark                                timestamp with time zone
+--   compacted_month                          text
+--   last_run_at                              timestamp with time zone
+--   last_result                              jsonb NOT NULL DEFAULT '{}'::jsonb
+--   PRIMARY KEY price_archive_state_pkey: (prefix)
+
+-- ===== portfolio.price_bars_pending =====
+--   series_id                                integer NOT NULL
+--   price_date                               date NOT NULL
+--   recorded_at                              timestamp with time zone NOT NULL
+--   bar                                      jsonb NOT NULL
+--   PRIMARY KEY price_bars_pending_pkey: (series_id, price_date, recorded_at)
+
+-- ===== portfolio.price_provenance =====
+--   id                                       integer NOT NULL
+--   provider_key                             text
+--   source                                   text
+--   currency_code                            text
+--   licence                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   upload_id                                uuid
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY price_provenance_pkey: (id)
+--   UNIQUE price_provenance_uq: (provider_key, source, currency_code, licence, upload_id, org_id)
+
+-- ===== portfolio.price_quality_flags =====
+--   bit                                      smallint NOT NULL
+--   name                                     text NOT NULL
+--   UNIQUE price_quality_flags_name_key: (name)
+--   PRIMARY KEY price_quality_flags_pkey: (bit)
+
 -- ===== portfolio.price_refresh_days =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   scope                                    text NOT NULL DEFAULT 'platform'::text
@@ -7971,6 +8004,44 @@
 --   owner_scope                              text NOT NULL DEFAULT 'platform'::text
 --   org_id                                   uuid
 --   PRIMARY KEY price_refresh_state_pkey: (global_security_id)
+
+-- ===== portfolio.price_series =====
+--   id                                       integer NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   price_type                               text NOT NULL DEFAULT 'close'::text
+--   provider_key                             text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE price_series_key_uq: (global_security_id, price_type, provider_key, org_id)
+--   PRIMARY KEY price_series_pkey: (id)
+
+-- ===== portfolio.prices3_dirty =====
+--   global_security_id                       uuid NOT NULL
+--   touched_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   resynced_at                              timestamp with time zone
+--   PRIMARY KEY prices3_dirty_pkey: (global_security_id)
+
+-- ===== portfolio.prices3_migration =====
+--   id                                       smallint NOT NULL DEFAULT 1
+--   store_mode                               text NOT NULL DEFAULT 'legacy'::text
+--   phase                                    text NOT NULL DEFAULT 'not_started'::text
+--   checkpoint_gsid                          uuid
+--   copied_rows                              bigint NOT NULL DEFAULT 0
+--   copied_securities                        integer NOT NULL DEFAULT 0
+--   batches                                  integer NOT NULL DEFAULT 0
+--   copy_started_at                          timestamp with time zone
+--   copy_finished_at                         timestamp with time zone
+--   verified_ok                              boolean
+--   verified_at                              timestamp with time zone
+--   verify_detail                            jsonb NOT NULL DEFAULT '{}'::jsonb
+--   swapped_at                               timestamp with time zone
+--   rolled_back_at                           timestamp with time zone
+--   archive_ok                               boolean
+--   archive_at                               timestamp with time zone
+--   archive_detail                           jsonb NOT NULL DEFAULT '{}'::jsonb
+--   dropped_at                               timestamp with time zone
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY prices3_migration_pkey: (id)
 
 -- ===== portfolio.provider_call_log =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -8838,6 +8909,34 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY security_price_coverage_pkey: (id)
 
+-- ===== portfolio.security_price_history =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   series_id                                integer NOT NULL
+--   price_date                               date NOT NULL
+--   price                                    numeric NOT NULL
+--   adjustment_factor                        numeric
+--   provenance_id                            integer NOT NULL
+--   quality_bits                             smallint NOT NULL DEFAULT 0
+--   as_of                                    timestamp with time zone
+--   valid_from                               timestamp with time zone NOT NULL
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL
+--   system_to                                timestamp with time zone
+--   run_id                                   uuid
+--   superseded_at                            timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY security_price_history_pkey: (id)
+
+-- ===== portfolio.security_prices =====
+--   as_of                                    timestamp with time zone
+--   recorded_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   series_id                                integer NOT NULL
+--   price_date                               date NOT NULL
+--   provenance_id                            integer NOT NULL
+--   quality_bits                             smallint NOT NULL DEFAULT 0
+--   price                                    numeric NOT NULL
+--   adjustment_factor                        numeric
+--   PRIMARY KEY security_prices_pkey: (series_id, price_date)
+
 -- ===== portfolio.security_reference_attributes =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   global_security_id                       uuid NOT NULL
@@ -9255,6 +9354,28 @@
 --   spend                                    double precision
 --   api_key                                  text
 --   user                                     text
+
+-- ===== portfolio.securities_global_prices_v3 =====  [VIEW]
+--   security_invoker: true — RLS applies to the querying role
+--   id                                       uuid
+--   global_security_id                       uuid
+--   price_date                               date
+--   price                                    numeric
+--   currency_code                            text
+--   price_type                               text
+--   source                                   text
+--   valid_from                               timestamp with time zone
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone
+--   system_to                                timestamp with time zone
+--   provider_key                             text
+--   as_of                                    timestamp with time zone
+--   quality_flags                            ARRAY
+--   licence                                  jsonb
+--   org_id                                   uuid
+--   upload_id                                uuid
+--   adjustment_factor                        numeric
+--   bar                                      jsonb
 
 -- ===== portfolio.spv_derived_positions =====  [VIEW]
 --   security_invoker: true — RLS applies to the querying role

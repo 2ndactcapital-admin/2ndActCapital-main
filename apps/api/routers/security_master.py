@@ -13,9 +13,17 @@
                                                                 the filter that lists it (one query per section)
     GET  /admin/security-data/master/securities                 SECMASTER2: the filtered list behind a count
     GET  /admin/security-data/master/review                     the review queue
-    POST /admin/security-data/master/review/{review_id}/decision  resolve / dismiss an item (records the decision;
-                                                                changes NO security — the fix is made on the security
-                                                                itself, by a person)
+    POST /admin/security-data/master/review/{review_id}/decision  LEGACY resolve / dismiss (records the decision;
+                                                                changes NO security). The screen uses the choices below.
+    POST /admin/security-data/master/review/run                 REVIEWQ1: the one Run — {choices: [{id, choice}]} with
+                                                                choice use_incoming / use_existing / keep_both; each item
+                                                                its own savepoint, refusals listed; audited
+    POST /admin/security-data/master/review/bulk/estimate       REVIEWQ1: how many OPEN items a filter selects and how
+                                                                many of them offer the choice (writes nothing)
+    POST /admin/security-data/master/review/bulk                REVIEWQ1: one choice for every item the filter selects
+                                                                (re-evaluated here; must equal the confirmed count)
+    POST /admin/security-data/master/review/{review_id}/move-back  REVIEWQ1: a Known discrepancy back to the queue
+                                                                (note required; audited)
     GET  /admin/security-data/master/tracked                    TRACK1: the Tracked view — named lists, progress
                                                                 ("1,240 of 2,700 loaded"), filter vocabularies, caps
     POST /admin/security-data/master/tracked/estimate           TRACK1: count + calls / days for ids | filter | list
@@ -38,6 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from services import disclosures as DL
 from services import security_master_jobs as J
 from services import security_master_load as M
+from services import security_master_review as RQ
 from services import security_master_summary as SUM
 from services.authz import require_super_admin
 from services.database import get_pool, platform_scope
@@ -45,7 +54,10 @@ from services.database import get_pool, platform_scope
 router = APIRouter(tags=["security-master"])
 _P = "/admin/security-data/master"
 OUTCOMES = {"resolved": "Resolved", "dismissed": "Dismissed"}
-REVIEW_STATUSES = {"open": "Open", "resolved": "Resolved", "dismissed": "Dismissed"}
+REVIEW_STATUSES = {"open": "Open", "resolved": "Resolved", "dismissed": "Dismissed",
+                   # REVIEWQ1 — the three choices' statuses; 'known' = kept_existing + kept_both
+                   "used_incoming": "Used incoming", "kept_existing": "Kept existing", "kept_both": "Kept both",
+                   "known": "Known discrepancies"}
 
 
 class _Body(BaseModel):
@@ -55,6 +67,31 @@ class _Body(BaseModel):
 class DecisionIn(_Body):
     outcome: str
     note: str = Field(min_length=1, max_length=2000)
+
+
+class ChoiceItemIn(_Body):
+    id: UUID
+    choice: str = Field(max_length=20)
+
+
+class RunIn(_Body):
+    """REVIEWQ1 — the one Run. Never an org id (the review queue is platform scope)."""
+    choices: list[ChoiceItemIn] = Field(min_length=1, max_length=RQ.BULK_CAP)
+    note: str | None = Field(default=None, max_length=RQ.NOTE_MAX)
+
+
+class BulkEstimateIn(_Body):
+    filters: dict[str, str]
+    choice: str = Field(max_length=20)
+
+
+class BulkIn(BulkEstimateIn):
+    expected_total: int = Field(ge=0)
+    note: str | None = Field(default=None, max_length=RQ.NOTE_MAX)
+
+
+class MoveBackIn(_Body):
+    note: str = Field(min_length=1, max_length=RQ.NOTE_MAX)
 
 
 class ScheduleIn(_Body):
@@ -84,10 +121,15 @@ class EstimateIn(TrackSelectionIn):
 def _envelope(principal, body: dict) -> dict:
     su = bool(principal.is_super_admin)
     perms = {"can_read": su, "can_write": su, "can_run": su, "can_decide": su, "can_close_held": su,
+             # REVIEWQ1 — the per-row choice + Run, bulk by filter, move back
+             "can_choose": su, "can_bulk": su, "can_move_back": su,
              "is_super_admin": su, "read_permission": "super_admin", "write_permission": "super_admin"}
     vocab = {"review_kinds": [{"key": k, "label": M.REVIEW_LABELS[k]} for k in M.REVIEW_KINDS],
              "review_statuses": [{"key": k, "label": v} for k, v in REVIEW_STATUSES.items()],
              "outcomes": [{"key": k, "label": v} for k, v in OUTCOMES.items()] if su else [],
+             # REVIEWQ1 — the choices (labels from here, never the client); empty for anyone without the write
+             "choices": [{"key": k, "label": RQ.CHOICE_LABELS[k]} for k in RQ.CHOICES] if su else [],
+             "review_filters": list(RQ.FILTERS), "bulk_cap": RQ.BULK_CAP, "note_max": RQ.NOTE_MAX,
              "editable": ["outcome", "note"] if su else [], "inline_editable": []}
     return jsonable_encoder({**body, "permissions": perms, "vocabularies": vocab})
 
@@ -236,30 +278,107 @@ async def master_close_held(request: Request, run_id: UUID, body: CloseIn):
 
 
 @router.get(f"{_P}/review")
-async def master_review(request: Request, status: str = "open", kind: str | None = None, limit: int = 200):
+async def master_review(request: Request, status: str = "open", kind: str | None = None, field: str | None = None,
+                        provider: str | None = None, q: str | None = None, home_vs_us: str | None = None,
+                        global_security_id: str | None = None, limit: int = 200, offset: int = 0):
+    """The review queue (status open), the Known discrepancies (status known = Use existing + Keep both, with seen
+    again / last seen) or any decided status (used_incoming + global_security_id = a security's history). REVIEWQ1
+    filters: field / provider / q / home_vs_us (incoming ISIN not US, existing US). ``total`` is the filter's count;
+    each open row carries the ``choices`` the SERVER offers it (+ ``choice_notes``: why one is not)."""
     principal = require_super_admin(request)
     if status not in REVIEW_STATUSES:
         raise HTTPException(status_code=422, detail=f"status must be one of {', '.join(REVIEW_STATUSES)}")
     if kind is not None and kind not in M.REVIEW_KINDS:
         raise HTTPException(status_code=422, detail="unknown review kind")
+    su = bool(principal.is_super_admin)
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with platform_scope(conn):
-            rows = await conn.fetch(
-                "SELECT r.id, r.kind, r.subject_key, r.field, r.incoming_value, r.existing_value, r.provider_key, "
-                "r.global_security_id, s.name AS security_name, r.detail, r.status, r.decided_by, r.decided_at, "
-                "r.decision_note, r.created_at FROM portfolio.security_master_review r LEFT JOIN "
-                "portfolio.securities_global s ON s.id = r.global_security_id WHERE r.valid_to IS NULL AND "
-                "r.system_to IS NULL AND r.status = $1 AND ($2::text IS NULL OR r.kind = $2::text) "
-                "ORDER BY r.created_at DESC LIMIT $3", status, kind, max(1, min(int(limit), 1000)))
-    out = []
-    for r in rows:
-        d = dict(r)
-        d["detail"] = json.loads(d["detail"]) if isinstance(d["detail"], str) else d["detail"]
-        d["kind_label"] = M.REVIEW_LABELS.get(d["kind"], d["kind"])
-        d["actions"] = list(OUTCOMES) if d["status"] == "open" and principal.is_super_admin else []
-        out.append(d)
-    return _envelope(principal, {"rows": out, "filters": {"status": status, "kind": kind}})
+    try:
+        async with pool.acquire() as conn:
+            async with platform_scope(conn):
+                out = await RQ.list_items(conn, status=status, filters={
+                    "kind": kind, "field": field, "provider": provider, "q": q, "home_vs_us": home_vs_us,
+                    "global_security_id": global_security_id}, limit=limit, offset=offset, can_write=su)
+                facets = await RQ.facets(conn, "known" if status == "known" else "open")
+    except RQ.ReviewError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    for d in out["rows"]:
+        # the legacy decision route's outcomes stay on an open row (verify_secmaster1); the screen uses ``choices``
+        if d["status"] == "open":
+            d["actions"] = list(OUTCOMES) if su else []
+    env = _envelope(principal, {**out, "filters": {"status": status, "kind": kind, **out["filters"]}})
+    env["vocabularies"]["facets"] = facets
+    return env
+
+
+def _review_error(exc: Exception):
+    status = 409 if isinstance(exc, RQ.ReviewRefused) else 422
+    raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@router.post(f"{_P}/review/run")
+async def master_review_run(request: Request, body: RunIn):
+    """REVIEWQ1 — the one Run: every row the Super Admin gave a choice. Use incoming → the security takes the value as
+    a new version (history kept); Use existing → nothing on the security; Keep both → the value as an alternate
+    identifier. Each item in its own savepoint; a refusal (e.g. a ticker that would land on a second live security)
+    leaves that item open and is listed with its reason. Audited per item."""
+    principal = require_super_admin(request)
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            async with platform_scope(conn):
+                out = await RQ.run(conn, [{"id": str(c.id), "choice": c.choice} for c in body.choices],
+                                   actor_id=principal.user_id, note=body.note)
+    except RQ.ReviewError as exc:
+        _review_error(exc)
+    return _envelope(principal, {"result": out})
+
+
+@router.post(f"{_P}/review/bulk/estimate")
+async def master_review_bulk_estimate(request: Request, body: BulkEstimateIn):
+    """REVIEWQ1 — the count a bulk choice would touch (OPEN items the filter selects) and how many of them offer that
+    choice. Writes nothing."""
+    principal = require_super_admin(request)
+    if body.choice not in RQ.CHOICES:
+        raise HTTPException(status_code=422, detail=f"choice must be one of {', '.join(RQ.CHOICES)}")
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            async with platform_scope(conn):
+                out = await RQ.estimate(conn, dict(body.filters), body.choice)
+    except RQ.ReviewError as exc:
+        _review_error(exc)
+    return _envelope(principal, out)
+
+
+@router.post(f"{_P}/review/bulk")
+async def master_review_bulk(request: Request, body: BulkIn):
+    """REVIEWQ1 — one choice for every OPEN item the filter selects, re-evaluated here: it must equal
+    ``expected_total`` (the count the Super Admin confirmed) or nothing is written. Same Run path, per item."""
+    principal = require_super_admin(request)
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            async with platform_scope(conn):
+                out = await RQ.bulk(conn, dict(body.filters), body.choice, expected_total=body.expected_total,
+                                    actor_id=principal.user_id, note=body.note)
+    except RQ.ReviewError as exc:
+        _review_error(exc)
+    return _envelope(principal, {"result": out})
+
+
+@router.post(f"{_P}/review/{{review_id}}/move-back")
+async def master_review_move_back(request: Request, review_id: UUID, body: MoveBackIn):
+    """REVIEWQ1 — a Known discrepancy back to the queue (audited; a Keep both item's alternate is retired). The next
+    source run treats it as open."""
+    principal = require_super_admin(request)
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            async with platform_scope(conn):
+                out = await RQ.move_back(conn, review_id, actor_id=principal.user_id, note=body.note)
+    except RQ.ReviewError as exc:
+        _review_error(exc)
+    return _envelope(principal, {"result": out})
 
 
 @router.post(f"{_P}/review/{{review_id}}/decision")

@@ -15,7 +15,9 @@ MATCH ORDER, per source record (the first that answers wins):
 Merged duplicates are followed to their canonical row (canonical_id), as get_by_identifier does.
 
 NOTHING EXISTING IS OVERWRITTEN. A disagreement becomes ONE open review item (portfolio.security_master_review,
-unique per kind/subject/field/incoming value — a re-run adds none):
+unique per kind/subject/field/incoming value — a re-run adds none; REVIEWQ1: an item decided "Use existing" / "Keep
+both" (a Known discrepancy) is NOT re-opened by the same incoming value from the same provider — the run records a
+sighting ("seen again") instead; a different incoming value is a new item):
     ticker_conflict        the ticker is held by a security on another exchange family, or with no exchange at all
                            (the 13 platform INDEX rows: SPX, NDX, RTY …) — nothing is matched or created
     ambiguous_match        more than one security holds the ticker on that exchange family
@@ -96,7 +98,9 @@ CREATE_ONLY_IF = {"sec_mutual_funds": ("fund_structure",
                                        "exchange-traded class is created by the listing sources")}
 DELIST_AFTER = 3
 REVIEW_KINDS = ("ticker_conflict", "ticker_cusip_conflict", "identifier_conflict", "type_mismatch",
-                "exchange_mismatch", "ambiguous_match", "ticker_moved", "13f_deleted", "13f_conflict")
+                "exchange_mismatch", "ambiguous_match", "ticker_moved", "13f_deleted", "13f_conflict",
+                # REVIEWQ1 — a list member's identifier the master lacks: maps (OpenFIGI) to a master security / none
+                "list_match", "add_to_master")
 REVIEW_LABELS = {
     "ticker_conflict": "Ticker held by a security on another exchange (or with none)",
     "ticker_cusip_conflict": "Same ticker, different CUSIP",
@@ -107,6 +111,8 @@ REVIEW_LABELS = {
     "ticker_moved": "Ticker moved to a new CUSIP (old identifier retired)",
     "13f_deleted": "Deleted from the 13(f) list",
     "13f_conflict": "13(f) CUSIP conflicts with the master",
+    "list_match": "List member maps to a master security (add its identifier)",
+    "add_to_master": "List member not in the master (add it)",
 }
 
 
@@ -123,6 +129,7 @@ class BatchResult:
     identifiers_retired: int = 0
     attributes_written: int = 0
     review_items: list = field(default_factory=list)
+    known_seen_again: int = 0                         # REVIEWQ1: sightings of Known discrepancies (not re-opened)
     seen: set = field(default_factory=set)
     by_record: dict = field(default_factory=dict)     # record subject -> (outcome, gsid | None, why)
 
@@ -140,6 +147,7 @@ class BatchResult:
         self.identifiers_retired += o.identifiers_retired
         self.attributes_written += o.attributes_written
         self.review_items += o.review_items
+        self.known_seen_again += o.known_seen_again
         self.seen |= o.seen
         # SECMASTER1 FIX 1: the per-record outcomes were dropped here, so sync_13f (which merges per batch and
         # then reads total.by_record) saw every OpenFIGI-mapped CUSIP as 'no match' — while the matcher HAD
@@ -157,7 +165,7 @@ class BatchResult:
                 "matched_total": sum(self.matched.values()), "conflicts": self.conflicts, "unmapped": self.unmapped,
                 "unmapped_reasons": dict(self.unmapped_reasons), "deferred": self.deferred,
                 "identifiers_added": self.identifiers_added, "identifiers_retired": self.identifiers_retired,
-                "attributes_written": self.attributes_written, "review_items_created": len(self.review_items),
+                "attributes_written": self.attributes_written, "review_items_created": len(self.review_items), "known_seen_again": self.known_seen_again,
                 "review_item_ids": [str(x) for x in self.review_items[:50]]}
 
 
@@ -183,6 +191,7 @@ class _Plan:
         self.attr_close_ids: list = []
         self.attr_inserts: list[tuple] = []
         self.reviews: list[dict] = []
+        self.alt_sightings: list[tuple] = []   # REVIEWQ1: records matched through a Keep both alternate
 
 
 async def _platform(conn) -> None:
@@ -239,18 +248,20 @@ async def _security_facts(conn, gsids, provider_key: str) -> dict:
     """For each security: type, its live identifiers by type, exchange values (any provider), and THIS provider's
     live attributes (id, value)."""
     gl = list(gsids)
-    out = {g: {"type": None, "ids": {}, "exchanges": set(), "attrs": {}} for g in gl}
+    out = {g: {"type": None, "ids": {}, "exchanges": set(), "attrs": {}, "alts": set()} for g in gl}
     if not gl:
         return out
     for r in await conn.fetch("SELECT id, security_type FROM portfolio.securities_global WHERE id = ANY($1::uuid[])",
                               gl):
         out[r["id"]]["type"] = r["security_type"]
     for r in await conn.fetch(
-            "SELECT i.id, i.id_type, i.id_value, COALESCE(s.canonical_id, s.id) AS gsid "
+            "SELECT i.id, i.id_type, i.id_value, i.is_alternate, COALESCE(s.canonical_id, s.id) AS gsid "
             "FROM portfolio.securities_global_identifiers i JOIN portfolio.securities_global s "
             "ON s.id = i.global_security_id WHERE COALESCE(s.canonical_id, s.id) = ANY($1::uuid[]) "
             "AND i.valid_to IS NULL AND i.system_to IS NULL", gl):
         out[r["gsid"]]["ids"].setdefault(r["id_type"], []).append((r["id"], r["id_value"]))
+        if r["is_alternate"]:
+            out[r["gsid"]]["alts"].add((r["id_type"], r["id_value"]))
     for r in await conn.fetch(
             "SELECT global_security_id, field, value, provider_key, id FROM portfolio.security_reference_attributes "
             "WHERE global_security_id = ANY($1::uuid[]) AND (field = 'exchange' OR provider_key = $2) AND " + LIVE,
@@ -408,6 +419,9 @@ class Matcher:
                 continue
             mine = {x[1] for x in have.get(t, [])}
             if v in mine:
+                if (t, v) in f.get("alts", ()):
+                    # REVIEWQ1 — the source still sends the value kept beside the existing one: seen again
+                    plan.alt_sightings.append(("identifier_conflict", f"{t}:{v}", t, v, self.key, gsid))
                 continue
             if mine:
                 if t == "isin" and v == derived and not rec.isin:
@@ -573,18 +587,37 @@ class Matcher:
             await conn.executemany(
                 "INSERT INTO portfolio.security_reference_attributes (global_security_id, field, value, provider_key, "
                 "as_of, run_id) VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid)", plan.attr_inserts)
+        seen_again: list = []
         for rv in plan.reviews:
-            rid = await insert_review(conn, run_id=self.run_id, **rv)
+            rid = await insert_review(conn, run_id=self.run_id, sightings=seen_again, **rv)
             if rid is not None:
                 res.review_items.append(rid)
+        res.known_seen_again += len(seen_again)
+        if plan.alt_sightings:
+            from services import security_master_review as RQ
+
+            res.known_seen_again += await RQ.alternate_sightings(conn, plan.alt_sightings, run_id=self.run_id)
 
 
 async def insert_review(conn, *, kind: str, subject_key: str, provider_key: str, field: str = "",
                         incoming_value: str = "", existing_value: str | None = None, global_security_id=None,
-                        detail: dict | None = None, run_id=None):
-    """One OPEN item per (kind, subject, field, incoming value); an identical open item → None (nothing written)."""
+                        detail: dict | None = None, run_id=None, sightings: list | None = None):
+    """One OPEN item per (kind, subject, field, incoming value); an identical open item → None (nothing written).
+    REVIEWQ1: a Known discrepancy (decided Use existing / Keep both) with the same kind, subject, field, incoming value,
+    provider and security → None, and ONE sighting row ("seen again", its id appended to ``sightings``) — never
+    re-opened. A different incoming value has a different key → a new open item. A moved-back item is open → the
+    open unique index keeps it one item."""
+    from services import security_master_review as RQ
+
     if kind not in REVIEW_KINDS:
         raise ValueError(f"unknown review kind {kind!r}")
+    known = await RQ.sighting_if_known(conn, kind=kind, subject_key=subject_key, field=field,
+                                       incoming_value=incoming_value, provider_key=provider_key,
+                                       global_security_id=global_security_id, run_id=run_id)
+    if known is not None:
+        if sightings is not None:
+            sightings.append(known)
+        return None
     return await conn.fetchval(
         "INSERT INTO portfolio.security_master_review (kind, subject_key, field, incoming_value, existing_value, "
         "provider_key, global_security_id, detail, run_id) VALUES ($1, $2, $3, $4, $5, $6, $7::uuid, $8::jsonb, "

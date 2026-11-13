@@ -1,5 +1,5 @@
 {
- "app_route_count": 1085,
+ "app_route_count": 1089,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -12642,6 +12642,78 @@
    "path": "/api/v1/admin/security-data/master/review",
    "public": false,
    "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.security_master",
+   "name": "master_review_run",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/review/run",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.security_master",
+   "name": "master_review_bulk_estimate",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/review/bulk/estimate",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.security_master",
+   "name": "master_review_bulk",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/review/bulk",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.security_master",
+   "name": "master_review_move_back",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/review/{review_id}/move-back",
+   "public": false,
+   "write": true
   },
   {
    "after": "super_admin",

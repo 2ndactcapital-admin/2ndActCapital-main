@@ -17,7 +17,17 @@ A real run fetches the index lists' holdings through Replication Studio's own pi
 stores each list (portfolio.security_lists + members; a re-run restates only what changed), tracks every member
 (portfolio.tracked_securities, naming the list; audited), and records one security_data_runs row (summary.job =
 'security_lists_load'). Nothing is priced here: the prices backfill / the nightly prices job load the history (coverage
-reason 'tracked'). Exit 0 / 1 (a list failed) / 2 (bad arguments or data file)."""
+reason 'tracked'). Exit 0 / 1 (a list failed) / 2 (bad arguments or data file).
+
+REVIEWQ1 — --resolve-misses (with --list KEY | --all; run AFTER a real load stored the misses):
+    doppler run -- apps/api/venv/bin/python apps/api/scripts/security_lists_load.py --all --resolve-misses --dry-run
+    doppler run -- apps/api/venv/bin/python apps/api/scripts/security_lists_load.py --all --resolve-misses
+every stored miss with an ISIN / CUSIP is looked up through the platform's OpenFIGI provider (the US composite listing).
+A FIGI (else ticker) already in the master → a 'list_match' review item (Security master → Review queue: Keep both
+adds the miss's identifier as an ALTERNATE identifier; Use existing rejects it); nothing in the master → an
+'add_to_master' item (OpenFIGI's ticker / name / type; Use incoming creates it). NEVER auto-merged. Once confirmed, the
+next load resolves the member. --dry-run here DOES call OpenFIGI (read-only look-ups, ~10 per request without
+OPENFIGI_API_KEY) and writes nothing — no review item, no mapping row."""
 
 from __future__ import annotations
 
@@ -47,7 +57,45 @@ def parse(argv):
     ap.add_argument("--file", default=None)
     ap.add_argument("--no-track", action="store_true")
     ap.add_argument("--show-misses", type=int, default=25)
+    ap.add_argument("--resolve-misses", action="store_true")
     return ap.parse_args(argv)
+
+
+async def resolve_misses(args, *, pool=None, transport=None, printer=print, throttle: bool = True) -> dict:
+    """REVIEWQ1 — the stored misses → OpenFIGI → review items (security_lists.resolve_misses). ``transport`` is
+    injectable (the verify passes a recorded one; no network)."""
+    from services.database import get_pool, platform_scope
+    from services.security_data import security_lists as SL
+    from services.security_data.providers import openfigi as OF
+    from services.security_data.providers.reference_common import RealSourceTransport
+
+    pool = pool or await get_pool()
+    own = None
+    if transport is None:
+        transport = own = RealSourceTransport()
+    try:
+        async with pool.acquire() as conn:
+            async with platform_scope(conn):
+                out = await SL.resolve_misses(conn, None if args.all else args.lists, transport=transport,
+                                              key=OF.api_key(), dry_run=args.dry_run, throttle=throttle)
+    finally:
+        if own is not None:
+            await own.aclose()
+    printer(f"MISSES: lists {', '.join(out['lists']) or '(none stored)'} — {out['misses_with_identifier']} with an "
+            f"ISIN / CUSIP ({out['misses_without_identifier']} without), {out['openfigi_requests']} OpenFIGI request(s)")
+    printer(f"  already in the master (next load resolves them) {out['already_in_master']} · list_match {out['list_match']} · add_to_master {out['add_to_master']} · OpenFIGI no answer "
+            f"{out['no_answer']} · not reached {out['not_reached']}")
+    for r in out["rows"][:max(0, args.show_misses)]:
+        printer(f"  {r['id_type']} {r['value']} {(r.get('name') or '')[:40]} → {r['outcome']}"
+                + (f" {r.get('security_name')} (by {r.get('matched_by')})" if r.get("security_id") else "")
+                + (f" {r.get('ticker')} {r.get('openfigi_name') or ''}" if r["outcome"] == "add_to_master" else ""))
+    if args.dry_run:
+        printer("dry run: OpenFIGI looked up, nothing written")
+    else:
+        printer(f"  review items created {out['items_created']} (already open / known: {out['already_open_or_known']}) "
+                "— decide them on Security master → Review queue")
+    out["exit"] = 0
+    return out
 
 
 async def run(args, *, pool=None, http=None, printer=print) -> dict:
@@ -140,6 +188,8 @@ async def run(args, *, pool=None, http=None, printer=print) -> dict:
 
 def main() -> int:
     args = parse(sys.argv[1:])
+    if args.resolve_misses:
+        return int(asyncio.run(resolve_misses(args)).get("exit", 1))
     return int(asyncio.run(run(args)).get("exit", 1))
 
 
