@@ -397,7 +397,7 @@ async def y_clock(conn):
     sat, thanks = date(2026, 11, 14), date(2026, 11, 26)
     r1 = await daily(ny(sat, 9))
     r2 = await daily(ny(thanks, 9))
-    check(r1["action"] == "not_business_day" and r2["action"] == "not_business_day" and "Thanksgiving" in str(r2)
+    check(r1["action"] == "not_business_day" and r2["action"] == "not_business_day" and "thanksgiving" in str(r2).lower()
           and not await day_rows(conn), "a Saturday and Thanksgiving never run and write no row",
           f"{r1} {r2}")
     d1 = D1()
@@ -992,14 +992,14 @@ async def real_fp(conn) -> dict:
                     "status, ',' ORDER BY id)), '') FROM public.rebalance_schedule_days WHERE NOT (org_id = "
                     "ANY($1::uuid[]))"),
                    ("price_refresh_days", "SELECT count(*)::text || ':' || coalesce(md5(string_agg(id::text || status, "
-                    "',' ORDER BY id)), '') FROM portfolio.price_refresh_days WHERE scope <> $2 AND $1::uuid[] IS NOT "
+                    "',' ORDER BY id)), '') FROM portfolio.price_refresh_days WHERE scope <> $2::text AND $1::uuid[] IS NOT "
                     "NULL"),
                    ("rebalance_proposals", "SELECT count(*)::text || ':' || coalesce(md5(string_agg(id::text || status, "
                     "',' ORDER BY id)), '') FROM public.rebalance_proposals WHERE NOT (org_id = ANY($1::uuid[])) AND "
-                    "$2 IS NOT NULL"),
+                    "$2::text IS NOT NULL"),
                    ("account_model_links", "SELECT count(*)::text || ':' || coalesce(md5(string_agg(id::text || status "
                     "|| coalesce(rebalance_frequency, ''), ',' ORDER BY id)), '') FROM public.account_model_links WHERE "
-                    "NOT (org_id = ANY($1::uuid[])) AND $2 IS NOT NULL")):
+                    "NOT (org_id = ANY($1::uuid[])) AND $2::text IS NOT NULL")):
         args = (R5.FIXTURE_ORGS, PRICES_SCOPE) if "$2" in sql else (R5.FIXTURE_ORGS,)
         out[k] = await R5.platform(conn, sql, *args, fetch="fetchval")
     return out
