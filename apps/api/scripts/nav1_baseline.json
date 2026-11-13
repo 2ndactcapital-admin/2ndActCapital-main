@@ -1,0 +1,1407 @@
+{
+ "items": [
+  {
+   "href": "/dashboard",
+   "section": "main",
+   "group": null,
+   "group_label": null,
+   "label": "Dashboard",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/crm",
+   "section": "main",
+   "group": null,
+   "group_label": null,
+   "label": "CRM",
+   "gate": {
+    "internal": true,
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/marketplace",
+   "section": "main",
+   "group": "marketplace",
+   "group_label": "Marketplace",
+   "label": "Deals",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/marketplace/my-access",
+   "section": "main",
+   "group": "marketplace",
+   "group_label": "Marketplace",
+   "label": "My deal access",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/marketplace/access",
+   "section": "main",
+   "group": "marketplace",
+   "group_label": "Marketplace",
+   "label": "Deal access",
+   "gate": {
+    "perm": "manage_deals",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Overview",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/positions",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Positions",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/transactions",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Transactions",
+   "gate": {
+    "perm": "view_portfolio"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/securities",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Securities",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/commitments",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Commitments",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/allocation",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Allocation",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/ownership-tree",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Ownership tree",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/replication",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Replication",
+   "gate": {
+    "perm": "view_replication",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/instructions",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Instructions",
+   "gate": {
+    "perm": "view_execution",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/models",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Models",
+   "gate": {
+    "perm": "view_models",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/accounts",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Accounts",
+   "gate": {
+    "perm": "view_proposals",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/tax",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Tax",
+   "gate": {
+    "perm": "view_tax",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/blocks",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Blocks",
+   "gate": {
+    "perm": "view_blocks",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/replication/tilts",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Tilts",
+   "gate": {
+    "perm": "view_replication",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/replication/backtest",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Backtest",
+   "gate": {
+    "perm": "view_replication",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/replication/notes",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Notes",
+   "gate": {
+    "perm": "view_replication",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/replication/notes/new-issues",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "New issues",
+   "gate": {
+    "internal": true,
+    "perm": "view_replication",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/replication/notes/underlyings",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Underlying queue",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/households",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Households",
+   "gate": {
+    "internal": true,
+    "perm": "manage_members",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/approvals",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Approvals",
+   "gate": {
+    "anyOf": [
+     "view_authority",
+     "approve_authority",
+     "view_held_away",
+     "approve_held_away",
+     "manage_cash_policy",
+     "initiate_payment",
+     "approve_payment"
+    ],
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/replication/section351",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Section 351",
+   "gate": {
+    "perm": "view_proposals",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio/replication/catalog",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Model catalog",
+   "gate": {
+    "perm": "view_models",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/portfolio-reporting",
+   "section": "main",
+   "group": "portfolio",
+   "group_label": "Portfolio",
+   "label": "Reporting",
+   "gate": null,
+   "comingSoon": true
+  },
+  {
+   "href": "/market",
+   "section": "main",
+   "group": null,
+   "group_label": null,
+   "label": "Market Indicators",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/spvs",
+   "section": "main",
+   "group": null,
+   "group_label": null,
+   "label": "SPV Manager",
+   "gate": {
+    "internal": true,
+    "perm": "view_spv",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/insurance",
+   "section": "main",
+   "group": null,
+   "group_label": null,
+   "label": "Insurance",
+   "gate": null,
+   "comingSoon": true
+  },
+  {
+   "href": "/community",
+   "section": "main",
+   "group": null,
+   "group_label": null,
+   "label": "Community",
+   "gate": null,
+   "comingSoon": true
+  },
+  {
+   "href": "/documents",
+   "section": "main",
+   "group": "documents",
+   "group_label": "Documents",
+   "label": "Search",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/documents/semantic",
+   "section": "main",
+   "group": "documents",
+   "group_label": "Documents",
+   "label": "Semantic search",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/notifications",
+   "section": "main",
+   "group": null,
+   "group_label": null,
+   "label": "Notifications",
+   "gate": null,
+   "comingSoon": false
+  },
+  {
+   "href": "/admin",
+   "section": "org_admin",
+   "group": null,
+   "group_label": null,
+   "label": "Admin",
+   "gate": {
+    "perm": "manage_members"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/users",
+   "section": "org_admin",
+   "group": "people",
+   "group_label": "People & Access",
+   "label": "Users",
+   "gate": {
+    "perm": "manage_members"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/staff-visibility",
+   "section": "org_admin",
+   "group": "people",
+   "group_label": "People & Access",
+   "label": "Teams & Coverage",
+   "gate": {
+    "perm": "manage_members"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/profiles",
+   "section": "org_admin",
+   "group": "people",
+   "group_label": "People & Access",
+   "label": "Profiles",
+   "gate": {
+    "perm": "manage_org_settings"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/permission-sets",
+   "section": "org_admin",
+   "group": "people",
+   "group_label": "People & Access",
+   "label": "Permission Sets",
+   "gate": {
+    "perm": "manage_org_settings"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/sod",
+   "section": "org_admin",
+   "group": "people",
+   "group_label": "People & Access",
+   "label": "Segregation of duties",
+   "gate": {
+    "anyOf": [
+     "manage_org_settings",
+     "manage_compliance",
+     "view_audit_log"
+    ],
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/settings",
+   "section": "org_admin",
+   "group": "settings",
+   "group_label": "Settings",
+   "label": "Organization",
+   "gate": {
+    "perm": "manage_org_settings"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/modeling/ta",
+   "section": "org_admin",
+   "group": "settings",
+   "group_label": "Settings",
+   "label": "TA Model Defaults",
+   "gate": {
+    "perm": "manage_org_settings"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/security-data/sources",
+   "section": "org_admin",
+   "group": "settings",
+   "group_label": "Settings",
+   "label": "Price sources",
+   "gate": {
+    "perm": "manage_org_settings"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/security-data/quality",
+   "section": "org_admin",
+   "group": "settings",
+   "group_label": "Settings",
+   "label": "Data quality",
+   "gate": {
+    "perm": "manage_org_settings"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/allocation-policy",
+   "section": "org_admin",
+   "group": "settings",
+   "group_label": "Settings",
+   "label": "Allocation policy",
+   "gate": {
+    "perm": "view_blocks",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/executing-accounts",
+   "section": "org_admin",
+   "group": "settings",
+   "group_label": "Settings",
+   "label": "Executing accounts",
+   "gate": {
+    "perm": "view_blocks",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/hypothetical-policy",
+   "section": "org_admin",
+   "group": "settings",
+   "group_label": "Settings",
+   "label": "Hypothetical-performance policy",
+   "gate": {
+    "perm": "view_replication",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/disclosures",
+   "section": "org_admin",
+   "group": "settings",
+   "group_label": "Settings",
+   "label": "Disclosures",
+   "gate": {
+    "perm": "view_disclosures",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/workflows",
+   "section": "org_admin",
+   "group": "workflows",
+   "group_label": "Workflows",
+   "label": "Workflows",
+   "gate": {
+    "perm": "author_workflows",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/workflows/runs",
+   "section": "org_admin",
+   "group": "workflows",
+   "group_label": "Workflows",
+   "label": "Runs",
+   "gate": {
+    "perm": "view_workflow_runs",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/workflows/triggers",
+   "section": "org_admin",
+   "group": "workflows",
+   "group_label": "Workflows",
+   "label": "Triggers",
+   "gate": {
+    "anyOf": [
+     "view_workflow_runs",
+     "configure_workflow_triggers"
+    ],
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/workflows/templates",
+   "section": "org_admin",
+   "group": "workflows",
+   "group_label": "Workflows",
+   "label": "Templates",
+   "gate": {
+    "anyOf": [
+     "author_workflows",
+     "view_workflow_runs",
+     "configure_workflow_triggers"
+    ],
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/workflows/autonomy",
+   "section": "org_admin",
+   "group": "workflows",
+   "group_label": "Workflows",
+   "label": "Autonomy",
+   "gate": {
+    "anyOf": [
+     "manage_org_settings",
+     "author_workflows",
+     "view_workflow_runs"
+    ],
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/billing-groups",
+   "section": "org_admin",
+   "group": "billing",
+   "group_label": "Billing & Custody",
+   "label": "Billing Groups",
+   "gate": {
+    "internal": true,
+    "perm": "view_portfolio",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/custody-import",
+   "section": "org_admin",
+   "group": "billing",
+   "group_label": "Billing & Custody",
+   "label": "Custody Import",
+   "gate": {
+    "internal": true,
+    "perm": "view_portfolio",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/fee-schedules/chat",
+   "section": "org_admin",
+   "group": "billing",
+   "group_label": "Billing & Custody",
+   "label": "Fee schedules",
+   "gate": {
+    "internal": true,
+    "perm": "view_portfolio",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/profitability",
+   "section": "org_admin",
+   "group": "billing",
+   "group_label": "Billing & Custody",
+   "label": "Profitability",
+   "gate": {
+    "internal": true,
+    "perm": "view_portfolio",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/custodian-capabilities",
+   "section": "org_admin",
+   "group": "billing",
+   "group_label": "Billing & Custody",
+   "label": "Custodian capabilities",
+   "gate": {
+    "staff": true,
+    "perm": "manage_org_settings",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/vdr-proposals",
+   "section": "org_admin",
+   "group": "deal_intake",
+   "group_label": "Deal Intake",
+   "label": "VDR Proposals",
+   "gate": {
+    "perm": "manage_deals"
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/platform",
+   "section": "platform",
+   "group": "tenants",
+   "group_label": "Tenants",
+   "label": "Tenants",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/restricted-access",
+   "section": "platform",
+   "group": "controls",
+   "group_label": "Controls",
+   "label": "Restricted Access",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/trading-authority",
+   "section": "platform",
+   "group": "controls",
+   "group_label": "Controls",
+   "label": "Trading Authority",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/security-data",
+   "section": "platform",
+   "group": "controls",
+   "group_label": "Controls",
+   "label": "Security data",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/security-data/master",
+   "section": "platform",
+   "group": "controls",
+   "group_label": "Controls",
+   "label": "Security master",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/integrated-import",
+   "section": "platform",
+   "group": "controls",
+   "group_label": "Controls",
+   "label": "Integrated import",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/model-provider",
+   "section": "platform",
+   "group": "controls",
+   "group_label": "Controls",
+   "label": "Published models",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/platform/workflow-templates",
+   "section": "platform",
+   "group": "controls",
+   "group_label": "Controls",
+   "label": "Workflow templates",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/counterparties",
+   "section": "platform",
+   "group": "controls",
+   "group_label": "Controls",
+   "label": "Counterparties",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/model-catalog",
+   "section": "platform",
+   "group": "ai_models",
+   "group_label": "AI Models",
+   "label": "Model Catalog",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/model-research",
+   "section": "platform",
+   "group": "ai_models",
+   "group_label": "AI Models",
+   "label": "Model Research",
+   "gate": {
+    "perm": "manage_org_settings",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/ai-jobs",
+   "section": "platform",
+   "group": "ai_models",
+   "group_label": "AI Models",
+   "label": "Model Jobs",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/ai-drift",
+   "section": "platform",
+   "group": "ai_models",
+   "group_label": "AI Models",
+   "label": "Drift monitor",
+   "gate": {
+    "perm": "manage_org_settings",
+    "strict": true
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/edgar-pipeline",
+   "section": "platform",
+   "group": "structured_notes",
+   "group_label": "Structured Notes",
+   "label": "Download",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/pricing/note-terms-queue",
+   "section": "platform",
+   "group": "structured_notes",
+   "group_label": "Structured Notes",
+   "label": "Review queue",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/note-extraction/gold",
+   "section": "platform",
+   "group": "structured_notes",
+   "group_label": "Structured Notes",
+   "label": "Gold answers",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/note-extraction/results",
+   "section": "platform",
+   "group": "structured_notes",
+   "group_label": "Structured Notes",
+   "label": "Accuracy results",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  },
+  {
+   "href": "/admin/pricing/surface",
+   "section": "platform",
+   "group": "structured_notes",
+   "group_label": "Structured Notes",
+   "label": "Volatility surface",
+   "gate": {
+    "roles": [
+     "super_admin"
+    ]
+   },
+   "comingSoon": false
+  }
+ ],
+ "personas": {
+  "plain_member": {
+   "hrefs": [
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/market",
+    "/marketplace",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/commitments",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/securities",
+    "/portfolio/transactions"
+   ],
+   "admin_area": false,
+   "areas": {
+    "/crm": false,
+    "/spvs": false,
+    "/admin": false,
+    "/portfolio/replication": false
+   }
+  },
+  "staff_member": {
+   "hrefs": [
+    "/admin/billing-groups",
+    "/admin/custodian-capabilities",
+    "/admin/custody-import",
+    "/admin/vdr-proposals",
+    "/admin/workflows/autonomy",
+    "/admin/workflows/runs",
+    "/admin/workflows/templates",
+    "/admin/workflows/triggers",
+    "/crm",
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/fee-schedules/chat",
+    "/market",
+    "/marketplace",
+    "/marketplace/access",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/commitments",
+    "/portfolio/households",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/replication/notes/new-issues",
+    "/portfolio/securities",
+    "/portfolio/transactions",
+    "/profitability",
+    "/spvs"
+   ],
+   "admin_area": true,
+   "areas": {
+    "/crm": true,
+    "/spvs": true,
+    "/admin": true,
+    "/portfolio/replication": false
+   }
+  },
+  "org_admin_manage_members": {
+   "hrefs": [
+    "/admin",
+    "/admin/staff-visibility",
+    "/admin/users",
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/market",
+    "/marketplace",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/commitments",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/securities"
+   ],
+   "admin_area": true,
+   "areas": {
+    "/crm": false,
+    "/spvs": false,
+    "/admin": true,
+    "/portfolio/replication": false
+   }
+  },
+  "org_admin_manage_org_settings": {
+   "hrefs": [
+    "/admin/ai-drift",
+    "/admin/custodian-capabilities",
+    "/admin/model-research",
+    "/admin/modeling/ta",
+    "/admin/permission-sets",
+    "/admin/profiles",
+    "/admin/security-data/quality",
+    "/admin/security-data/sources",
+    "/admin/settings",
+    "/admin/sod",
+    "/admin/workflows/autonomy",
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/market",
+    "/marketplace",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/commitments",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/securities"
+   ],
+   "admin_area": true,
+   "areas": {
+    "/crm": false,
+    "/spvs": false,
+    "/admin": true,
+    "/portfolio/replication": false
+   }
+  },
+  "super_admin": {
+   "hrefs": [
+    "/admin",
+    "/admin/ai-drift",
+    "/admin/ai-jobs",
+    "/admin/allocation-policy",
+    "/admin/billing-groups",
+    "/admin/counterparties",
+    "/admin/custodian-capabilities",
+    "/admin/custody-import",
+    "/admin/disclosures",
+    "/admin/edgar-pipeline",
+    "/admin/executing-accounts",
+    "/admin/hypothetical-policy",
+    "/admin/integrated-import",
+    "/admin/model-catalog",
+    "/admin/model-provider",
+    "/admin/model-research",
+    "/admin/modeling/ta",
+    "/admin/note-extraction/gold",
+    "/admin/note-extraction/results",
+    "/admin/permission-sets",
+    "/admin/platform",
+    "/admin/platform/workflow-templates",
+    "/admin/pricing/note-terms-queue",
+    "/admin/pricing/surface",
+    "/admin/profiles",
+    "/admin/restricted-access",
+    "/admin/security-data",
+    "/admin/security-data/master",
+    "/admin/security-data/quality",
+    "/admin/security-data/sources",
+    "/admin/settings",
+    "/admin/sod",
+    "/admin/staff-visibility",
+    "/admin/trading-authority",
+    "/admin/users",
+    "/admin/vdr-proposals",
+    "/admin/workflows",
+    "/admin/workflows/autonomy",
+    "/admin/workflows/runs",
+    "/admin/workflows/templates",
+    "/admin/workflows/triggers",
+    "/crm",
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/fee-schedules/chat",
+    "/market",
+    "/marketplace",
+    "/marketplace/access",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/accounts",
+    "/portfolio/allocation",
+    "/portfolio/approvals",
+    "/portfolio/blocks",
+    "/portfolio/commitments",
+    "/portfolio/households",
+    "/portfolio/instructions",
+    "/portfolio/models",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/replication",
+    "/portfolio/replication/backtest",
+    "/portfolio/replication/catalog",
+    "/portfolio/replication/notes",
+    "/portfolio/replication/notes/new-issues",
+    "/portfolio/replication/notes/underlyings",
+    "/portfolio/replication/section351",
+    "/portfolio/replication/tilts",
+    "/portfolio/securities",
+    "/portfolio/tax",
+    "/portfolio/transactions",
+    "/profitability",
+    "/spvs"
+   ],
+   "admin_area": true,
+   "areas": {
+    "/crm": true,
+    "/spvs": true,
+    "/admin": true,
+    "/portfolio/replication": true
+   }
+  },
+  "no_roles": {
+   "hrefs": [
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/market",
+    "/marketplace",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/commitments",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/securities"
+   ],
+   "admin_area": false,
+   "areas": {
+    "/crm": false,
+    "/spvs": false,
+    "/admin": false,
+    "/portfolio/replication": false
+   }
+  },
+  "member": {
+   "hrefs": [
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/market",
+    "/marketplace",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/commitments",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/securities",
+    "/portfolio/transactions"
+   ],
+   "admin_area": false,
+   "areas": {
+    "/crm": false,
+    "/spvs": false,
+    "/admin": false,
+    "/portfolio/replication": false
+   }
+  },
+  "next_gen": {
+   "hrefs": [
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/market",
+    "/marketplace",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/commitments",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/securities"
+   ],
+   "admin_area": false,
+   "areas": {
+    "/crm": false,
+    "/spvs": false,
+    "/admin": false,
+    "/portfolio/replication": false
+   }
+  },
+  "support_staff": {
+   "hrefs": [
+    "/admin/billing-groups",
+    "/admin/custody-import",
+    "/admin/workflows/autonomy",
+    "/admin/workflows/runs",
+    "/admin/workflows/templates",
+    "/admin/workflows/triggers",
+    "/crm",
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/fee-schedules/chat",
+    "/market",
+    "/marketplace",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/commitments",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/securities",
+    "/portfolio/transactions",
+    "/profitability"
+   ],
+   "admin_area": true,
+   "areas": {
+    "/crm": true,
+    "/spvs": false,
+    "/admin": true,
+    "/portfolio/replication": false
+   }
+  },
+  "org_admin": {
+   "hrefs": [
+    "/admin/ai-drift",
+    "/admin/allocation-policy",
+    "/admin/custodian-capabilities",
+    "/admin/executing-accounts",
+    "/admin/hypothetical-policy",
+    "/admin/model-research",
+    "/admin/modeling/ta",
+    "/admin/permission-sets",
+    "/admin/profiles",
+    "/admin/security-data/quality",
+    "/admin/security-data/sources",
+    "/admin/settings",
+    "/admin/sod",
+    "/admin/workflows/autonomy",
+    "/crm",
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/market",
+    "/marketplace",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/accounts",
+    "/portfolio/approvals",
+    "/portfolio/blocks",
+    "/portfolio/commitments",
+    "/portfolio/instructions",
+    "/portfolio/models",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/replication",
+    "/portfolio/replication/backtest",
+    "/portfolio/replication/catalog",
+    "/portfolio/replication/notes",
+    "/portfolio/replication/notes/new-issues",
+    "/portfolio/replication/section351",
+    "/portfolio/replication/tilts",
+    "/portfolio/securities",
+    "/portfolio/tax"
+   ],
+   "admin_area": true,
+   "areas": {
+    "/crm": true,
+    "/spvs": false,
+    "/admin": true,
+    "/portfolio/replication": true
+   }
+  },
+  "super_admin_bare": {
+   "hrefs": [
+    "/admin",
+    "/admin/ai-drift",
+    "/admin/ai-jobs",
+    "/admin/allocation-policy",
+    "/admin/billing-groups",
+    "/admin/counterparties",
+    "/admin/custodian-capabilities",
+    "/admin/custody-import",
+    "/admin/disclosures",
+    "/admin/edgar-pipeline",
+    "/admin/executing-accounts",
+    "/admin/hypothetical-policy",
+    "/admin/integrated-import",
+    "/admin/model-catalog",
+    "/admin/model-provider",
+    "/admin/model-research",
+    "/admin/modeling/ta",
+    "/admin/note-extraction/gold",
+    "/admin/note-extraction/results",
+    "/admin/permission-sets",
+    "/admin/platform",
+    "/admin/platform/workflow-templates",
+    "/admin/pricing/note-terms-queue",
+    "/admin/pricing/surface",
+    "/admin/profiles",
+    "/admin/restricted-access",
+    "/admin/security-data",
+    "/admin/security-data/master",
+    "/admin/security-data/quality",
+    "/admin/security-data/sources",
+    "/admin/settings",
+    "/admin/sod",
+    "/admin/staff-visibility",
+    "/admin/trading-authority",
+    "/admin/users",
+    "/admin/vdr-proposals",
+    "/admin/workflows",
+    "/admin/workflows/autonomy",
+    "/admin/workflows/runs",
+    "/admin/workflows/templates",
+    "/admin/workflows/triggers",
+    "/crm",
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/fee-schedules/chat",
+    "/market",
+    "/marketplace",
+    "/marketplace/access",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/accounts",
+    "/portfolio/allocation",
+    "/portfolio/approvals",
+    "/portfolio/blocks",
+    "/portfolio/commitments",
+    "/portfolio/households",
+    "/portfolio/instructions",
+    "/portfolio/models",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/replication",
+    "/portfolio/replication/backtest",
+    "/portfolio/replication/catalog",
+    "/portfolio/replication/notes",
+    "/portfolio/replication/notes/new-issues",
+    "/portfolio/replication/notes/underlyings",
+    "/portfolio/replication/section351",
+    "/portfolio/replication/tilts",
+    "/portfolio/securities",
+    "/portfolio/tax",
+    "/portfolio/transactions",
+    "/profitability",
+    "/spvs"
+   ],
+   "admin_area": true,
+   "areas": {
+    "/crm": true,
+    "/spvs": true,
+    "/admin": true,
+    "/portfolio/replication": true
+   }
+  },
+  "lost_envelope": {
+   "hrefs": [
+    "/dashboard",
+    "/documents",
+    "/documents/semantic",
+    "/market",
+    "/marketplace",
+    "/marketplace/my-access",
+    "/notifications",
+    "/portfolio",
+    "/portfolio/commitments",
+    "/portfolio/ownership-tree",
+    "/portfolio/positions",
+    "/portfolio/securities"
+   ],
+   "admin_area": false,
+   "areas": {
+    "/crm": false,
+    "/spvs": false,
+    "/admin": false,
+    "/portfolio/replication": false
+   }
+  }
+ }
+}
