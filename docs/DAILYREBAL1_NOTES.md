@@ -37,3 +37,4 @@ Branch `dailyrebal1-work`. Joe's "option 1" (2026-11-12): proposals generated au
 * one-off --only=c: 14/1 — the FAIL a test bug (holiday_name returns 'thanksgiving' lowercase; check fixed). Seed 131 s, end teardown 169 s (rep5's fixture is heavy).
 * one-off --only=r,s: 25/1 — s 13/0 + 1 FIND (6 per-task to-dos for 2 proposals: the engine's own, kept); r FAIL was CODE: a partial run where every account skipped early (open proposal) recorded NO oldest valuation date (it was read only for evaluated accounts). Fixed: org_daily reads AM.valuation_as_of for every opted-in account checked.
 * one-off --only=r,h,f: r 5/0 (partial-date fix proven), h 2/0; f RAISED at its own reset — a TEST teardown-order bug (rebalance_proposal_trades → execution_instructions FK); order fixed; --cleanup-only 1/0 after.
+* one-off --only=f,u,p: 30/0 (f 7/0, u 5/0, p 9/0; teardown + real fingerprints green).
