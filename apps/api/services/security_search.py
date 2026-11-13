@@ -48,7 +48,7 @@ async def search(conn, q: str, *, limit: int = 20) -> list[dict]:
                   SELECT DISTINCT ON (i.id_type) i.id_type, i.id_value
                   FROM portfolio.securities_global_identifiers i
                   WHERE i.global_security_id = s.id AND i.valid_to IS NULL AND i.system_to IS NULL
-                  ORDER BY i.id_type, i.is_primary DESC, i.id_value) x)::text AS identifiers
+                  ORDER BY i.id_type, i.is_primary DESC, i.is_alternate, i.id_value) x)::text AS identifiers
         FROM hits h JOIN portfolio.securities_global s ON s.id = h.sid
         WHERE s.valid_to IS NULL AND s.system_to IS NULL AND s.merged_into_id IS NULL
         ORDER BY h.r, s.name

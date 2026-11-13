@@ -210,7 +210,7 @@ async def securities(conn, *, filters: dict, scope: list | None = None, limit: i
         f"SELECT s.id, s.name, s.security_type, s.price_coverage, "
         "(SELECT json_object_agg(i.id_type, i.id_value) FROM (SELECT DISTINCT ON (id_type) id_type, id_value FROM "
         "portfolio.securities_global_identifiers WHERE global_security_id = s.id AND valid_to IS NULL AND system_to "
-        "IS NULL ORDER BY id_type, is_primary DESC, id_value) i) AS identifiers, "
+        "IS NULL ORDER BY id_type, is_primary DESC, is_alternate, id_value) i) AS identifiers, "
         # TRACK1 — per row: tracked on purpose? any platform close loaded?
         "EXISTS (SELECT 1 FROM portfolio.tracked_securities t WHERE t.global_security_id = s.id AND t.status = "
         "'tracked' AND t.valid_to IS NULL AND t.system_to IS NULL) AS tracked, "
