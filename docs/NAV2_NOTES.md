@@ -69,7 +69,7 @@ Entities record page). Source: Joe's mockup (2026-11-12) and `sprint_prompts/nav
    chooses; Tab is trapped; ONE global keydown handler that ignores inputs / textareas / selects / editable regions.
 5. **Assistant context** — `AssistantPanel` (no explicit `contextRef`) sends the selected VISIBLE entity as
    `context_ref: {type: "entity", id, entity_type}` — the existing shape; the panel shows "About: <type> · <name>".
-   Server (`routers/assistant.py` `entity_context_note`): only after `require_entity_access` passes, the model's system
+   Server (`services/assistant_context.py` `entity_context_note`, called from `routers/assistant.py` `post_message`; a service on purpose — content, never a gate, so the route record stays "none beyond auth"): only after `require_entity_access` passes, the model's system
    prompt gains one context line naming the entity; missing / forbidden / malformed → nothing (the same silence). The
    tools, their gates and `caller_is_staff` are unchanged.
 

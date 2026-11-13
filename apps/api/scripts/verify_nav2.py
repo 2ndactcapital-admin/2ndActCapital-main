@@ -139,9 +139,12 @@ def self_checks(check, find):
     status = text("docs/PROJECT_STATUS.md")
     check(bool(re.search(r"^NAV2 \(2026-11-13", status, re.M)), "docs/PROJECT_STATUS.md carries the NAV2 line")
     asst = text("apps/api/routers/assistant.py")
-    check(bool("await require_entity_access(request, pool, entity_id)" in asst
-               and "context_note = await entity_context_note(request, pool, org_id, body.context_ref)" in asst),
-          "the assistant's context note is gated by the one entity gate (require_entity_access)")
+    ctx = text("apps/api/services/assistant_context.py")
+    check(bool("await require_entity_access(request, pool, entity_id)" in ctx
+               and "context_note = await entity_context_note(request, pool, org_id, body.context_ref)" in asst
+               and "from services.assistant_context import entity_context_note" in asst),
+          "the assistant's context note is gated by the one entity gate (require_entity_access), in a service — the "
+          "route's own record stays 'none beyond auth' (it never refuses on the context)")
     code, d = _git("diff", "--unified=0", f"{BEFORE_REF}..{end}", "--", "apps/api/routers/assistant.py")
     removed = [ln[1:].strip() for ln in d.splitlines() if ln.startswith("-") and not ln.startswith("---")]
     check(removed == ["api_messages, tool_specs, action_map, pool, user_id, org_id, caller_is_staff"],
@@ -583,8 +586,12 @@ async def y_filters(conn):
     check(f_ids <= sql and str(POS1) in sql, "positions filtered ⊆ SQL on the same predicate (current rows only)",
           f"{f_ids - sql}")
     c, sb = await api(U_S1, "GET", f"/api/v1/portfolio/positions?limit=500&owner_entity_id={eid('p2')}")
-    check(bool(c == 200 and not ids_in(sb)), "support staff filtering on a family outside their scope: zero rows (the "
-          "filter is ANDed with the scope, never widens)", f"{c} {sorted(ids_in(sb))}")
+    check(bool(c in (200, 404) and not ids_in(sb)), "support staff filtering on a family outside their scope: no row "
+          "(the filter never widens the scope)", f"{c} {sorted(ids_in(sb))}")
+    if c == 404:
+        find("support staff + an out-of-scope owner_entity_id: 404 from the VISIBILITY1 path guard (main."
+             "_family_path_guard reads query ids too) — a refusal, and the no-leak section shows a missing id answers "
+             "the same")
     c, sb = await api(U_S1, "GET", f"/api/v1/portfolio/positions?limit=500&owner_entity_id={eid('p1')}")
     check(bool(c == 200 and ids_in(sb) == {str(POS1)}), "support staff filtering on their own family: exactly POS1",
           f"{c} {sorted(ids_in(sb))}")
