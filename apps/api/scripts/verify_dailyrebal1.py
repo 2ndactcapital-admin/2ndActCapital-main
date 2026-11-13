@@ -882,7 +882,7 @@ async def y_simulated():
               f"{mirror}")
         if not C5.S.get("seeded"):
             return
-        acct = C5.ACC_SIM2
+        acct = C5.ACC_SIM          # cpsim05's model-linked simulated demo account (LINK_A)
         link = await C5.platform(conn, "SELECT * FROM account_model_links WHERE account_id = $1::uuid AND status = "
                                        "'active' AND valid_to IS NULL AND system_to IS NULL", acct, fetch="fetchrow")
         check(link is not None, "the simulated demo account follows a model (cpsim05's fixture link)")
@@ -935,9 +935,13 @@ async def y_simulated():
                   "a second person (approve_execution) approves → sent to the simulated counterparty, filled, "
                   "reconciled automatically (cpsim05's path, unchanged)", f"{c2} {cur.get('status')} {len(fills)}")
         c3, o3 = await C5.api(C5.U_CK, "GET", f"/api/v1/proposals/{pid}")
-        pl = json.dumps(o3)
-        check(c3 == 200 and ("realized" in pl or "pnl" in pl or "unrealized" in pl),
-              "the proposal's detail shows the P/L after the fills", f"{c3} {pl[:200]}")
+        fpl = (o3.get("proposal") or o3).get("fix_sim_pl") if isinstance(o3, dict) else None
+        fpl = fpl if fpl is not None else o3.get("fix_sim_pl")
+        tot = (fpl or {}).get("totals") or {}
+        check(c3 == 200 and fpl is not None and tot.get("realized_lt") is not None and tot.get("realized_st") is not None
+              and (fpl.get("unrealized") or {}).get("total") is not None,
+              "the proposal's detail shows the SIMULATED P/L after the fills (cpsim05 D7: realized ST / LT, unrealized)",
+              f"{c3} {json.dumps(fpl)[:300] if fpl else json.dumps(o3)[:200]}")
     finally:
         try:
             await C5.FA.drain()
