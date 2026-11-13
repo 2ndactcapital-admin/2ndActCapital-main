@@ -8,6 +8,7 @@ import {
   IconLogout,
 } from "@tabler/icons-react";
 import NotificationBell from "@/components/NotificationBell";
+import AssistantToggle from "@/components/assistant/AssistantToggle";
 
 function initialsFrom(user) {
   const source = user?.name || user?.email || "";
@@ -34,6 +35,7 @@ export default function TopBar({ user }) {
   return (
     <header className="flex h-14 items-center justify-end bg-navy px-6">
       <div className="flex items-center gap-2">
+        <AssistantToggle />
         <NotificationBell />
 
         <div className="relative" ref={ref}>

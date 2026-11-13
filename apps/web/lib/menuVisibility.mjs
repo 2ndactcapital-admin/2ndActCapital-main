@@ -153,11 +153,22 @@ export const GATE_APPROVALS = {
 // /admin/hypothetical-policy and the price-sources page).
 export const GATE_ADMIN_AREA = { adminArea: true };
 
+/**
+ * NAV1 — the navigation redesign, phase 1 (Joe's review of the mockup, 2026-11-12). Only the presentation moved:
+ * every href and every gate below is the one it had before NAV1 (verify_nav1 diffs each href's gate against the
+ * frozen pre-NAV1 baseline, apps/api/scripts/nav1_baseline.json). Treasury is the one new entry, gated on its
+ * API's own read gate.
+ */
+// NAV1 — /treasury (CASH01). The page needs a session; its data API GET /cash/households is
+// require_any_permission(view_portfolio, manage_portfolio) + the member scope, so the menu lists it for exactly
+// those callers. STRICT: a lost envelope hides it.
+export const GATE_TREASURY = { anyOf: ["view_portfolio", "manage_portfolio"], strict: true };
+
 /** Navigation sections, top to bottom. `header` is null for the main section. */
 export const SECTIONS = [
   { id: "main", header: null },
-  { id: "org_admin", header: "Admin — Organization" },
-  { id: "platform", header: "Admin — Platform" },
+  { id: "org_admin", header: "Organization admin" },
+  { id: "platform", header: "Platform · Super Admin" },
 ];
 
 /**
@@ -165,72 +176,102 @@ export const SECTIONS = [
  * the MENU_ITEMS carrying its id in `group`. `order` shares one number space
  * with the standalone items of the same section, so the sidebar can interleave
  * them. `landing` is the group's own route: it redirects to the first tab the
- * caller can see (landingFor), or renders the refusal when there is none. For
- * Portfolio and Tenants the landing IS the first tab, whose gate is null /
- * the group's only gate, so no separate route exists.
+ * caller can see (landingFor), or renders the refusal when there is none. Where
+ * no separate landing route exists the landing IS the group's first tab.
+ * `memberLabel` (NAV1): the label a MEMBER (isMemberOnly) reads instead — see
+ * displayLabel. Group ids are kept from navregroup wherever the group survived
+ * (the landing routes pass them to GroupLanding), so "portfolio" is now Cross
+ * Book, "settings" Firm settings, "workflows" Automation, "billing" Custody &
+ * Billing, "controls" Tenants & controls, "ai_models" AI and "structured_notes"
+ * the Structured notes pipeline.
  */
 export const GROUPS = [
   {
+    id: "portfolio", label: "Cross Book", memberLabel: "My accounts", section: "main", order: 30,
+    landing: "/portfolio", icon: "portfolio",
+    description: "Positions, transactions, securities, commitments, households, allocation, the ownership tree and approvals.",
+  },
+  {
+    id: "model_portfolios", label: "Model Portfolios", section: "main", order: 40, landing: "/portfolio/models",
+    icon: "portfolio",
+    description: "Models, building from a fund, tilts, backtests, accounts and rebalancing, tax, transitions and trading.",
+  },
+  {
     // DEALROOM1 — Marketplace became a master page: its landing IS its first
     // tab (the deal list), so no separate route exists.
-    id: "marketplace", label: "Marketplace", section: "main", order: 30, landing: "/marketplace",
+    id: "marketplace", label: "Marketplace", section: "main", order: 60, landing: "/marketplace",
     icon: "marketplace",
     description: "Deals, your deal-room access and the access grid.",
   },
   {
-    id: "portfolio", label: "Portfolio", section: "main", order: 40, landing: "/portfolio",
-    icon: "portfolio",
-    description: "Investments, positions, transactions, securities and commitments.",
+    id: "notes", label: "Structured Notes", section: "main", order: 80, landing: "/portfolio/replication/notes",
+    icon: "portfolio-reporting",
+    description: "Structured notes against their replicas, and new issues.",
   },
   {
-    id: "documents", label: "Documents", section: "main", order: 90, landing: "/documents",
+    id: "documents", label: "Documents", section: "main", order: 100, landing: "/documents",
     icon: "portfolio-reporting",
     description: "Find documents you can see, by name, category or meaning.",
   },
   {
-    id: "people", label: "People & Access", section: "org_admin", order: 20, landing: "/admin/people",
+    id: "settings", label: "Firm settings", section: "org_admin", order: 20, landing: "/admin/configuration",
+    icon: "admin",
+    description: "Organization and branding, disclosures, the hypothetical-performance policy and TA model defaults.",
+  },
+  {
+    id: "people", label: "People & Access", section: "org_admin", order: 30, landing: "/admin/people",
     icon: "investment-profile",
-    description: "Members, staff teams and coverage, profiles and permission sets.",
+    description: "Users, teams and coverage, profiles and permission sets, segregation of duties.",
   },
   {
-    id: "settings", label: "Settings", section: "org_admin", order: 30, landing: "/admin/configuration",
+    id: "model_admin", label: "Model Portfolio Admin", section: "org_admin", order: 40,
+    landing: "/admin/allocation-policy", icon: "admin",
+    description: "The firm's allocation policy and its executing accounts.",
+  },
+  {
+    id: "data_pricing", label: "Data & pricing", section: "org_admin", order: 50,
+    landing: "/admin/security-data/sources", icon: "admin",
+    description: "Price sources and data quality.",
+  },
+  {
+    id: "billing", label: "Custody & Billing", section: "org_admin", order: 60, landing: "/admin/billing",
     icon: "admin",
-    description: "White-label organization settings and TA model defaults.",
+    description: "Custodian capabilities, counterparties, custody import, fee schedules, billing groups and profitability.",
   },
   {
-    id: "workflows", label: "Workflows", section: "org_admin", order: 40, landing: "/admin/automation",
+    id: "workflows", label: "Automation", section: "org_admin", order: 70, landing: "/admin/automation",
     icon: "admin",
-    description: "Governed process definitions, their runs and their schedules.",
+    description: "Governed process definitions, their runs, triggers and schedules, templates and autonomy.",
   },
   {
-    id: "billing", label: "Billing & Custody", section: "org_admin", order: 50, landing: "/admin/billing",
-    icon: "admin",
-    description: "Billing groups, custodian position imports and custodian capabilities.",
-  },
-  {
-    id: "deal_intake", label: "Deal Intake", section: "org_admin", order: 60, landing: "/admin/deal-intake",
+    id: "deal_intake", label: "Deal Intake", section: "org_admin", order: 80, landing: "/admin/deal-intake",
     icon: "marketplace",
     description: "Deals proposed from data-room uploads, awaiting review.",
   },
   {
-    id: "tenants", label: "Tenants", section: "platform", order: 10, landing: "/admin/platform",
+    id: "controls", label: "Tenants & controls", section: "platform", order: 10, landing: "/admin/controls",
     icon: "admin",
-    description: "Platform-wide settings across all organizations.",
+    description: "Tenants, restricted access, trading authority and the integrated import.",
   },
   {
-    id: "controls", label: "Controls", section: "platform", order: 20, landing: "/admin/controls",
+    id: "security_data", label: "Security data", section: "platform", order: 20, landing: "/admin/security-data",
     icon: "admin",
-    description: "Restricted accounts and per-entity trading authority.",
+    description: "Providers and licences, and the security master (with its review queue and tracked view).",
   },
   {
-    id: "ai_models", label: "AI Models", section: "platform", order: 30, landing: "/admin/ai-models",
+    id: "ai_models", label: "AI", section: "platform", order: 30, landing: "/admin/ai-models",
     icon: "admin",
-    description: "The platform model catalog, model research, and the models and daily budgets of each job.",
+    description: "The platform model catalog, the models and daily budgets of each job, model research and the drift monitor.",
   },
   {
-    id: "structured_notes", label: "Structured Notes", section: "platform", order: 40,
+    id: "structured_notes", label: "Structured notes pipeline", section: "platform", order: 40,
     landing: "/admin/structured-notes", icon: "admin",
-    description: "EDGAR download, the terms review queue, gold answers, accuracy and the volatility surface.",
+    description: "EDGAR download, terms review, gold answers, accuracy, the volatility surface and the underlying queue.",
+  },
+  {
+    id: "publishing", label: "Publishing", section: "platform", order: 50, landing: "/admin/model-provider",
+    icon: "admin",
+    description: "Published models and platform workflow templates.",
   },
 ];
 
@@ -248,6 +289,7 @@ export const GROUPS = [
  *   gate       null = any signed-in user; see canAccess
  *   adminIndex listed (inside its group's card) on the /admin landing page
  *   icon       BrandNavIcon name, standalone items only (groups carry their own)
+ *   memberLabel (optional) what a member reads instead of `label` (displayLabel)
  *
  * Every gate mirrors the page's REAL server gate (docs/NAVREGROUP_DISCOVERY.md
  * §1a). A page whose server gate the client cannot evaluate, or that has none,
@@ -262,11 +304,11 @@ const tab = (section, group, tab_order, href, label, gate, adminIndex) => ({
 
 export const MENU_ITEMS = [
   main(10, "/dashboard", "Dashboard", "dashboard"),
-  main(20, "/crm", "CRM", "crm", GATE_CRM),
-  tab("main", "marketplace", 1, "/marketplace", "Deals", null, false),
-  // DEALROOM1 — an investor's own deal-room access (self-scoped API).
-  tab("main", "marketplace", 2, "/marketplace/my-access", "My deal access", null, false),
-  tab("main", "marketplace", 3, "/marketplace/access", "Deal access", GATE_MANAGE_DEALS_STRICT, false),
+  // NAV1 — CRM is now "Entities" (households, clients, prospects, partners, former clients, individuals,
+  // accounts, legal entities). Gate unchanged: internal roles only, so no member reaches it today.
+  { ...main(20, "/crm", "Entities", "crm", GATE_CRM), memberLabel: "My family" },
+
+  // ── Cross Book (group "portfolio") ──
   tab("main", "portfolio", 1, "/portfolio", "Overview", null, false),
   // Positions, Securities and Commitments were in the sidebar UNGATED; that is
   // kept so no persona loses a link (their API gate is view_portfolio — a
@@ -275,48 +317,58 @@ export const MENU_ITEMS = [
   tab("main", "portfolio", 3, "/portfolio/transactions", "Transactions", GATE_VIEW_PORTFOLIO, false),
   tab("main", "portfolio", 4, "/portfolio/securities", "Securities", null, false),
   tab("main", "portfolio", 5, "/portfolio/commitments", "Commitments", null, false),
-  // [FIND] allocation-lens accepts any entity in the org for entity/subtree
-  // selectors and the page has no gate of its own: listed for Super Admin only.
-  tab("main", "portfolio", 6, "/portfolio/allocation", "Allocation", GATE_SUPER_ADMIN, false),
-  // GET /me/ownership-graph is scoped to the caller's own visibility engine.
-  tab("main", "portfolio", 7, "/portfolio/ownership-tree", "Ownership tree", null, false),
-  // REP1 — Replication Studio: registry, holdings and fund terms.
-  tab("main", "portfolio", 8, "/portfolio/replication", "Replication", GATE_VIEW_REPLICATION, false),
-  // REP2 — execution instructions (every trade a person carries out).
-  tab("main", "portfolio", 9, "/portfolio/instructions", "Instructions", GATE_VIEW_EXECUTION, false),
-  // REP3 — model management: one registry, uploads, library, sleeves.
-  tab("main", "portfolio", 10, "/portfolio/models", "Models", GATE_VIEW_MODELS, false),
-  // BUGFIX1 (DEAD-LINKS): no page exists yet — flagged, see COMING_SOON below.
-  // REP5 — accounts joining models; rebalance proposals.
-  tab("main", "portfolio", 11, "/portfolio/accounts", "Accounts", GATE_VIEW_PROPOSALS, false),
-  // REP6 — the tax engine: harvest dashboard, substitutions, profiles, declared trades.
-  tab("main", "portfolio", 12, "/portfolio/tax", "Tax", GATE_VIEW_TAX, false),
-  // REP9 — block trading: build, approve, print the order execution sheet, fills, allocation, settlement.
-  tab("main", "portfolio", 14, "/portfolio/blocks", "Blocks", GATE_VIEW_BLOCKS, false),
-  // REP10 — tilts + completion per account, and the hypothetical backtest (view_replication)
-  tab("main", "portfolio", 15, "/portfolio/replication/tilts", "Tilts", GATE_VIEW_REPLICATION, false),
-  tab("main", "portfolio", 16, "/portfolio/replication/backtest", "Backtest", GATE_VIEW_REPLICATION, false),
-  // REP11 — structured notes: verdicts, replicas and the note-versus-replica comparison (view_replication)
-  tab("main", "portfolio", 17, "/portfolio/replication/notes", "Notes", GATE_VIEW_REPLICATION, false),
-  // REP12 — new issues checked against their replica (API require_internal_permission(view_replication)) and the
-  // Super Admin's underlying queue (API require_super_admin)
-  tab("main", "portfolio", 18, "/portfolio/replication/notes/new-issues", "New issues", GATE_REPLICATION_STAFF, false),
-  tab("main", "portfolio", 19, "/portfolio/replication/notes/underlyings", "Underlying queue", GATE_SUPER_ADMIN, false),
   // PORTENTRY2 (MUSE-OLIVO-G-01) — Households had no nav entry (the page lived at /portfolio/households only).
   // Gate = the API's: GET /admin/households is require_internal_permission(manage_members).
-  tab("main", "portfolio", 20, "/portfolio/households", "Households", GATE_HOUSEHOLDS, false),
-  // BULKAPPROVE1 — pending maker-checker items (authority & custody, held-away entries), decided many at once
-  tab("main", "portfolio", 21, "/portfolio/approvals", "Approvals", GATE_APPROVALS, false),
-  // REP14 — the Section 351 exit planning (API view_proposals; the replication area layout adds view_replication)
-  tab("main", "portfolio", 22, "/portfolio/replication/section351", "Section 351", GATE_VIEW_PROPOSALS, false),
+  tab("main", "portfolio", 6, "/portfolio/households", "Households", GATE_HOUSEHOLDS, false),
+  // [FIND] allocation-lens accepts any entity in the org for entity/subtree
+  // selectors and the page has no gate of its own: listed for Super Admin only.
+  tab("main", "portfolio", 7, "/portfolio/allocation", "Allocation", GATE_SUPER_ADMIN, false),
+  // GET /me/ownership-graph is scoped to the caller's own visibility engine.
+  tab("main", "portfolio", 8, "/portfolio/ownership-tree", "Ownership tree", null, false),
+  // BULKAPPROVE1 — pending maker-checker items (authority & custody, held-away entries), decided many at once.
+  // NAV1: the ONE shared approvals inbox — listed here only, linked (never duplicated) from elsewhere.
+  tab("main", "portfolio", 9, "/portfolio/approvals", "Approvals", GATE_APPROVALS, false),
+  { ...tab("main", "portfolio", 10, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
+
+  // ── Model Portfolios (group "model_portfolios") ──
+  // REP3 — model management: one registry, uploads, library, sleeves.
+  tab("main", "model_portfolios", 1, "/portfolio/models", "Models", GATE_VIEW_MODELS, false),
   // REP15 — platform-published models a firm subscribes to (API view_models; the replication layout adds view_replication)
-  tab("main", "portfolio", 23, "/portfolio/replication/catalog", "Model catalog", GATE_VIEW_MODELS, false),
-  { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
+  tab("main", "model_portfolios", 2, "/portfolio/replication/catalog", "Model catalog", GATE_VIEW_MODELS, false),
+  // REP1 — Replication Studio: registry, holdings and fund terms.
+  tab("main", "model_portfolios", 3, "/portfolio/replication", "Build from a fund", GATE_VIEW_REPLICATION, false),
+  // REP10 — tilts + completion per account, and the hypothetical backtest (view_replication)
+  tab("main", "model_portfolios", 4, "/portfolio/replication/tilts", "Tilts & completion", GATE_VIEW_REPLICATION, false),
+  tab("main", "model_portfolios", 5, "/portfolio/replication/backtest", "Backtest", GATE_VIEW_REPLICATION, false),
+  // REP5 — accounts joining models; rebalance proposals.
+  tab("main", "model_portfolios", 6, "/portfolio/accounts", "Accounts & rebalancing", GATE_VIEW_PROPOSALS, false),
+  // REP6 — the tax engine: harvest dashboard, substitutions, profiles, declared trades.
+  tab("main", "model_portfolios", 7, "/portfolio/tax", "Tax management", GATE_VIEW_TAX, false),
+  // REP14 — the Section 351 exit planning (API view_proposals; the replication area layout adds view_replication)
+  tab("main", "model_portfolios", 8, "/portfolio/replication/section351", "Transitions", GATE_VIEW_PROPOSALS, false),
+  // Trading — REP9 block trading (build, approve, print the order execution sheet, fills, allocation,
+  // settlement) and REP2 execution instructions (every trade a person carries out).
+  tab("main", "model_portfolios", 9, "/portfolio/blocks", "Blocks", GATE_VIEW_BLOCKS, false),
+  tab("main", "model_portfolios", 10, "/portfolio/instructions", "Instructions", GATE_VIEW_EXECUTION, false),
+
+  // NAV1 — Treasury had no menu entry. One entry: its Coverage, Ladder, Payments, Rules and Payees are sections
+  // of the one /treasury page, not routes.
+  main(50, "/treasury", "Treasury", "portfolio", GATE_TREASURY),
+
+  tab("main", "marketplace", 1, "/marketplace", "Deals", null, false),
+  // DEALROOM1 — an investor's own deal-room access (self-scoped API).
+  tab("main", "marketplace", 2, "/marketplace/my-access", "My deal access", null, false),
+  tab("main", "marketplace", 3, "/marketplace/access", "Deal access", GATE_MANAGE_DEALS_STRICT, false),
+  main(70, "/spvs", "SPV Manager", "spv-manager", GATE_SPV_MANAGER),
+
+  // ── Structured Notes (group "notes") ──
+  // REP11 — structured notes: verdicts, replicas and the note-versus-replica comparison (view_replication)
+  tab("main", "notes", 1, "/portfolio/replication/notes", "Notes", GATE_VIEW_REPLICATION, false),
+  // REP12 — new issues checked against their replica (API require_internal_permission(view_replication))
+  tab("main", "notes", 2, "/portfolio/replication/notes/new-issues", "New issues", GATE_REPLICATION_STAFF, false),
+
   // mkt04a — the market API admits any valid session, so no gate here either.
-  main(50, "/market", "Market Indicators", "portfolio-reporting"),
-  main(60, "/spvs", "SPV Manager", "spv-manager", GATE_SPV_MANAGER),
-  { ...main(70, "/insurance", "Insurance", "insurance"), comingSoon: true },
-  { ...main(80, "/community", "Community", "community"), comingSoon: true },
+  main(90, "/market", "Market Indicators", "portfolio-reporting"),
   // navregroup Task 3 — both searches now filter by the caller's own
   // visibility (staff visibility / delegate grants, then restricted access).
   // BUGFIX1 — the group's landing IS its first tab, outside /admin (the old
@@ -324,81 +376,99 @@ export const MENU_ITEMS = [
   // SPV attachments, each under its record's own visibility rule.
   tab("main", "documents", 1, "/documents", "Search", null, false),
   tab("main", "documents", 2, "/documents/semantic", "Semantic search", null, false),
-  main(100, "/notifications", "Notifications", "notifications"),
+  main(110, "/notifications", "Notifications", "notifications"),
+  { ...main(120, "/insurance", "Insurance", "insurance"), comingSoon: true },
+  { ...main(130, "/community", "Community", "community"), comingSoon: true },
 
+  // ── Organization admin ──
   {
     section: "org_admin", group: null, tab_order: null, order: 10, href: "/admin", label: "Admin",
     icon: "admin", gate: GATE_MANAGE_MEMBERS, adminIndex: false,
   },
-  tab("org_admin", "people", 1, "/admin/users", "Users", GATE_MANAGE_MEMBERS, true),
-  tab("org_admin", "people", 2, "/admin/staff-visibility", "Teams & Coverage", GATE_MANAGE_MEMBERS, true),
-  tab("org_admin", "people", 3, "/admin/profiles", "Profiles", GATE_MANAGE_ORG_SETTINGS, true),
-  tab("org_admin", "people", 4, "/admin/permission-sets", "Permission Sets", GATE_MANAGE_ORG_SETTINGS, true),
-  tab("org_admin", "people", 5, "/admin/sod", "Segregation of duties", GATE_SOD_READ, true),
-  tab("org_admin", "settings", 1, "/admin/settings", "Organization", GATE_MANAGE_ORG_SETTINGS, true),
-  tab("org_admin", "settings", 2, "/admin/modeling/ta", "TA Model Defaults", GATE_MANAGE_ORG_SETTINGS, true),
-  // MARKETDATA1 — price sources (rank overrides, file uploads) and data quality
-  tab("org_admin", "settings", 3, "/admin/security-data/sources", "Price sources", GATE_MANAGE_ORG_SETTINGS, true),
-  tab("org_admin", "settings", 4, "/admin/security-data/quality", "Data quality", GATE_MANAGE_ORG_SETTINGS, true),
-  // REP9 — the firm's allocation policy (versions, second-person approval) and its executing accounts
-  tab("org_admin", "settings", 5, "/admin/allocation-policy", "Allocation policy", GATE_VIEW_BLOCKS, true),
-  tab("org_admin", "settings", 6, "/admin/executing-accounts", "Executing accounts", GATE_VIEW_BLOCKS, true),
-  // REP10 — the firm's hypothetical-performance policy (who may see a backtest; its disclosure)
-  tab("org_admin", "settings", 7, "/admin/hypothetical-policy", "Hypothetical-performance policy", GATE_VIEW_REPLICATION, true),
+  // Firm settings (group "settings")
+  tab("org_admin", "settings", 1, "/admin/settings", "Organization & branding", GATE_MANAGE_ORG_SETTINGS, true),
   // DISCLOSURES1 — one disclosure library: keys, versions (files in R2), overrides, maker-checker publish
-  tab("org_admin", "settings", 8, "/admin/disclosures", "Disclosures", GATE_VIEW_DISCLOSURES, true),
-  // PERMS1 — /users/me now carries the workflow keys (the Principal unions role,
-  // profile and permission-set grants), so each tab gates on the SAME key its
-  // API checks: library author_workflows; Run Console view_workflow_runs;
-  // Triggers (read) view_workflow_runs OR configure_workflow_triggers.
-  tab("org_admin", "workflows", 1, "/admin/workflows", "Workflows", GATE_AUTHOR_WORKFLOWS, true),
-  tab("org_admin", "workflows", 2, "/admin/workflows/runs", "Runs", GATE_VIEW_WORKFLOW_RUNS, true),
-  tab("org_admin", "workflows", 3, "/admin/workflows/triggers", "Triggers", GATE_WORKFLOW_TRIGGERS_READ, true),
-  tab("org_admin", "workflows", 4, "/admin/workflows/templates", "Templates", GATE_WORKFLOW_TEMPLATES_READ, true),
-  tab("org_admin", "workflows", 5, "/admin/workflows/autonomy", "Autonomy", GATE_WORKFLOW_AUTONOMY_READ, true),
+  tab("org_admin", "settings", 2, "/admin/disclosures", "Disclosures", GATE_VIEW_DISCLOSURES, true),
+  // REP10 — the firm's hypothetical-performance policy (who may see a backtest; its disclosure)
+  tab("org_admin", "settings", 3, "/admin/hypothetical-policy", "Hypothetical-performance policy", GATE_VIEW_REPLICATION, true),
+  tab("org_admin", "settings", 4, "/admin/modeling/ta", "TA model defaults", GATE_MANAGE_ORG_SETTINGS, true),
+  // People & Access (group "people")
+  tab("org_admin", "people", 1, "/admin/users", "Users", GATE_MANAGE_MEMBERS, true),
+  tab("org_admin", "people", 2, "/admin/staff-visibility", "Teams & coverage", GATE_MANAGE_MEMBERS, true),
+  tab("org_admin", "people", 3, "/admin/profiles", "Profiles", GATE_MANAGE_ORG_SETTINGS, true),
+  tab("org_admin", "people", 4, "/admin/permission-sets", "Permission sets", GATE_MANAGE_ORG_SETTINGS, true),
+  tab("org_admin", "people", 5, "/admin/sod", "Segregation of duties", GATE_SOD_READ, true),
+  // Model Portfolio Admin (group "model_admin") — REP9: the firm's allocation policy (versions, second-person
+  // approval) and its executing accounts
+  tab("org_admin", "model_admin", 1, "/admin/allocation-policy", "Allocation policy", GATE_VIEW_BLOCKS, true),
+  tab("org_admin", "model_admin", 2, "/admin/executing-accounts", "Executing accounts", GATE_VIEW_BLOCKS, true),
+  // Data & pricing (group "data_pricing") — MARKETDATA1: price sources (rank overrides, file uploads) and data quality
+  tab("org_admin", "data_pricing", 1, "/admin/security-data/sources", "Price sources", GATE_MANAGE_ORG_SETTINGS, true),
+  tab("org_admin", "data_pricing", 2, "/admin/security-data/quality", "Data quality", GATE_MANAGE_ORG_SETTINGS, true),
+  // Custody & Billing (group "billing")
+  // REP2 — the platform capabilities matrix: staff and org admins read it, Super Admin edits it.
+  tab("org_admin", "billing", 1, "/admin/custodian-capabilities", "Custodian capabilities",
+    GATE_STAFF_OR_ORG_SETTINGS_STRICT, true),
+  // CPSIM01 — the Counterparty Simulator's registry: simulated custodians and banks (Super Admin only)
+  tab("org_admin", "billing", 2, "/admin/counterparties", "Counterparties", GATE_SUPER_ADMIN, true),
   // BUGFIX2 — firm-level screens: never a member (view_portfolio is a MEMBER grant).
   // STAFFROLES1 — an internal role holding view_portfolio, staff as before.
-  tab("org_admin", "billing", 1, "/admin/billing-groups", "Billing Groups", GATE_FIRM_PORTFOLIO, true),
-  tab("org_admin", "billing", 2, "/admin/custody-import", "Custody Import", GATE_FIRM_PORTFOLIO, true),
+  tab("org_admin", "billing", 3, "/admin/custody-import", "Custody import", GATE_FIRM_PORTFOLIO, true),
   // PERMS1 (WF-04) — the fee screens had no menu entry at all. Their reads are
   // an internal role + view_portfolio (API _gate: require_internal + the read
   // permission); their writes need manage_billing and stay gated in the page.
   tab("org_admin", "billing", 4, "/fee-schedules/chat", "Fee schedules", GATE_FIRM_PORTFOLIO, true),
-  tab("org_admin", "billing", 5, "/profitability", "Profitability", GATE_FIRM_PORTFOLIO, true),
-  // REP2 — the platform capabilities matrix: staff and org admins read it, Super Admin edits it.
-  tab("org_admin", "billing", 3, "/admin/custodian-capabilities", "Custodian capabilities",
-    GATE_STAFF_OR_ORG_SETTINGS_STRICT, true),
-  tab("org_admin", "deal_intake", 1, "/admin/vdr-proposals", "VDR Proposals", GATE_MANAGE_DEALS, true),
+  tab("org_admin", "billing", 5, "/admin/billing-groups", "Billing groups", GATE_FIRM_PORTFOLIO, true),
+  tab("org_admin", "billing", 6, "/profitability", "Profitability", GATE_FIRM_PORTFOLIO, true),
+  // Automation (group "workflows") — PERMS1: /users/me carries the workflow keys (the Principal unions role,
+  // profile and permission-set grants), so each tab gates on the SAME key its API checks: library
+  // author_workflows; Run Console view_workflow_runs; Triggers (read) view_workflow_runs OR
+  // configure_workflow_triggers.
+  tab("org_admin", "workflows", 1, "/admin/workflows", "Workflows", GATE_AUTHOR_WORKFLOWS, true),
+  tab("org_admin", "workflows", 2, "/admin/workflows/runs", "Runs", GATE_VIEW_WORKFLOW_RUNS, true),
+  tab("org_admin", "workflows", 3, "/admin/workflows/triggers", "Triggers & schedules", GATE_WORKFLOW_TRIGGERS_READ, true),
+  tab("org_admin", "workflows", 4, "/admin/workflows/templates", "Templates", GATE_WORKFLOW_TEMPLATES_READ, true),
+  tab("org_admin", "workflows", 5, "/admin/workflows/autonomy", "Autonomy", GATE_WORKFLOW_AUTONOMY_READ, true),
+  // Deal Intake (group "deal_intake")
+  tab("org_admin", "deal_intake", 1, "/admin/vdr-proposals", "VDR proposals", GATE_MANAGE_DEALS, true),
 
-  tab("platform", "tenants", 1, "/admin/platform", "Tenants", GATE_SUPER_ADMIN, true),
-  tab("platform", "controls", 1, "/admin/restricted-access", "Restricted Access", GATE_SUPER_ADMIN, true),
-  tab("platform", "controls", 2, "/admin/trading-authority", "Trading Authority", GATE_SUPER_ADMIN, true),
-  // MARKETDATA1 — providers, licence facts, budgets and the platform rank
-  tab("platform", "controls", 3, "/admin/security-data", "Security data", GATE_SUPER_ADMIN, true),
-  // SECMASTER1 — the security master: status, platform jobs (Run now), review queue
-  tab("platform", "controls", 4, "/admin/security-data/master", "Security master", GATE_SUPER_ADMIN, true),
+  // ── Platform · Super Admin ──
+  // Tenants & controls (group "controls")
+  tab("platform", "controls", 1, "/admin/platform", "Tenants", GATE_SUPER_ADMIN, true),
+  tab("platform", "controls", 2, "/admin/restricted-access", "Restricted access", GATE_SUPER_ADMIN, true),
+  tab("platform", "controls", 3, "/admin/trading-authority", "Trading authority", GATE_SUPER_ADMIN, true),
   // PORTENTRY1 — the one-time position import for integrated accounts awaiting their custodian feed
-  tab("platform", "controls", 5, "/admin/integrated-import", "Integrated import", GATE_SUPER_ADMIN, true),
-  // REP15 — the platform as a sub-adviser: provider record, publishing gate (OFF), subscribers (Super Admin)
-  tab("platform", "controls", 6, "/admin/model-provider", "Published models", GATE_SUPER_ADMIN, true),
-  // WFTEMPLATES1 — platform workflow templates: draft, publish by a second Super Admin, retire, usage counts
-  tab("platform", "controls", 7, "/admin/platform/workflow-templates", "Workflow templates", GATE_SUPER_ADMIN, true),
-  // CPSIM01 — the Counterparty Simulator's registry: simulated custodians and banks (Super Admin only)
-  tab("platform", "controls", 8, "/admin/counterparties", "Counterparties", GATE_SUPER_ADMIN, true),
-  tab("platform", "ai_models", 1, "/admin/model-catalog", "Model Catalog", GATE_SUPER_ADMIN, true),
-  // modelresearch.structural — STRICT: fails closed on a lost envelope. Its
-  // gate is manage_org_settings, so an org admin sees the AI Models group too.
-  tab("platform", "ai_models", 2, "/admin/model-research", "Model Research", GATE_MANAGE_ORG_SETTINGS_STRICT, true),
+  tab("platform", "controls", 4, "/admin/integrated-import", "Integrated import", GATE_SUPER_ADMIN, true),
+  // Security data (group "security_data")
+  // MARKETDATA1 — providers, licence facts, budgets and the platform rank
+  tab("platform", "security_data", 1, "/admin/security-data", "Providers & licences", GATE_SUPER_ADMIN, true),
+  // SECMASTER1 — the security master: status, platform jobs (Run now), review queue; TRACK1's tracked view
+  // (?view=tracked) is a section of the same page
+  tab("platform", "security_data", 2, "/admin/security-data/master", "Security master", GATE_SUPER_ADMIN, true),
+  // AI (group "ai_models")
+  tab("platform", "ai_models", 1, "/admin/model-catalog", "Model catalog", GATE_SUPER_ADMIN, true),
   // AIBUDGET1 — models + daily budgets per ensemble job, and the daily document-reading runs.
-  tab("platform", "ai_models", 3, "/admin/ai-jobs", "Model Jobs", GATE_SUPER_ADMIN, true),
+  tab("platform", "ai_models", 2, "/admin/ai-jobs", "Jobs & budgets", GATE_SUPER_ADMIN, true),
+  // modelresearch.structural — STRICT: fails closed on a lost envelope. Its
+  // gate is manage_org_settings, so an org admin sees the AI group too.
+  tab("platform", "ai_models", 3, "/admin/model-research", "Model research", GATE_MANAGE_ORG_SETTINGS_STRICT, true),
   // S28 — the AI drift monitor. Its read gate is manage_org_settings (Super Admin first; an org admin sees their own
   // org), STRICT so a lost envelope hides it; the threshold editor is Super Admin only (server-side + can_write).
   tab("platform", "ai_models", 4, "/admin/ai-drift", "Drift monitor", GATE_MANAGE_ORG_SETTINGS_STRICT, true),
-  tab("platform", "structured_notes", 1, "/admin/edgar-pipeline", "Download", GATE_SUPER_ADMIN, true),
-  tab("platform", "structured_notes", 2, "/admin/pricing/note-terms-queue", "Review queue", GATE_SUPER_ADMIN, true),
+  // Structured notes pipeline (group "structured_notes")
+  tab("platform", "structured_notes", 1, "/admin/edgar-pipeline", "EDGAR download", GATE_SUPER_ADMIN, true),
+  tab("platform", "structured_notes", 2, "/admin/pricing/note-terms-queue", "Terms review", GATE_SUPER_ADMIN, true),
   tab("platform", "structured_notes", 3, "/admin/note-extraction/gold", "Gold answers", GATE_SUPER_ADMIN, true),
-  tab("platform", "structured_notes", 4, "/admin/note-extraction/results", "Accuracy results", GATE_SUPER_ADMIN, true),
+  tab("platform", "structured_notes", 4, "/admin/note-extraction/results", "Accuracy", GATE_SUPER_ADMIN, true),
   tab("platform", "structured_notes", 5, "/admin/pricing/surface", "Volatility surface", GATE_SUPER_ADMIN, true),
+  // REP12 — the Super Admin's underlying queue (API require_super_admin). NAV1: moved from Portfolio to here.
+  tab("platform", "structured_notes", 6, "/portfolio/replication/notes/underlyings", "Underlying queue",
+    GATE_SUPER_ADMIN, true),
+  // Publishing (group "publishing")
+  // REP15 — the platform as a sub-adviser: provider record, publishing gate (OFF), subscribers (Super Admin)
+  tab("platform", "publishing", 1, "/admin/model-provider", "Published models", GATE_SUPER_ADMIN, true),
+  // WFTEMPLATES1 — platform workflow templates: draft, publish by a second Super Admin, retire, usage counts
+  tab("platform", "publishing", 2, "/admin/platform/workflow-templates", "Workflow templates", GATE_SUPER_ADMIN, true),
 ];
 
 /**
@@ -527,6 +597,16 @@ export function visibleAdminSections(me) {
 
 const groupById = (id) => GROUPS.find((g) => g.id === id) || null;
 
+/**
+ * NAV1 — the label `me` reads for a group or an item: its `memberLabel` for a
+ * MEMBER (isMemberOnly — a lost envelope counts as one, fail closed), else its
+ * `label`. Labels only: never a gate (what is visible is decided by canAccess).
+ */
+export function displayLabel(me, entry) {
+  if (!entry) return null;
+  return (entry.memberLabel && isMemberOnly(me)) ? entry.memberLabel : entry.label;
+}
+
 /** The tabs of `groupId` that `me` can see, in tab order. */
 export function visibleTabs(me, groupId) {
   return LISTED.filter((i) => i.group === groupId && canAccess(me, i.gate)).sort(
@@ -554,11 +634,11 @@ export function visibleGroups(me, section) {
 export function visibleSectionEntries(me, section) {
   const items = LISTED.filter(
     (i) => i.section === section && i.group === null && canAccess(me, i.gate),
-  ).map((i) => ({ kind: "item", key: i.href, order: i.order, label: i.label, icon: i.icon,
+  ).map((i) => ({ kind: "item", key: i.href, order: i.order, label: displayLabel(me, i), icon: i.icon,
     href: i.href, tabHrefs: [i.href] }));
   const groups = visibleGroups(me, section).map((g) => {
     const tabs = visibleTabs(me, g.id);
-    return { kind: "group", key: `group:${g.id}`, order: g.order, label: g.label, icon: g.icon,
+    return { kind: "group", key: `group:${g.id}`, order: g.order, label: displayLabel(me, g), icon: g.icon,
       href: tabs[0].href, tabHrefs: tabs.map((t) => t.href), groupId: g.id };
   });
   return [...items, ...groups].sort((a, b) => a.order - b.order);

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { usePermissions } from "@/lib/usePermissions";
-import { tabForPath, visibleTabs } from "@/lib/menuVisibility";
+import { displayLabel, tabForPath, visibleTabs } from "@/lib/menuVisibility";
 
 /**
  * The tab bar of a master page (navregroup). Rendered by AppShell above every
@@ -20,7 +20,7 @@ export function tabBarModel(me, pathname) {
   if (tabs.length < 2) return null;
   return {
     groupId: hit.group.id,
-    groupLabel: hit.group.label,
+    groupLabel: displayLabel(me, hit.group),
     tabs: tabs.map((t) => ({ href: t.href, label: t.label, active: t.href === hit.item.href })),
   };
 }

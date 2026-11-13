@@ -50,6 +50,43 @@ const EXPECTED = {
   no_roles: { main: MAIN_NON_STAFF, org_admin: [], platform: [] },
 };
 
+// NAV1 (Joe, 2026-11-12) — the new menu regrouped the entries above: some navregroup entry hrefs are now a TAB of a
+// regrouped master page (e.g. Billing Groups is a tab of Custody & Billing, Restricted Access of Tenants &
+// controls). The list above is KEPT and still asserted: every href in it must still be OFFERED to that persona in
+// that section — as a sidebar entry or as a visible tab of one. NAV1_EXPECTED below is the new hand-written entry
+// list (written out by hand, independently of the module), asserted the same way VHK2 asserts the original.
+const NAV1_MAIN = ["/dashboard", "/crm", "/portfolio", "/treasury", "/marketplace", "/spvs", "/market", "/documents",
+  "/notifications"];
+const NAV1_MAIN_NON_STAFF = NAV1_MAIN.filter((h) => h !== "/crm" && h !== "/spvs");
+const NAV1_MAIN_NO_PORTFOLIO_READ = NAV1_MAIN_NON_STAFF.filter((h) => h !== "/treasury");
+const NAV1_EXPECTED = {
+  plain_member: { main: NAV1_MAIN_NON_STAFF, org_admin: [], platform: [] },
+  staff_member: { main: NAV1_MAIN,
+    org_admin: ["/admin/custodian-capabilities", "/admin/workflows/runs", "/admin/vdr-proposals"], platform: [] },
+  org_admin_manage_members: { main: NAV1_MAIN_NO_PORTFOLIO_READ, org_admin: ["/admin", "/admin/users"], platform: [] },
+  org_admin_manage_org_settings: { main: NAV1_MAIN_NO_PORTFOLIO_READ,
+    org_admin: ["/admin/settings", "/admin/profiles", "/admin/security-data/sources", "/admin/custodian-capabilities",
+      "/admin/workflows/autonomy"],
+    platform: ["/admin/model-research"] },
+  super_admin: { main: [...NAV1_MAIN, "/portfolio/models", "/portfolio/replication/notes"],
+    org_admin: ["/admin", "/admin/settings", "/admin/users", "/admin/allocation-policy", "/admin/security-data/sources",
+      "/admin/custodian-capabilities", "/admin/workflows", "/admin/vdr-proposals"],
+    platform: ["/admin/platform", "/admin/security-data", "/admin/model-catalog", "/admin/edgar-pipeline",
+      "/admin/model-provider"] },
+  no_roles: { main: NAV1_MAIN_NO_PORTFOLIO_READ, org_admin: [], platform: [] },
+};
+const offeredOf = (me) => {
+  const out = { main: [], org_admin: [], platform: [] };
+  for (const s of menu.visibleSections(me)) {
+    for (const e of s.entries) {
+      out[s.id].push(e.href);
+      if (e.kind === "group") out[s.id].push(...menu.visibleTabs(me, e.groupId).map((t) => t.href));
+    }
+  }
+  return out;
+};
+const NAV1_HEADERS = [["org_admin", "Organization admin"], ["platform", "Platform · Super Admin"]];
+
 const hrefsIn = (html) => [...html.matchAll(/<a [^>]*?href="([^"]+)"/g)].map((m) => m[1]);
 function sectionsOf(html) {
   const out = { main: [], org_admin: [], platform: [] };
@@ -75,11 +112,14 @@ for (const [name, me] of Object.entries(PERSONAS)) {
     const html = renderToStaticMarkup(h(SidebarNav, { me, pathname: "/dashboard", expanded: true }));
     const rendered = sectionsOf(html);
     assert.deepEqual(rendered, modelOf(me), "the sidebar renders exactly the definition's visible sections");
+    const offered = offeredOf(me);
     for (const section of ["main", "org_admin", "platform"]) {
-      const lost = EXPECTED[name][section].filter((href) => !rendered[section].includes(href));
-      assert.deepEqual(lost, [], `${name} still sees every ${section} entry navregroup gave it`);
+      const lost = EXPECTED[name][section].filter((href) => !offered[section].includes(href));
+      assert.deepEqual(lost, [], `${name} is still offered every ${section} href navregroup gave it (entry or tab)`);
+      const lostNav1 = NAV1_EXPECTED[name][section].filter((href) => !rendered[section].includes(href));
+      assert.deepEqual(lostNav1, [], `${name} sees every ${section} entry NAV1 gives it`);
     }
-    for (const [section, header] of [["org_admin", "Admin — Organization"], ["platform", "Admin — Platform"]]) {
+    for (const [section, header] of NAV1_HEADERS) {
       assert.equal(html.includes(header), rendered[section].length > 0,
         `${header} shown iff a group in that section is visible`);
     }
@@ -88,8 +128,9 @@ for (const [name, me] of Object.entries(PERSONAS)) {
 
 test("collapsed sidebar shows icons with titles, no section headers", () => {
   const html = renderToStaticMarkup(h(SidebarNav, { me: PERSONAS.super_admin, pathname: "/x", expanded: false }));
-  assert.ok(!html.includes("Admin — Organization") && !html.includes("Admin — Platform"));
-  assert.ok(html.includes('title="Structured Notes"') && html.includes('title="Portfolio"'));
+  assert.ok(!html.includes("Organization admin") && !html.includes("Platform · Super Admin"));
+  // NAV1: Portfolio is now Cross Book; Structured Notes is now a MAIN group (Notes, New issues).
+  assert.ok(html.includes('title="Structured Notes"') && html.includes('title="Cross Book"'));
 });
 
 test("a group is active on any of its tabs and on its landing route; nothing else is", () => {
@@ -122,9 +163,11 @@ test("tab bar: every visible tab of the group, the current one active; none off-
     ["Overview", "Positions", "Transactions", "Securities", "Commitments", "Ownership tree"]);
   assert.deepEqual(m.tabs.filter((t) => t.active).map((t) => t.href), ["/portfolio/positions"]);
   const sa = tabBarModel(PERSONAS.super_admin, "/admin/edgar-pipeline");
+  // NAV1: the pipeline's labels (Joe's mockup) and the Underlying queue moved here from Portfolio.
   assert.deepEqual(sa.tabs.map((t) => t.label),
-    ["Download", "Review queue", "Gold answers", "Accuracy results", "Volatility surface"]);
-  assert.equal(tabBarModel(PERSONAS.super_admin, "/admin/platform"), null, "single-tab group: no bar");
+    ["EDGAR download", "Terms review", "Gold answers", "Accuracy", "Volatility surface", "Underlying queue"]);
+  // NAV1: Tenants is now a tab of Tenants & controls (4 tabs); Deal Intake is the single-tab group.
+  assert.equal(tabBarModel(PERSONAS.super_admin, "/admin/vdr-proposals"), null, "single-tab group: no bar");
   assert.equal(tabBarModel(PERSONAS.super_admin, "/dashboard"), null);
   // The rule, not a frozen list (S28 added the Drift monitor tab, also manage_org_settings): an org admin's AI Models
   // bar holds exactly the group's tabs whose gate is NOT Super Admin only — never Model Catalog / Model Jobs.

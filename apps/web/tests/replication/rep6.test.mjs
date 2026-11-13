@@ -184,9 +184,9 @@ test("lib: estimates never print a bare number; percents convert exactly; rates 
   assert.ok(!("state_lt_rate" in body), "a blank LT rate is not sent (state treats LT as ordinary)");
 });
 
-test("menu: Tax gated on view_tax (strict) in the Portfolio group", () => {
+test("menu: Tax gated on view_tax (strict) in the Model Portfolios group (NAV1)", () => {
   const item = menu.MENU_ITEMS.find((i) => i.href === "/portfolio/tax");
   assert.ok(item, "Tax tab exists");
-  assert.equal(item.group, "portfolio");
+  assert.equal(item.group, "model_portfolios"); // NAV1: moved from Portfolio to Model Portfolios
   assert.deepEqual(item.gate, { perm: "view_tax", strict: true });
 });

@@ -204,9 +204,9 @@ test("exact decimal display: fractions shown as percentages without floats", () 
   assert.equal(lib.sumPct(["60", "39.99"]), "99.99");
 });
 
-test("menu: Models gated on view_models (strict) in the Portfolio group", () => {
+test("menu: Models gated on view_models (strict) in the Model Portfolios group (NAV1)", () => {
   const item = menu.MENU_ITEMS.find((i) => i.href === "/portfolio/models");
   assert.ok(item, "Models tab exists");
-  assert.equal(item.group, "portfolio");
+  assert.equal(item.group, "model_portfolios"); // NAV1: moved from Portfolio to Model Portfolios
   assert.deepEqual(item.gate, { perm: "view_models", strict: true });
 });

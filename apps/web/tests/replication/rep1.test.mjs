@@ -159,9 +159,10 @@ test("copy: display name and the disclosure line", () => {
   assert.match(html, /Replicates the published holdings of QQQ; not affiliated with or endorsed by the fund's sponsor or index provider\./);
 });
 
-test("menu: Portfolio → Replication is gated on view_replication (strict, Super Admin first)", () => {
+test("menu: Model Portfolios → Build from a fund (was Portfolio → Replication) is gated on view_replication (strict, Super Admin first)", () => {
   const item = menu.MENU_ITEMS.find((i) => i.href === "/portfolio/replication");
-  assert.ok(item && item.group === "portfolio" && item.label === "Replication");
+  // NAV1 (Joe, 2026-11-12): Replication is now Model Portfolios → "Build from a fund"; gate unchanged.
+  assert.ok(item && item.group === "model_portfolios" && item.label === "Build from a fund");
   assert.deepEqual(item.gate, { perm: "view_replication", strict: true });
   const member = { account_role: "member", permissions: ["view_portfolio"] };
   const admin = { account_role: "member", permissions: ["view_replication"] };
@@ -170,5 +171,5 @@ test("menu: Portfolio → Replication is gated on view_replication (strict, Supe
   assert.equal(menu.canAccess(admin, item.gate), true);
   assert.equal(menu.canAccess(sa, item.gate), true);
   assert.equal(menu.canAccess({ account_role: "member" }, item.gate), false, "no permissions array → hidden");
-  assert.equal(menu.labelFor("/portfolio/replication"), "Replication");
+  assert.equal(menu.labelFor("/portfolio/replication"), "Build from a fund");
 });
