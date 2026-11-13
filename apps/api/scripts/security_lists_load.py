@@ -83,7 +83,7 @@ async def resolve_misses(args, *, pool=None, transport=None, printer=print, thro
             await own.aclose()
     printer(f"MISSES: lists {', '.join(out['lists']) or '(none stored)'} — {out['misses_with_identifier']} with an "
             f"ISIN / CUSIP ({out['misses_without_identifier']} without), {out['openfigi_requests']} OpenFIGI request(s)")
-    printer(f"  list_match {out['list_match']} · add_to_master {out['add_to_master']} · OpenFIGI no answer "
+    printer(f"  already in the master (next load resolves them) {out['already_in_master']} · list_match {out['list_match']} · add_to_master {out['add_to_master']} · OpenFIGI no answer "
             f"{out['no_answer']} · not reached {out['not_reached']}")
     for r in out["rows"][:max(0, args.show_misses)]:
         printer(f"  {r['id_type']} {r['value']} {(r.get('name') or '')[:40]} → {r['outcome']}"

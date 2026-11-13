@@ -299,7 +299,13 @@ async def resolve_misses(conn, list_keys: list[str] | None, *, transport, key: s
                 continue
             work.setdefault(ident, {"miss": m, "lists": []})["lists"].append(lst["list_key"])
     without = sum(1 for lst in lists for m in (lst.get("misses") or []) if miss_identifier(m) is None)
-    idents = list(work)
+    # a miss the master now resolves (a confirmed alternate / an added security) waits for the next load — not re-asked
+    live: set = set()
+    for t in ("isin", "cusip"):
+        vals = [v for (tt, v) in work if tt == t]
+        if vals:
+            live |= {(t, v) for v in (await SG.get_by_identifiers_bulk(conn, t, vals))}
+    idents = [i for i in work if (i[0], SG.normalize_identifier_value(i[0], i[1])) not in live]
     jobs = [OF.isin_job(v) if t == "isin" else OF.cusip_job(v) for t, v in idents]
     answers, requests = await OF.map_jobs(transport, jobs, key=key, budget=budget, throttle=throttle) if jobs else ([], 0)
     by_job = {(a.job["idType"], a.job["idValue"]): a for a in answers}
@@ -309,9 +315,9 @@ async def resolve_misses(conn, list_keys: list[str] | None, *, transport, key: s
     tickers = [SYM.normalize_symbol(a.hit.get("ticker")) for a in hits.values() if a and a.hit and a.hit.get("ticker")]
     by_f = await SG.get_by_identifiers_bulk(conn, "figi", figis) if figis else {}
     by_t = await SG.get_by_identifiers_bulk(conn, "ticker", [t for t in tickers if t]) if tickers else {}
-    out = {"lists": [x["list_key"] for x in lists], "misses_with_identifier": len(idents),
+    out = {"lists": [x["list_key"] for x in lists], "misses_with_identifier": len(work),
            "misses_without_identifier": without, "openfigi_jobs": len(jobs), "openfigi_requests": requests,
-           "list_match": 0, "add_to_master": 0, "no_answer": 0, "not_reached": 0, "items_created": 0,
+           "already_in_master": len(work) - len(idents), "list_match": 0, "add_to_master": 0, "no_answer": 0, "not_reached": 0, "items_created": 0,
            "already_open_or_known": 0, "dry_run": dry_run, "rows": []}
     for (t, v), a in hits.items():
         w = work[(t, v)]
