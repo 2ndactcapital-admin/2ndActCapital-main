@@ -234,3 +234,23 @@ Offline smoke (LocalStore): append 10 rows over 2 years, a restated row in a sec
 value; compaction (2 + 1 parts → 2 compact files) yields an IDENTICAL frame; `field="bar"` returns the stored OHLCV.
 
 **Backtest**: left on Postgres (section 2f) — measured as an indexed range read, and it needs org prices.
+
+## 6. Operator script (Task 5) — `apps/api/scripts/prices3_migrate.py`
+
+Phases, checkpoint and verification record live in `portfolio.prices3_migration` (one row). Steps (docstring has the
+detail): **copy** (change-capture trigger on the old table FIRST; whole securities in security order, batches of
+~`--batch` rows (50k), `--sleep` s apart (2.0), each batch one transaction that also advances the checkpoint →
+`--resume`) → **catch-up** (re-copy securities written during the copy) → **verify** (per security: count + md5 over
+every old column except id/bar, old table vs view) → **swap** (one transaction: SHARE ROW EXCLUSIVE lock on the old
+table, re-verify every dirty security under the lock, total-count backstop, drop the capture trigger, rename table →
+`…_pre_prices3`, view → `securities_global_prices`, `store_mode = 'lean'`) → **export** (live platform rows + bars →
+one compact Parquet per year in R2, read back by count + exact sum of price; sets the archive watermark = swapped_at).
+`--drop-old` refuses unless phase = swapped AND verification green AND archive export green AND `--i-confirm`.
+`--rollback` (before the drop) writes post-swap deletions / closures / new rows back into the old table, renames both
+back, `store_mode = 'legacy'`. `--reset-copy` empties the derived tables (refused once swapped). Two concurrent
+runners are safe (each batch re-reads the checkpoint under FOR UPDATE and skips a range already taken).
+
+**Real dry run, 2026-11-13** (`python3 apps/api/scripts/prices3_migrate.py --dry-run`, read-only):
+2,923,054 rows (all live, 0 restated), 2,437 securities, 0 org-uploaded, 2,923,054 with a bar; old table 2,000 MB of a
+2,935 MB database; estimated lean store **295 MB** (~106 B/row), estimated WAL ~739 MB; **58 batches** of ~50k, ~11.6
+min for copy + verify at 2 s; flags in use `['outlier']`, 0 rows with > 1 flag; disk reminder: free ≥ 5,035 MB.

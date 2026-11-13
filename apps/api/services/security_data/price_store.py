@@ -227,6 +227,8 @@ CREATE TABLE IF NOT EXISTS {s}.prices3_dirty (
     global_security_id uuid PRIMARY KEY,
     touched_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE {s}.prices3_dirty ADD COLUMN IF NOT EXISTS resynced_at timestamptz;
+COMMENT ON TABLE {s}.prices3_dirty IS 'PRICES3: securities the OLD table saw a write for while the operator copy ran (trigger installed by scripts/prices3_migrate.py). Kept, never cleared, until the swap: the swap re-verifies every one of them under the write lock.';
 
 -- ── functions ──────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION {s}.prices3_row_id(p_series integer, p_date date, p_recorded timestamptz)
