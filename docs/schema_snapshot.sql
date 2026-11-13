@@ -8676,6 +8676,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   is_alternate                             boolean NOT NULL DEFAULT false
 --   PRIMARY KEY securities_global_identifiers_pkey: (id)
 
 -- ===== portfolio.securities_global_note_terms =====
@@ -8713,7 +8714,7 @@
 --   routed_at                                timestamp with time zone
 --   PRIMARY KEY securities_global_note_terms_pkey: (id)
 
--- ===== portfolio.securities_global_prices =====
+-- ===== portfolio.securities_global_prices_pre_prices3 =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   global_security_id                       uuid NOT NULL
 --   price_date                               date NOT NULL
@@ -8869,6 +8870,21 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY security_master_review_pkey: (id)
+
+-- ===== portfolio.security_master_review_sightings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   kind                                     text NOT NULL
+--   subject_key                              text NOT NULL
+--   field                                    text NOT NULL DEFAULT ''::text
+--   incoming_value                           text NOT NULL DEFAULT ''::text
+--   provider_key                             text NOT NULL
+--   global_security_id                       uuid
+--   review_id                                uuid
+--   run_id                                   uuid
+--   seen_at                                  timestamp with time zone NOT NULL DEFAULT now()
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   PRIMARY KEY security_master_review_sightings_pkey: (id)
 
 -- ===== portfolio.security_master_source_files =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -9355,7 +9371,7 @@
 --   api_key                                  text
 --   user                                     text
 
--- ===== portfolio.securities_global_prices_v3 =====  [VIEW]
+-- ===== portfolio.securities_global_prices =====  [VIEW]
 --   security_invoker: true — RLS applies to the querying role
 --   id                                       uuid
 --   global_security_id                       uuid
