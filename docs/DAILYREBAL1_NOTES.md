@@ -33,3 +33,4 @@ Branch `dailyrebal1-work`. Joe's "option 1" (2026-11-12): proposals generated au
 * Summary to-do: one per approve_proposals holder per org per day, source `rebalance_schedule`, related_type `rebalance_schedule_day`.
 
 ## 3. Progress log
+* 2026-11-13 Task 5 (wip): verify written. **CODE fix found by the self-checks:** `us_business_days.prior_business_day(d)` returns `d` ITSELF on a business day, so the first build's `prices_day = prior_business_day(today)` asked for TODAY's prices row (never written until 21:15) — the morning run would always have fallen to partial. Now `rebalance_schedule.last_close_day(today) = prior_business_day(today − 1)`; same trap in the verify's D2 (`next_business_day(d)` is `d` itself) fixed. Self-checks 22/0.

@@ -118,6 +118,12 @@ def frequency_due(freq: str | None, last: date | None, today: date) -> bool:
     return nd is not None and nd <= today
 
 
+def last_close_day(today: date) -> date:
+    """The last US business day BEFORE ``today`` — the close whose prices a morning run needs.
+    (us_business_days.prior_business_day(d) is ``d`` itself on a business day, so it is asked about the day before.)"""
+    return BD.prior_business_day(today - timedelta(days=1))
+
+
 def readiness(*, prices_status: str | None, nightly_ok: bool, now_local: datetime, fallback: time) -> dict:
     """{ready, partial, waiting_reason}. Prices complete → ready; past the fallback → ready on partial prices;
     the nightly refresh is required either way."""
@@ -348,7 +354,7 @@ async def org_daily(pool, *, org_id, now_utc: datetime | None = None, include_te
             return {"action": "already", "day_id": str(day["id"]), "status": day["status"]}
         if day["status"] == "running" and day["lease_until"] and day["lease_until"] > now_utc:
             return {"action": "busy", "day_id": str(day["id"])}
-        prices_day = BD.prior_business_day(today)
+        prices_day = last_close_day(today)
         prow = await prices_day_row(conn, prices_day, prices_scope)
         nightly = await nightly_ran(conn, org_id, now_utc)
         rd = readiness(prices_status=prow["status"] if prow else None, nightly_ok=nightly, now_local=now_l,
@@ -492,4 +498,4 @@ async def panel(conn, org_id, *, now_utc: datetime | None = None) -> dict:
 
 
 __all__ = ["daily_tick", "org_daily", "evaluate_account", "panel", "readiness", "frequency_due", "next_due",
-           "choose_trigger", "summary_title", "parse_hhmm", "ACTION_KEY"]
+           "choose_trigger", "summary_title", "parse_hhmm", "last_close_day", "ACTION_KEY"]
