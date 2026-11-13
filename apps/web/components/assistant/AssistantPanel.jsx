@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import ActivityView from "./ActivityView";
 import BoundedChoice from "./BoundedChoice";
 import RenderDirective from "./RenderDirective";
 import { usePermissions } from "@/lib/usePermissions";
+import { useAssistantPanel } from "@/lib/useAssistantPanel";
 
 // permission: null means available to all authenticated users.
 const VIEW_CONFIG = [
@@ -16,39 +17,10 @@ const VIEW_CONFIG = [
   { key: "Messages", label: "Messages", permission: null },
 ];
 
-// Map user role → default posture when no user override is set.
-const ROLE_POSTURE = {
-  member: "expanded",
-  next_gen: "expanded",
-  admin: "collapsible",
-  super_admin: "collapsible",
-  advisor: "collapsible",
-  investment_staff: "collapsible",
-  support_staff: "collapsed",
-  compliance: "collapsed",
-  fund_finance: "collapsed",
-  ir_member_relations: "collapsed",
-  investment_committee: "collapsible",
-  member_manager: "collapsible",
-};
-
-function usePosture(user) {
-  const [posture, setPosture] = useState("collapsed");
-
-  useEffect(() => {
-    if (!user) return;
-    // User override wins
-    if (user.assistant_panel_posture) {
-      setPosture(user.assistant_panel_posture);
-      return;
-    }
-    // Role-based default
-    const role = user.role || "member";
-    setPosture(ROLE_POSTURE[role] || "collapsible");
-  }, [user]);
-
-  return [posture, setPosture];
-}
+// NAV1 — the role → posture table and usePosture() are gone: the panel is CLOSED by default for everyone, the ONE
+// top-bar button (components/assistant/AssistantToggle.jsx) opens / closes it, and the choice is remembered in
+// users.assistant_panel_posture (lib/assistantPanelPref.mjs, lib/useAssistantPanel.js). The old code read the
+// posture and the role off the Auth0 session user, which carries neither — every user fell to "member" → open.
 
 function ChatView({ contextRef }) {
   const [messages, setMessages] = useState([]);
@@ -276,12 +248,13 @@ function TodosView() {
   );
 }
 
-export default function AssistantPanel({ user, contextRef }) {
-  const [posture, setPosture] = usePosture(user);
-  const [expanded, setExpanded] = useState(false);
+/**
+ * The panel itself — rendered only while open (closed = nothing at all; the top-bar button is the one control).
+ * Exported so node tests render it from a fed `open` without a browser.
+ */
+export function AssistantPanelView({ open, contextRef }) {
   const [activeView, setActiveView] = useState("Chat");
-  const pathname = usePathname();
-  const { can, loading: permsLoading } = usePermissions();
+  const { can } = usePermissions();
 
   // Filter views by the current user's permissions.
   const availableViews = VIEW_CONFIG.filter(
@@ -291,79 +264,52 @@ export default function AssistantPanel({ user, contextRef }) {
   // Derive context from current route if no explicit contextRef
   const effectiveContext = contextRef || null;
 
-  // Resolve initial open state from posture
-  useEffect(() => {
-    setExpanded(posture === "expanded");
-  }, [posture]);
-
-  if (posture === "collapsed") {
-    // Thin rail — click to expand
-    return (
-      <div
-        className="flex w-10 cursor-pointer flex-col items-center border-l border-[var(--2a-border)] bg-white pt-4"
-        title="Open assistant"
-        onClick={() => {
-          setPosture("expanded");
-          setExpanded(true);
-        }}
-      >
-        <span className="text-[var(--2a-gold)]" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", fontSize: 11, letterSpacing: "0.15em" }}>
-          ASSISTANT
-        </span>
-      </div>
-    );
-  }
+  if (!open) return null;
 
   return (
-    <div
-      className={[
-        "flex flex-col overflow-hidden border-l border-[var(--2a-border)] bg-white transition-all duration-200",
-        expanded ? "w-72" : "w-10",
-      ].join(" ")}
+    <aside
+      id="assistant-panel"
+      data-testid="assistant-panel"
+      aria-label="Assistant"
+      className="flex w-72 flex-col overflow-hidden border-l border-[var(--2a-border)] bg-white"
     >
-      {/* Header / toggle */}
-      <div
-        className="flex cursor-pointer items-center justify-between border-b border-[var(--2a-border)] px-3 py-2"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        {expanded && (
-          <span className="text-xs font-semibold uppercase tracking-widest text-[var(--2a-gold)]">
-            Assistant
-          </span>
-        )}
-        <span className="ml-auto text-[var(--2a-text-muted)] text-xs">{expanded ? "›" : "‹"}</span>
+      <div className="flex items-center border-b border-[var(--2a-border)] px-3 py-2">
+        <span className="text-xs font-semibold uppercase tracking-widest text-[var(--2a-gold)]">
+          Assistant
+        </span>
       </div>
 
-      {expanded && (
-        <>
-          {/* View selector — single dropdown, role-gated */}
-          <div className="border-b border-[var(--2a-border)] px-2 py-1.5">
-            <select
-              value={activeView}
-              onChange={(e) => setActiveView(e.target.value)}
-              className="w-full rounded border border-[var(--2a-border)] bg-[var(--2a-bg)] px-2 py-1 text-xs font-medium text-[var(--2a-navy)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
-            >
-              {availableViews.map((v) => (
-                <option key={v.key} value={v.key}>
-                  {v.label}
-                </option>
-              ))}
-            </select>
-          </div>
+      {/* View selector — single dropdown, role-gated */}
+      <div className="border-b border-[var(--2a-border)] px-2 py-1.5">
+        <select
+          value={activeView}
+          onChange={(e) => setActiveView(e.target.value)}
+          className="w-full rounded border border-[var(--2a-border)] bg-[var(--2a-bg)] px-2 py-1 text-xs font-medium text-[var(--2a-navy)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
+        >
+          {availableViews.map((v) => (
+            <option key={v.key} value={v.key}>
+              {v.label}
+            </option>
+          ))}
+        </select>
+      </div>
 
-          {/* View body */}
-          <div className="flex flex-1 flex-col overflow-hidden">
-            {activeView === "Chat" && (
-              <ChatView contextRef={effectiveContext} />
-            )}
-            {activeView === "Todos" && <TodosView />}
-            {activeView === "Activity" && <ActivityView />}
-            {(activeView === "Interesting Deals" || activeView === "Messages") && (
-              <p className="px-4 py-6 text-center text-sm text-[var(--2a-text-muted)]">Coming soon.</p>
-            )}
-          </div>
-        </>
-      )}
-    </div>
+      {/* View body */}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {activeView === "Chat" && (
+          <ChatView contextRef={effectiveContext} />
+        )}
+        {activeView === "Todos" && <TodosView />}
+        {activeView === "Activity" && <ActivityView />}
+        {(activeView === "Interesting Deals" || activeView === "Messages") && (
+          <p className="px-4 py-6 text-center text-sm text-[var(--2a-text-muted)]">Coming soon.</p>
+        )}
+      </div>
+    </aside>
   );
+}
+
+export default function AssistantPanel({ contextRef }) {
+  const { open } = useAssistantPanel();
+  return <AssistantPanelView open={open} contextRef={contextRef} />;
 }
