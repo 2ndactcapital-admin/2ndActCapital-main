@@ -163,9 +163,9 @@ test("lib: percent → fraction is exact; settings body carries strings, never f
     [["s1", "0.6", "0.95", "0.94"], ["cash", "0.4", "0.05", "0.06"]]);
 });
 
-test("menu: Accounts gated on view_proposals (strict) in the Portfolio group", () => {
+test("menu: Accounts gated on view_proposals (strict) in the Model Portfolios group (NAV1)", () => {
   const item = menu.MENU_ITEMS.find((i) => i.href === "/portfolio/accounts");
   assert.ok(item, "Accounts tab exists");
-  assert.equal(item.group, "portfolio");
+  assert.equal(item.group, "model_portfolios"); // NAV1: moved from Portfolio to Model Portfolios
   assert.deepEqual(item.gate, { perm: "view_proposals", strict: true });
 });

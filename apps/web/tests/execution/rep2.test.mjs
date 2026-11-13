@@ -139,7 +139,7 @@ test("capabilities: Edit only for Super Admin; 'unknown' shown plainly", () => {
 test("menu: Instructions gated on view_execution (strict); Custodian capabilities on staff or manage_org_settings (strict)", () => {
   const ins = menu.MENU_ITEMS.find((i) => i.href === "/portfolio/instructions");
   const cap = menu.MENU_ITEMS.find((i) => i.href === "/admin/custodian-capabilities");
-  assert.equal(ins.group, "portfolio");
+  assert.equal(ins.group, "model_portfolios"); // NAV1: Model Portfolios → Trading
   assert.equal(cap.group, "billing");
   const me = (extra) => ({ account_role: "member", status: "active", roles: ["x"], permissions: [], ...extra });
   assert.equal(menu.canAccess(me({ permissions: ["view_execution"] }), ins.gate), true);

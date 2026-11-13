@@ -61,9 +61,10 @@ function detail(type, perms = SU, vocab = VOCAB) {
   };
 }
 
-test("menu: Counterparties is a Super Admin platform tab", () => {
+test("menu: Counterparties is a Super Admin tab (NAV1: Organization admin → Custody & Billing)", () => {
   const t = MENU_ITEMS.find((x) => x.href === "/admin/counterparties");
-  assert.ok(t && t.section === "platform" && t.gate === GATE_SUPER_ADMIN, "tab present, Super Admin gate");
+  // NAV1 (Joe, 2026-11-12): moved from Platform → Controls to Organization admin → Custody & Billing; gate unchanged.
+  assert.ok(t && t.section === "org_admin" && t.group === "billing" && t.gate === GATE_SUPER_ADMIN, "tab present, Super Admin gate");
   assert.equal(labelFor("/admin/counterparties"), "Counterparties");
   assert.equal(canAccess({ role: "member", permissions: ["manage_org_settings"] }, t.gate), false);
 });
