@@ -88,7 +88,8 @@ CALENDAR_NOTE = ("settlement date = trade date + 1 business day, counting weeken
                  "exists in this build")
 
 TRIGGERS = ("join", "model_change", "drift", "cash_flow", "manual", "harvest",
-            "cash_waterfall")   # CASH04 — the waterfall's system drafts: a model path, managed only
+            "cash_waterfall",   # CASH04 — the waterfall's system drafts: a model path, managed only
+            "scheduled")        # DAILYREBAL1 — the daily rebalancer's frequency-due proposals: a model path
 PATH_LABELS = {
     "join": "Join a model", "change_model": "Change model", "settings": "Change model settings",
     "transition": "Transition preview", **{f"proposal:{t}": f"Proposal — {t.replace('_', ' ')}" for t in TRIGGERS},
