@@ -193,3 +193,9 @@ Joe's priority rule (e.g. newest first) matters more than the download cap.
 Earlier legs: t 34/0, u 25/0, s 14/0, f 16/0, w 21/0. This leg, one section at a time (`timeout 600 … --section X`):
 
 * q (queueing / once per day / new vs backlog / cap 2,500 → 2,000 + 500): **31 PASS, 0 FAIL** (teardown zero rows).
+* l (laptop hand-off): **NOT RUN — BLOCKED, not a code or verify failure.** The verify's own guard refused it: a
+  REAL laptop worker is heartbeating (`laptop:Lenovo-Laptop-jpl:31084:…`, the operator's
+  `run_bulk_fetch.py --worker --target laptop` in tmux session `bulkworker`, prd, up since 2026-11-12) and would
+  claim the laptop-target fixture runs. Not stopped from an unattended leg (it is doing real work). Operator: stop
+  the worker (`tmux attach -t bulkworker`, Ctrl-C), run `timeout 600 python3 apps/api/scripts/verify_edgarops1.py
+  --section l`, restart the worker. The full verify will hit the same guard while the worker runs.
