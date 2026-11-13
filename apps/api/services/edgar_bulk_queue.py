@@ -375,37 +375,104 @@ _INSTITUTIONS_CACHE: dict = {}
 DOWNLOADED_STATUSES = ("fetched", "fetch_failed", "not_pricing_supplement", "prefilter_skipped",
                        "ready_for_extraction", "extraction_submitted", "extracted", "needs_review",
                        "extraction_failed")
+# EDGAROPS1 — the table ADDS UP (docs/EDGAROPS1_NOTES.md §6). Every eligible
+# status lands in exactly one column:
+#   To fetch   = selected
+#   Downloaded = fetched, ready_for_extraction, extraction_submitted, extracted, needs_review, extraction_failed
+#   Skipped    = not_pricing_supplement (peek or full text), prefilter_skipped
+#   Failed     = fetch_failed
+#   (discovered / not_selected were never offered to a fetch: not eligible)
+# Eligible = To fetch + Downloaded + Skipped + Failed; Stored = Downloaded rows
+# with an R2 key; % done = (Downloaded + Skipped + Failed) / Eligible.
+# The bulkfetchui3 fields keep their numbers under new names: ``handled`` (=
+# Downloaded + Skipped + Failed, the old "downloaded") and ``handled_stored``
+# (the old "stored": any handled row with an R2 key).
 INSTITUTION_COLUMNS = {
+    "eligible": {"label": "Eligible",
+                 "help": "Offered to a download by the selection: to fetch + downloaded + skipped + failed"},
+    "to_fetch": {"label": "To fetch", "help": "Selected and not downloaded yet (all years; the year columns split it)"},
+    "earlier": {"label": "Earlier", "help": "To fetch, filed before the years shown"},
     "downloaded": {"label": "Downloaded",
-                   "help": "Handled by a bulk download: fetched, peeked or failed (all years)"},
+                   "help": "Downloaded in full and kept: ready for the reader, read, or waiting (all years)"},
     "stored": {"label": "Stored",
-               "help": "Kept in storage, by the document kinds chosen at the time (all years)"},
+               "help": "Of Downloaded, the documents still held in storage (all years)"},
+    "skipped": {"label": "Skipped",
+                "help": "Looked at and not kept: not a final pricing supplement, or skipped by the prefilter"},
+    "failed": {"label": "Failed", "help": "The download failed (retried automatically when the failure was transient)"},
+    "pct_done": {"label": "% done", "help": "(Downloaded + Skipped + Failed) / Eligible"},
 }
-# One pass over the handled rows of the catalog's CIKs, all years (the same
-# scope as Total). Served by a BitmapAnd of edgar_index_filings_queue_idx
-# (pipeline_status) and edgar_index_filings_primary_issuer_idx (measured
-# 2026-10-22: 478 ms cold for the three biggest programs, 12,069 rows).
+INSTITUTION_YEARS_SHOWN = 3
+_TABLE_STATUSES = {"to_fetch": ("selected",),
+                   "downloaded": ("fetched", "ready_for_extraction", "extraction_submitted", "extracted",
+                                  "needs_review", "extraction_failed"),
+                   "skipped": ("not_pricing_supplement", "prefilter_skipped"), "failed": ("fetch_failed",)}
+ELIGIBLE_STATUSES = tuple(s for v in _TABLE_STATUSES.values() for s in v)
+# Two passes, as bulkfetchui3 measured them: To fetch by CIK x year is an
+# index-only scan of edgar_index_filings_selected_count_idx (SELECTED_YEARS_SQL;
+# a single pass joining reference_filings for every selected row measured 9.3 s
+# on 2026-11-13); the handled statuses by CIK x status with the stored count
+# (DOWNLOADED_STORED_SQL) use edgar_index_filings_primary_issuer_idx.
+SELECTED_YEARS_SQL = """
+    SELECT f.primary_issuer_cik AS cik, extract(year FROM f.filing_date)::int AS y, count(*)::int AS n
+      FROM portfolio.edgar_index_filings f
+     WHERE f.pipeline_status = 'selected'
+       AND f.form_type = ANY($2::text[])
+       AND f.primary_issuer_cik = ANY($1::text[])
+     GROUP BY 1, 2"""
 DOWNLOADED_STORED_SQL = """
-    SELECT f.primary_issuer_cik AS cik,
-           count(*)::int AS downloaded,
+    SELECT f.primary_issuer_cik AS cik, f.pipeline_status AS status, count(*)::int AS n,
            count(*) FILTER (WHERE r.r2_key IS NOT NULL OR r.text_r2_key IS NOT NULL)::int AS stored
       FROM portfolio.edgar_index_filings f
       LEFT JOIN portfolio.reference_filings r ON r.id = f.reference_filing_id
      WHERE f.pipeline_status = ANY($3::text[])
        AND f.form_type = ANY($2::text[])
        AND f.primary_issuer_cik = ANY($1::text[])
-     GROUP BY 1"""
+     GROUP BY 1, 2"""
+
+
+def _pct(done: int, eligible: int) -> float | None:
+    return None if not eligible else round(100.0 * done / eligible, 1)
+
+
+def _counts_row(per_status: dict[str, tuple[int, int]], years: dict[int, int]) -> dict:
+    """One table row from {status: (n, stored)} and the to-fetch years."""
+    def total(col):
+        return sum(per_status.get(s, (0, 0))[0] for s in _TABLE_STATUSES[col])
+    to_fetch, downloaded = total("to_fetch"), total("downloaded")
+    skipped, failed = total("skipped"), total("failed")
+    stored = sum(per_status.get(s, (0, 0))[1] for s in _TABLE_STATUSES["downloaded"])
+    handled = downloaded + skipped + failed
+    eligible = to_fetch + handled
+    return {"years": {str(y): n for y, n in sorted(years.items())}, "total": to_fetch, "to_fetch": to_fetch,
+            "downloaded": downloaded, "stored": stored, "skipped": skipped,
+            "skipped_by_reason": {s: per_status[s][0] for s in _TABLE_STATUSES["skipped"]
+                                  if per_status.get(s, (0, 0))[0]},
+            "failed": failed, "eligible": eligible, "pct_done": _pct(handled, eligible),
+            "handled": handled,
+            "handled_stored": sum(per_status.get(s, (0, 0))[1] for s in DOWNLOADED_STATUSES)}
+
+
+def shown_years(rows: list[dict], n: int = INSTITUTION_YEARS_SHOWN) -> list[str]:
+    """The latest ``n`` to-fetch years present anywhere in the table."""
+    ys = sorted({y for r in rows for y in (r.get("years") or {})}, key=int)
+    return ys[-n:]
+
+
+def with_earlier(row: dict, years: list[str]) -> dict:
+    """``earlier`` = To fetch filed before the years shown, so the shown year
+    columns + Earlier sum to To fetch."""
+    first = int(years[0]) if years else None
+    earlier = sum(n for y, n in (row.get("years") or {}).items() if first is None or int(y) < first)
+    return row | {"earlier": earlier}
 
 
 async def institutions(conn, *, source_name: str = eb.DEFAULT_SOURCE, use_cache: bool = True) -> dict:
     """Every institution (issuer group) the source can fetch, with its filer
-    entities (name, CIK, role) and SELECTED counts by year. One index-only scan
-    (edgar_index_filings_selected_count_idx); cached for 60 s because a live
-    bulk run's claims keep dirtying the visibility map.
-
-    BULKFETCHUI3 — plus ``downloaded`` and ``stored`` per filer and per
-    institution (DOWNLOADED_STORED_SQL, all years) and ``as_of`` (the database
-    clock when the numbers were read). ``use_cache=False`` is the screen's
+    entities (name, CIK, role) and, per filer and per institution, one row that
+    ADDS UP (EDGAROPS1): Eligible = To fetch + Downloaded + Skipped + Failed,
+    Stored (of Downloaded), % done, To fetch by year with ``years_shown`` (the
+    latest 3 present) and ``earlier``. ``as_of`` = the database clock when the
+    numbers were read. Cached for 60 s; ``use_cache=False`` is the screen's
     Refresh (``?fresh=1``): it reads now and replaces the cached entry."""
     hit = _INSTITUTIONS_CACHE.get(source_name)
     if use_cache and hit and time.monotonic() - hit[0] < INSTITUTIONS_CACHE_SECONDS:
@@ -414,41 +481,46 @@ async def institutions(conn, *, source_name: str = eb.DEFAULT_SOURCE, use_cache:
     catalog = await eb.institution_catalog(conn, source)
     ciks = [c for inst in catalog.values() for c in inst.ciks]
     async with platform_scope(conn):
-        rows = await conn.fetch(
-            """SELECT f.primary_issuer_cik AS cik, extract(year FROM f.filing_date)::int AS y, count(*)::int AS n
-                 FROM portfolio.edgar_index_filings f
-                WHERE f.pipeline_status = 'selected'
-                  AND f.form_type = ANY($2::text[])
-                  AND f.primary_issuer_cik = ANY($1::text[])
-                GROUP BY 1, 2""",
-            ciks, list(source.form_types))
-        handled = await conn.fetch(DOWNLOADED_STORED_SQL, ciks, list(source.form_types),
-                                   list(DOWNLOADED_STATUSES))
+        sel = await conn.fetch(SELECTED_YEARS_SQL, ciks, list(source.form_types))
+        rows = await conn.fetch(DOWNLOADED_STORED_SQL, ciks, list(source.form_types),
+                                [x for x in ELIGIBLE_STATUSES if x != "selected"])
         as_of = await conn.fetchval("SELECT now()")
-    by_cik: dict[str, dict[int, int]] = {}
+    per_cik: dict[str, dict[str, list[int]]] = {}
+    years_cik: dict[str, dict[int, int]] = {}
     for r in rows:
-        by_cik.setdefault(r["cik"], {})[r["y"]] = r["n"]
-    done = {r["cik"]: (r["downloaded"], r["stored"]) for r in handled}
+        per_cik.setdefault(r["cik"], {})[r["status"]] = [r["n"], r["stored"]]
+    for r in sel:
+        years_cik.setdefault(r["cik"], {})[r["y"]] = r["n"]
+        st = per_cik.setdefault(r["cik"], {}).setdefault("selected", [0, 0])
+        st[0] += r["n"]
     out = []
     for name in sorted(catalog, key=str.casefold):
         inst = catalog[name]
-        years: dict[int, int] = {}
         filers = []
+        agg: dict[str, list[int]] = {}
+        years: dict[int, int] = {}
         for f in inst.filers:
-            fy = by_cik.get(f.cik, {})
+            ps = {k: tuple(v) for k, v in per_cik.get(f.cik, {}).items()}
+            fy = years_cik.get(f.cik, {})
+            for k, (n, st) in ps.items():
+                a = agg.setdefault(k, [0, 0])
+                a[0] += n
+                a[1] += st
             for y, n in fy.items():
                 years[y] = years.get(y, 0) + n
-            d, st = done.get(f.cik, (0, 0))
             filers.append({"cik": f.cik, "name": f.filer_name, "role": f.filer_role,
-                           "credit_entity": f.credit_entity,
-                           "years": {str(y): n for y, n in sorted(fy.items())}, "total": sum(fy.values()),
-                           "downloaded": d, "stored": st})
-        out.append({"name": name, "filers": filers, "years": {str(y): n for y, n in sorted(years.items())},
-                    "total": sum(years.values()),
-                    "downloaded": sum(f["downloaded"] for f in filers),
-                    "stored": sum(f["stored"] for f in filers)})
-    result = {"source": source.name, "rows": out, "last_indexed_date": str(await eb.last_indexed_date(conn)),
-              "as_of": as_of.isoformat()}
+                           "credit_entity": f.credit_entity, **_counts_row(ps, fy)})
+        out.append({"name": name, "filers": filers, **_counts_row({k: tuple(v) for k, v in agg.items()}, years)})
+    ys = shown_years(out)
+    for r in out:
+        r.update(with_earlier(r, ys))
+        for f in r["filers"]:
+            f.update(with_earlier(f, ys))
+    totals = {k: sum(r[k] for r in out) for k in ("to_fetch", "downloaded", "stored", "skipped", "failed",
+                                                  "eligible", "handled", "earlier")}
+    totals["pct_done"] = _pct(totals["handled"], totals["eligible"])
+    result = {"source": source.name, "rows": out, "years_shown": ys, "totals": totals,
+              "last_indexed_date": str(await eb.last_indexed_date(conn)), "as_of": as_of.isoformat()}
     _INSTITUTIONS_CACHE[source_name] = (time.monotonic(), result)
     return result
 

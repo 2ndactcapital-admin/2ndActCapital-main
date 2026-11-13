@@ -70,11 +70,10 @@ R2_ENV = ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
 LAPTOP_HINT = "a laptop worker can run it (run_bulk_fetch.py --worker --target laptop)"
 
 # Status sets (docs/EDGAROPS1_NOTES.md §6) — one place, shared with the run summaries and the institutions table.
-TO_FETCH_STATUSES = ("selected",)
-DOWNLOADED_STATUSES = ("fetched", "ready_for_extraction", "extraction_submitted", "extracted", "needs_review",
-                       "extraction_failed")
-SKIPPED_STATUSES = ("not_pricing_supplement", "prefilter_skipped")
-FAILED_STATUSES = ("fetch_failed",)
+TO_FETCH_STATUSES = bq._TABLE_STATUSES["to_fetch"]
+DOWNLOADED_STATUSES = bq._TABLE_STATUSES["downloaded"]
+SKIPPED_STATUSES = bq._TABLE_STATUSES["skipped"]
+FAILED_STATUSES = bq._TABLE_STATUSES["failed"]
 
 _OFF = {"0", "false", "off", "no"}
 

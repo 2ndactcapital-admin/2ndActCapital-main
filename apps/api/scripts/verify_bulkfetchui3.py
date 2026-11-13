@@ -771,12 +771,15 @@ async def y_downloaded_stored(conn, url, q) -> None:
     rows = {r["name"]: r for r in (body or {}).get("rows", [])} if code == 200 else {}
     inst = rows.get(G_ALPHA) or {}
     filers = {f["cik"]: f for f in inst.get("filers", [])}
-    per_filer = {c: (filers.get(c, {}).get("downloaded"), filers.get(c, {}).get("stored")) for c in ciks}
+    # EDGAROPS1 restatement: bulkfetchui3's "downloaded" / "stored" (every HANDLED row / any handled row with an R2
+    # key) are now served as "handled" / "handled_stored" — same set, same numbers, same SQL; "downloaded" now means
+    # Downloaded-and-kept (docs/EDGAROPS1_NOTES.md §6). Every number below is unchanged.
+    per_filer = {c: (filers.get(c, {}).get("handled"), filers.get(c, {}).get("handled_stored")) for c in ciks}
     check(code == 200 and per_filer == direct, "per filer: the payload's downloaded/stored equal the 1a SQL",
           f"HTTP {code} {per_filer}")
-    check((inst.get("downloaded"), inst.get("stored")) == (8, 4),
+    check((inst.get("handled"), inst.get("handled_stored")) == (8, 4),
           "per institution: downloaded 8 / stored 4 (the sum of its filers, all years)",
-          f"{inst.get('downloaded')}, {inst.get('stored')}")
+          f"{inst.get('handled')}, {inst.get('handled_stored')}")
     check(inst.get("total") == 2, "Total still counts only 'selected' (2) — the new columns did not change it",
           f"{inst.get('total')}")
     check(isinstance((body or {}).get("as_of"), str) and bool(body.get("as_of")), "the payload carries as_of",
@@ -796,13 +799,13 @@ async def y_downloaded_stored(conn, url, q) -> None:
     await make_filing(conn, c1, date(2025, 3, 4), status="ready_for_extraction", kind="pricing_supplement", stored="r2")
     code2, body2 = await api(U_SUPER, "GET", f"{BASE}/institutions")
     i2 = {r["name"]: r for r in (body2 or {}).get("rows", [])}.get(G_ALPHA, {})
-    check(code2 == 200 and (i2.get("downloaded"), i2.get("stored")) == (8, 4) and body2.get("as_of") == old_as_of,
+    check(code2 == 200 and (i2.get("handled"), i2.get("handled_stored")) == (8, 4) and body2.get("as_of") == old_as_of,
           "the cached call within 60 s returns the OLD numbers (and the old as_of) after a fixture change",
-          f"{i2.get('downloaded')}, {i2.get('stored')}")
+          f"{i2.get('handled')}, {i2.get('handled_stored')}")
     code3, body3 = await api(U_SUPER, "GET", f"{BASE}/institutions?fresh=1")
     i3 = {r["name"]: r for r in (body3 or {}).get("rows", [])}.get(G_ALPHA, {})
-    check(code3 == 200 and (i3.get("downloaded"), i3.get("stored")) == (9, 5),
-          "?fresh=1 returns the NEW numbers (9 / 5)", f"{i3.get('downloaded')}, {i3.get('stored')}")
+    check(code3 == 200 and (i3.get("handled"), i3.get("handled_stored")) == (9, 5),
+          "?fresh=1 returns the NEW numbers (9 / 5)", f"{i3.get('handled')}, {i3.get('handled_stored')}")
 
 
 async def y_gate(conn) -> None:
