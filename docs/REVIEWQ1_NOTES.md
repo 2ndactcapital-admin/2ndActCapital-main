@@ -120,3 +120,52 @@ is_primary DESC, id_value`; `security_search`'s list) would pick between two val
     (Keep both = add the miss's identifier as an alternate; Use existing = reject); nothing found → `add_to_master`
     (Use incoming = create from OpenFIGI's facts). Never auto-merged; review items only. The sprint runs it on
     fixtures with the transport stubbed.
+
+## Built
+
+- `services/security_master_review.py` — choices per row, the Run, bulk (estimate + apply), move back, collision
+  refusal, audit, repeat-suppression helpers. Routes in `routers/security_master.py` (all `require_super_admin`):
+  `POST …/review/run`, `POST …/review/bulk/estimate`, `POST …/review/bulk`, `POST …/review/{id}/move-back`;
+  `GET …/review` gains status `known` / the decided statuses and the filters, `total`, per-row `choices` +
+  `choice_notes`, facets. Legacy decision route unchanged.
+- `security_master_load.insert_review` (the one writer) + the matcher's alternate sightings.
+- `security_lists.resolve_misses` + `openfigi.isin_job`; `security_lists_load.py --resolve-misses [--dry-run]`.
+  A miss the master now resolves (a confirmed alternate, an added security) is skipped until the next load.
+- Screen: `ReviewPanel` → `ReviewChoicesView` + `KnownDiscrepanciesView` (`lib/reviewq1.mjs` helpers). Light theme;
+  the master's table / filter form / `BusyButton`.
+- Schema APPLIED (`_apply_reviewq1.py --all`: SCHEMA OK; open review items 726 → 726).
+
+## Proof (`apps/api/scripts/verify_reviewq1.py`, in scripts/regression_set.txt)
+
+One-offs, 2026-11-13: `--self-checks-only` 52/0 · `--cleanup-only` 1/0 · `--section l,g` 37/0 (after the live-check
+fix) · `l,a` 52/0 · `b,s` 46/0 · `m,r` (+s) 52/0 · **`l,g,a,b,s,m,r` in one seed 110/0** · `w,j` 5/0 (render tests 23+
+/ 0 incl. secmaster1 / secmaster2 / track1 suites; fast regressions verify_secmaster1, verify_secmaster2,
+verify_track1, verify_prices1 each 0 FAIL). Full single-command run left to the runner.
+Every run ends with the REAL queue's fingerprint (id, status, valid_to, system_to) and open counts by kind / field /
+provider unchanged, and the real isin / cusip / figi identifiers unchanged. Nothing real was decided, changed or
+re-opened.
+
+## FINDs
+- The live open count is **726**, not ≈716 (sec_tickers 3 + nasdaq_trader 1 ticker_conflicts; ticker_cusip_conflict
+  openfigi is 8, not 2).
+- All 8 openfigi ticker_cusip_conflict items are "held by" another security → Use incoming will be REFUSED for them
+  by the collision rule (correct); Use existing is the choice unless a merge is made on the security.
+- The "home-market vs US ISIN" filter selects **305 of the 382** ISIN items today.
+- `is_primary` is not a usable primary marker (every live ISIN / FIGI is false) → the new `is_alternate` column.
+- verify_secmaster1 asserts the legacy route and `actions == ["resolved", "dismissed"]` on an open row: kept, so
+  `GET /review` still carries `actions` (legacy) beside `choices` (new).
+- `--resolve-misses --dry-run` DOES call OpenFIGI (read-only) — unlike the loader's own `--dry-run`, which is
+  network-free; it writes nothing.
+
+## OPERATOR
+1. Deploy the API + web (schema already applied).
+2. Security master → Review queue: **start with the filter "Home-market vs US ISIN" → Keep both** (bulk: the server
+   shows the count, confirm); **then CUSIP / ISIN rows where the existing value is the post-split / post-corporate-action
+   identifier → Use existing** (filter field = cusip or isin, text = the issuer — ProShares, Direxion, Inuvo, Ocean
+   Power, GrafTech, Virgin Galactic, DuPont …); **review the rest one by one** (choose per row, Run). Decided Use
+   existing / Keep both items move to Known discrepancies; the next source runs count them as seen again instead of
+   re-opening them; Move back re-opens one.
+3. List misses (after a real `security_lists_load.py --all` stored them):
+   `doppler run -- apps/api/venv/bin/python apps/api/scripts/security_lists_load.py --all --resolve-misses --dry-run`,
+   then without `--dry-run`; confirm the `list_match` items (Keep both, bulk by kind) and decide `add_to_master` items
+   (Use incoming creates the security) in the queue; the next load resolves them.
