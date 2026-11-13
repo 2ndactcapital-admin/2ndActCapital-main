@@ -102,7 +102,18 @@ Entities record page). Source: Joe's mockup (2026-11-12) and `sprint_prompts/nav
 | `/portfolio/replication/notes` | Not filtered (by design) | note catalog |
 | `/portfolio/replication/notes/new-issues` | Not filtered (by design) | new issues |
 
-## 4. Proof
+## 4. Proof (2026-11-13)
 
-See `apps/api/scripts/verify_nav2.py` (the docstring lists what it proves) and `apps/web/tests/nav2/nav2.test.mjs`.
-Results are recorded in `docs/PROJECT_STATUS.md` (NAV2 line).
+* `apps/api/scripts/verify_nav2.py` — **95 PASS, 0 FAIL** (full run, fixtures in two orgs, VISIBILITY1 enforced in
+  org A; teardown: zero fixture rows, 13 counted tables at their pre-test counts). `--self-checks-only` 17/0.
+* `apps/web/tests/nav2/nav2.test.mjs` — 16/0; with tests/nav1 + tests/nav 69/0; full web suite 871 tests: 870 pass,
+  0 fail, 1 skipped (pre-existing "real API envelopes", needs a live API).
+* Route matrices: `authz1_routes.py --check` CURRENT, `visibility1_routes.py --check` CURRENT — not regenerated (no
+  route gained a parameter; the assistant context helper lives in a service so POST /assistant/message's record
+  stays "none beyond auth", which is what it enforces).
+* Fast-mode regressions (nested `--self-checks-only`): verify_nav1 28/0, verify_visibility1 56/0, verify_authz1 1/0.
+* [FIND]s from the run: support staff filtering positions on an out-of-scope owner get the VISIBILITY1 path guard's
+  404 (a refusal; a missing id answers the same); no fixture transaction was seeded (the owner filter is proven on
+  positions, same scope path); an internal non-staff role (support staff) gets no assistant context line even for
+  its own family, because require_entity_access gives the unscoped read on GET only and the message is a POST.
+* Not run (WSL memory / instructions): `npm run build`, other sprints' full verifies.
