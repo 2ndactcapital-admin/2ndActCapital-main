@@ -328,7 +328,8 @@ PARTIAL_PCT = 40
 SEED_CHECK_LITERALS = (
     ("portfolio.securities_global", "securities_global_type_chk", ("equity", "fund", "fixed_income")),
     ("portfolio.securities_global_identifiers", "sec_global_ident_type_chk", ("cusip", "ticker")),
-    ("portfolio.securities_global_prices", "sec_global_price_type_chk", ("close",)),
+    # prices3: the price-type CHECK moved with the data to portfolio.price_series (securities_global_prices is a VIEW)
+    ("portfolio.price_series", "sec_global_price_type_chk", ("close",)),
     ("portfolio.external_references", "ext_ref_record_type_chk", ("account",)),
     ("public.custodian_capabilities", "custodian_capabilities_key_chk", ("equity_trading_api",)),
     ("public.custodian_capabilities", "custodian_capabilities_evidence_kind_chk", ("assumed",)),
@@ -655,6 +656,9 @@ async def teardown() -> list[str]:
             "portfolio.securities_global": ("id = ANY($1::uuid[])", [list(SECURITIES)]),
             "portfolio.securities_global_identifiers": ("global_security_id = ANY($1::uuid[])", [list(SECURITIES)]),
             "portfolio.securities_global_prices": ("global_security_id = ANY($1::uuid[])", [list(SECURITIES)]),
+            # prices3: securities_global_prices is now a compatibility VIEW over portfolio.price_series (global,
+            # org_id NULL) — the fixture securities' series rows must be named, or the FK guard refuses them
+            "portfolio.price_series": ("global_security_id = ANY($1::uuid[])", [list(SECURITIES)]),
             # the simulator's book has no org_id: by the reserved fixture slug prefix (orders + executions reached by
             # the FK closure, their guard honouring cpsim.allow_teardown for the owner)
             "cpsim.counterparties": ("slug LIKE $1::text", [SLUG_PREFIX + "%"]),
@@ -1413,7 +1417,7 @@ async def y_schema(conn):
                      ("public", "trade_blocks"), ("public", "rebalance_proposals"),
                      ("public", "rebalance_proposal_trades"), ("portfolio", "securities_global"),
                      ("portfolio", "securities_global_identifiers"), ("portfolio", "securities_global_prices"),
-                     ("portfolio", "external_references")):
+                     ("portfolio", "price_series"), ("portfolio", "external_references")):
         cons[f"{nsp}.{rel}"] = await _constraints(conn, nsp, rel)
     n_read = sum(len(v) for v in cons.values())
     check(n_read > 0 and all(cons[k] for k in ("cpsim.orders", "cpsim.fix_messages", "cpsim.fix_allocations")),

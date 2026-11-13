@@ -3839,6 +3839,33 @@
 --   custodian_cost_basis_method              text
 --   PRIMARY KEY rebalance_proposals_pkey: (id)
 
+-- ===== rebalance_schedule_days =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   run_day                                  date NOT NULL
+--   status                                   text NOT NULL DEFAULT 'waiting'::text
+--   is_fixture                               boolean NOT NULL DEFAULT false
+--   run_time_local                           text NOT NULL
+--   prices_day                               date
+--   prices_status                            text
+--   partial_prices                           boolean NOT NULL DEFAULT false
+--   oldest_price_date                        date
+--   nightly_ok                               boolean NOT NULL DEFAULT false
+--   waiting_reason                           text
+--   checked                                  integer NOT NULL DEFAULT 0
+--   proposed                                 integer NOT NULL DEFAULT 0
+--   skipped                                  integer NOT NULL DEFAULT 0
+--   failed                                   integer NOT NULL DEFAULT 0
+--   results                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   errors                                   jsonb NOT NULL DEFAULT '[]'::jsonb
+--   todo_ids                                 ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   lease_until                              timestamp with time zone
+--   attempts                                 integer NOT NULL DEFAULT 0
+--   first_seen_at                            timestamp with time zone NOT NULL DEFAULT now()
+--   started_at                               timestamp with time zone
+--   finished_at                              timestamp with time zone
+--   PRIMARY KEY rebalance_schedule_days_pkey: (id)
+
 -- ===== reference_data =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid

@@ -119,7 +119,10 @@ TRIGGER_LABELS = {"join": "Joined the model", "model_change": "The model changed
                   "cash_flow": "Cash flow", "manual": "Rebalance now", "harvest": "Tax-loss harvest",
                   # CASH04 — the maturity waterfall job's SYSTEM drafts (services.cash_waterfall); made ONLY by
                   # services.cash_proposals, never by generate() (refused there)
-                  "cash_waterfall": "Cash maturity waterfall"}
+                  "cash_waterfall": "Cash maturity waterfall",
+                  # DAILYREBAL1 — the daily scheduled rebalancer's frequency-due SYSTEM proposals
+                  # (services.rebalance_schedule); a drift-band one there takes 'drift'
+                  "scheduled": "Scheduled rebalance"}
 #: CASH04 — triggers generate() refuses (another module owns the kind that uses them)
 CASH_ONLY_TRIGGERS = ("cash_waterfall",)
 # the triggers that never supersede an open proposal (they wait for the account to be free)

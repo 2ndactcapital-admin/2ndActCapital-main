@@ -3,7 +3,8 @@
 Every route names its gate (docs/AUTHZ1_ROUTES.json; authz1_routes.py reads it):
 
   view_proposals     GET  /proposals/accounts                           Portfolio → Accounts (model, drift, last
-                                                                        proposal, open instructions) + envelope
+                                                                        proposal, open instructions) + envelope +
+                                                                        dailyrebal1's `schedule` (today's run)
                      GET  /accounts/{id}/model                          the account's link, pending change, history,
                                                                         registry offer, plan, proposals + envelope
                      GET  /accounts/{id}/model/transition               transition preview (keep / sell now / later)
@@ -32,6 +33,7 @@ Amounts and fractions travel as decimal STRINGS; a JSON float is a 422.
 """
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -46,12 +48,14 @@ from services import account_models as AM
 from services import authority as AU
 from services import human_tasks as HT
 from services import rebalance_proposals as RP
+from services import rebalance_schedule as RS
 from services.authz import require_permission
 from services.custody.trading import _decimal
 from services.database import get_pool
 from services import sod  # S30 — the ONE maker-checker rule
 
 router = APIRouter(tags=["proposals"])
+log = logging.getLogger(__name__)
 
 VIEW, MANAGE, APPROVE = AM.VIEW, AM.MANAGE, AM.APPROVE
 
@@ -236,8 +240,14 @@ async def accounts_overview(request: Request, model_id: UUID | None = None,
             models = await AM.registry_offer(conn, org_id)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
+    schedule = None   # DAILYREBAL1 — today's scheduled-rebalancing run (read-only; its own read: never breaks the list)
+    try:
+        async with pool.acquire() as conn:
+            schedule = await RS.panel(conn, org_id)
+    except Exception:  # noqa: BLE001
+        log.exception("scheduled rebalancing panel unavailable")
     return {"rows": rows, "models": [{"id": str(m["id"]), "name": m["name"]} for m in models],
-            "permissions": perms, "vocabularies": _vocab(perms)}
+            "schedule": schedule, "permissions": perms, "vocabularies": _vocab(perms)}
 
 
 @router.get("/accounts/{account_id}/model")

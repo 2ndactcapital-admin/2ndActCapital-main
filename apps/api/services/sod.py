@@ -701,6 +701,8 @@ VERB_DUTIES: dict[str, str] = {
     "execution.custodian_import": "write",
     # CPSIM05 — the simulated FIX automatic step: declared, NOT registered (workflow_autonomy NEVER)
     "execution.fix_sim_auto": "write",
+    # DAILYREBAL1 — the daily scheduled rebalancer: system proposals a person reviews (declared, NOT registered)
+    "rebalance.scheduled_daily": "propose",
 }
 
 
