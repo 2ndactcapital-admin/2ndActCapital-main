@@ -428,7 +428,8 @@ async def rollback(conn, s: str = "portfolio") -> dict:
                                      f"{key})")
         # 2. post-swap closures of rows the old table holds live
         closed = await conn.execute(
-            f"UPDATE {n['pre']} p SET valid_to = v.valid_to, system_to = v.system_to FROM {n['old']} v WHERE {key} AND "
+            f"UPDATE {n['pre']} p SET valid_to = v.valid_to, system_to = v.system_to, id = v.id FROM {n['old']} v WHERE "
+            f"{key} AND "
             f"p.valid_to IS NULL AND p.system_to IS NULL AND NOT (v.valid_to IS NULL AND v.system_to IS NULL)")
         # 3. rows created after the swap (live or already superseded), with their bar when still pending
         added = await conn.execute(
