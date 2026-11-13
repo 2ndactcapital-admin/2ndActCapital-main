@@ -53,3 +53,8 @@ edgartools==5.59.1
 # as pdfplumber's dependency. Pillow (reportlab's dependency) is already here.
 reportlab==4.4.4
 pypdf==6.1.1
+# PRICES3 — the price history archive (services/security_data/price_archive.py): Parquet in R2, scanned in-process.
+# pyarrow writes the files and is the reader's fallback; duckdb is the scan engine. NOT installed in the sprint's
+# venv (no network during the sprint) — `pip install -r requirements.txt` before relying on the DuckDB path.
+pyarrow>=15
+duckdb>=1.1

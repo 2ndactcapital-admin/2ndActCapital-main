@@ -210,3 +210,27 @@ store_mode` ('legacy' until the operator swap flips it in the swap transaction; 
 
 `PS.old_name()` = the old table before the swap and the compatibility view after it, so a legacy-mode write after the
 swap (a stale process, a verify fixture) still lands correctly through the view's INSTEAD OF trigger.
+
+## 5. Archive (Task 4)
+
+`services/security_data/price_archive.py`. **Writer step on the existing nightly job**: `security_master_jobs._prices`
+(the platform job "Security data — prices", 21:15 New York) calls `archive_step(pool)` after `P.nightly`
+(`PRICES_ARCHIVE=0` turns it off). It never raises and does nothing until (a) `store_mode = 'lean'` and (b) the
+migration's `--export-archive` has set the watermark; then it appends lean platform rows with
+`watermark < recorded_at ≤ now − 15 min` (the settle margin covers a slow transaction's recorded_at) with their bars
+from `price_bars_pending` (drained after the PUT), one `append-…parquet` per year touched; on the first run of a
+calendar month it compacts every year that has parts (latest recorded_at per key → `compact.parquet`, then deletes
+the parts). No new service. Platform rows only.
+
+**Reader**: `history_frame(gsids, start, end, field="price"|"adjustment_factor"|"bar"|…, provider_key=None)` → a
+date × security pandas frame, Decimal-exact. `provider_key=None` = per security the provider with the most points in
+the window (`prices._coverage`'s rule). Objects come over the S3 API with boto3 + the existing R2 credentials into a
+local ETag-keyed cache; the scan is DuckDB in-process (`read_parquet` + `QUALIFY row_number()` dedup) or pyarrow.dataset
+when DuckDB is absent. **DuckDB is not installed in the venv and there is no network in the sprint**: `duckdb` (and
+`pyarrow`, already present transitively) are now declared in requirements.txt; every proof here ran on the pyarrow
+engine — the DuckDB path is written, not executed (stated in the verify as a FIND).
+
+Offline smoke (LocalStore): append 10 rows over 2 years, a restated row in a second part → the frame shows the newer
+value; compaction (2 + 1 parts → 2 compact files) yields an IDENTICAL frame; `field="bar"` returns the stored OHLCV.
+
+**Backtest**: left on Postgres (section 2f) — measured as an indexed range read, and it needs org prices.
