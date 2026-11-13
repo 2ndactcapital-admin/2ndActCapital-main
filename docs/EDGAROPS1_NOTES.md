@@ -187,3 +187,9 @@ Joe's priority rule (e.g. newest first) matters more than the download cap.
   blocked run writes no reading, so SPY was already re-offered every night (and
   blocked each time). After the fix the next nightly run reads it; the queue
   item now carries the entry's `sec_cik` too.
+
+## Proof log — fix 2 (2026-11-13)
+
+Earlier legs: t 34/0, u 25/0, s 14/0, f 16/0, w 21/0. This leg, one section at a time (`timeout 600 … --section X`):
+
+* q (queueing / once per day / new vs backlog / cap 2,500 → 2,000 + 500): **31 PASS, 0 FAIL** (teardown zero rows).
