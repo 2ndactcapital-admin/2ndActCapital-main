@@ -82,3 +82,4 @@ verify_reviewq1.py
 verify_edgarops1.py
 verify_dailyrebal1.py
 verify_nav1.py
+verify_nav2.py
