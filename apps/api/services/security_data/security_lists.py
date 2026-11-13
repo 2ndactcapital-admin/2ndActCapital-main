@@ -257,3 +257,103 @@ async def write(conn, r: Resolved, *, actor_id=None, run_id=None, track: bool = 
             tracked = await TR.track_list(conn, r.key, actor_id=actor_id,
                                           note=f"named list {r.name} (security_lists_load.py)")
     return {"stored": stored, "tracked": tracked}
+
+
+# ── REVIEWQ1 — list misses resolved through OpenFIGI into review items ──────
+def miss_identifier(m: dict) -> tuple[str, str] | None:
+    """The identifier a miss is mapped by: a non-US ISIN (the home-market line) → isin; a US ISIN with its CUSIP (a
+    CUSIP change: Navient, CBIZ …) → cusip; else whichever it has."""
+    isin = (m.get("isin") or "").strip().upper() or None
+    cusip = (m.get("cusip") or "").strip().upper() or None
+    if isin and not isin.startswith("US"):
+        return "isin", isin
+    if cusip:
+        return "cusip", cusip
+    if isin:
+        return "isin", isin
+    return None
+
+
+async def resolve_misses(conn, list_keys: list[str] | None, *, transport, key: str | None = None,
+                         dry_run: bool = True, run_id=None, throttle: bool = True, budget=None) -> dict:
+    """Every stored miss of the named lists (all lists when None) with an ISIN / CUSIP → OpenFIGI (the existing
+    provider, US composite) → a REVIEW ITEM, never a merge:
+        the FIGI (else the ticker) names ONE master security → kind list_match (Keep both = the miss's identifier added
+                                                                  as an alternate; Use existing = rejected)
+        OpenFIGI answers, nothing in the master              → kind add_to_master (OpenFIGI's ticker / name / type)
+        OpenFIGI has no answer                               → reported only (nothing to add)
+    Dry run: the OpenFIGI look-ups run (read-only) and NOTHING is written (no review item, no mapping row). The caller
+    holds platform scope. Repeat suppression is insert_review's (the same open item → nothing; a Known one → seen
+    again)."""
+    from services import security_master_load as M
+    from services import security_master_symbols as SYM
+    from services.security_data import tracking as TR
+    from services.security_data.providers import openfigi as OF
+
+    lists = [x for x in await TR.list_rows(conn) if list_keys is None or x["list_key"] in list_keys]
+    work: dict[tuple, dict] = {}
+    for lst in lists:
+        for m in lst.get("misses") or []:
+            ident = miss_identifier(m)
+            if ident is None:
+                continue
+            work.setdefault(ident, {"miss": m, "lists": []})["lists"].append(lst["list_key"])
+    without = sum(1 for lst in lists for m in (lst.get("misses") or []) if miss_identifier(m) is None)
+    idents = list(work)
+    jobs = [OF.isin_job(v) if t == "isin" else OF.cusip_job(v) for t, v in idents]
+    answers, requests = await OF.map_jobs(transport, jobs, key=key, budget=budget, throttle=throttle) if jobs else ([], 0)
+    by_job = {(a.job["idType"], a.job["idValue"]): a for a in answers}
+    hits = {i: by_job.get(("ID_ISIN" if i[0] == "isin" else "ID_CUSIP", i[1])) for i in idents}
+    figis = [a.hit.get("compositeFIGI") or a.hit.get("figi") for a in hits.values() if a and a.hit
+             and (a.hit.get("compositeFIGI") or a.hit.get("figi"))]
+    tickers = [SYM.normalize_symbol(a.hit.get("ticker")) for a in hits.values() if a and a.hit and a.hit.get("ticker")]
+    by_f = await SG.get_by_identifiers_bulk(conn, "figi", figis) if figis else {}
+    by_t = await SG.get_by_identifiers_bulk(conn, "ticker", [t for t in tickers if t]) if tickers else {}
+    out = {"lists": [x["list_key"] for x in lists], "misses_with_identifier": len(idents),
+           "misses_without_identifier": without, "openfigi_jobs": len(jobs), "openfigi_requests": requests,
+           "list_match": 0, "add_to_master": 0, "no_answer": 0, "not_reached": 0, "items_created": 0,
+           "already_open_or_known": 0, "dry_run": dry_run, "rows": []}
+    for (t, v), a in hits.items():
+        w = work[(t, v)]
+        m = w["miss"]
+        row = {"id_type": t, "value": v, "name": m.get("name") or m.get("description"), "lists": w["lists"]}
+        if a is None:
+            out["not_reached"] += 1
+            row["outcome"] = "not reached (budget / request limit) — next run"
+            out["rows"].append(row)
+            continue
+        if not a.hit:
+            out["no_answer"] += 1
+            row["outcome"] = f"OpenFIGI: {a.warning or 'no answer'}"
+            out["rows"].append(row)
+            continue
+        figi = a.hit.get("compositeFIGI") or a.hit.get("figi")
+        ticker = SYM.normalize_symbol(a.hit.get("ticker"))
+        sec, via = (by_f.get(SG.normalize_identifier_value("figi", figi)) if figi else None), "figi"
+        if sec is None and ticker:
+            sec, via = by_t.get(SG.normalize_identifier_value("ticker", ticker)), "ticker"
+        detail = {"lists": w["lists"], "figi": figi, "ticker": ticker, "name": (a.hit.get("name") or "").strip() or None,
+                  "security_type": SYM.type_from_figi(a.hit), "miss_name": row["name"],
+                  "exch_code": a.hit.get("exchCode")}
+        if sec is not None:
+            have = [r["id_value"] for r in await conn.fetch(
+                "SELECT id_value FROM portfolio.securities_global_identifiers WHERE global_security_id = $1::uuid AND "
+                "id_type = $2 AND valid_to IS NULL AND system_to IS NULL ORDER BY id_value", sec["id"], t)]
+            kind, gsid = "list_match", sec["id"]
+            detail["matched_by"] = via
+            existing = ", ".join(have) or "none"
+            row.update(outcome="list_match", security_id=sec["id"], security_name=sec["name"], matched_by=via)
+        else:
+            kind, gsid, existing = "add_to_master", None, None
+            row.update(outcome="add_to_master", ticker=ticker, openfigi_name=detail["name"])
+        out[kind] += 1
+        if not dry_run:
+            rid = await M.insert_review(conn, kind=kind, subject_key=f"{t}:{v}", provider_key="openfigi", field=t,
+                                        incoming_value=v, existing_value=existing, global_security_id=gsid,
+                                        detail=detail, run_id=run_id)
+            out["items_created" if rid else "already_open_or_known"] += 1
+            row["review_id"] = str(rid) if rid else None
+        out["rows"].append(row)
+    if not dry_run and answers:
+        await OF.record(conn, answers, run_id=run_id)
+    return out

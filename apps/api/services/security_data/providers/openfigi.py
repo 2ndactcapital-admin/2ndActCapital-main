@@ -56,6 +56,11 @@ def cusip_job(cusip: str) -> dict:
     return {"idType": "ID_CUSIP", "idValue": cusip, "exchCode": "US"}
 
 
+def isin_job(isin: str) -> dict:
+    """REVIEWQ1 — a list member's ISIN (often a home-market one: BM…, KY…, IE…) → its US composite listing."""
+    return {"idType": "ID_ISIN", "idValue": isin, "exchCode": "US"}
+
+
 def ticker_job(canonical: str) -> dict | None:
     t = SYM.to_openfigi_ticker(canonical)
     return {"idType": "TICKER", "idValue": t, "exchCode": "US"} if t else None
