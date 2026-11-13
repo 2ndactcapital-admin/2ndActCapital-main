@@ -139,6 +139,9 @@ SYNC_OVERRIDES: dict = {}
 NIGHTLY_KWARGS: dict = {}
 #: PRICES1 verify only: extra services.security_data.prices.nightly kwargs (the fixture securities, the fixture rank)
 PRICES_KWARGS: dict = {}
+#: PRICES3 — the prices job's archive step (R2 Parquet append + monthly compaction); PRICES_ARCHIVE=0 turns it off
+PRICES_ARCHIVE_STEP = (__import__("os").environ.get("PRICES_ARCHIVE") or "1").strip().lower() not in ("0", "false",
+                                                                                                     "off", "no")
 
 
 def make_transport():
@@ -326,6 +329,11 @@ async def _prices(ctx, rc) -> dict:
     from services.security_data import prices as P
 
     summary = await P.nightly(ctx.pool, run_id=ctx.run_id, **PRICES_KWARGS)
+    if PRICES_ARCHIVE_STEP:
+        # PRICES3 — the R2 Parquet archive: daily append + monthly compaction (never raises; nothing before the swap)
+        from services.security_data import price_archive as PA
+
+        summary["archive"] = await PA.archive_step(ctx.pool)
     deferred = sum(int((v.get("gap_fill") or {}).get("deferred") or 0) + int((v.get("new_history") or {}).get(
         "deferred") or 0) + int(v.get("new_deferred_to_next_night") or 0) for v in summary["providers"].values())
     return {**summary, "deferred": deferred}

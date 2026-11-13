@@ -13,6 +13,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from services.replica_holdings import platform_tx
+from services.security_data import price_store as PS
 
 LIVE = "valid_to IS NULL AND system_to IS NULL"
 
@@ -60,8 +61,17 @@ async def upsert_prices(pool, gsid: str, points: list[tuple[date, Decimal]], *, 
                         org_id=None, upload_id=None, licence: dict | None = None, conn=None) -> int:
     async def run(c) -> int:
         n = 0
+        if await PS.store_mode(c) == "lean":  # PRICES3: the lean table (+ history on a restatement)
+            now = datetime.now(timezone.utc)
+            for day, v in points:
+                got = await PS.lean_restate_point(c, gsid=gsid, price_type="close", provider_key=provider_key,
+                                                  org_id=org_id, day=day, value=Decimal(v), currency=currency,
+                                                  source=provider_key, upload_id=upload_id,
+                                                  licence_json=json.dumps(licence or {}), as_of=now)
+                n += got != "unchanged"
+            return n
         for day, v in points:
-            got = await _restate(c, table="portfolio.securities_global_prices",
+            got = await _restate(c, table=PS.old_name(),
                                  key_cols={"global_security_id": gsid, "price_type": "close",
                                            "provider_key": provider_key, "org_id": org_id},
                                  date_col="price_date", val_col="price", day=day, value=Decimal(v),
@@ -160,13 +170,18 @@ async def upsert_eod_bars(conn, gsid: str, bars, *, provider_key: str, licence: 
     transaction (app.is_super_admin LOCAL). Idempotent by (security, date, provider): an equal close writes nothing;
     a CHANGED close is a restatement on the SYSTEM axis — the live row gets system_to = now() and a new row is
     inserted (the old one stays readable as history). ``bars``: EodBar list; ``flags`` {day: [quality flags]}.
-    Returns {"inserted", "restated", "unchanged"}."""
+    Returns {"inserted", "restated", "unchanged"}. PRICES3: once the operator migration has swapped (store_mode
+    'lean') the same semantics run on the lean table (price_store.lean_upsert_eod_bars)."""
     out = {"inserted": 0, "restated": 0, "unchanged": 0}
     if not bars:
         return out
+    if await PS.store_mode(conn) == "lean":  # PRICES3: the lean table; the superseded value → history; bar → archive
+        return await PS.lean_upsert_eod_bars(conn, gsid, bars, provider_key=provider_key, licence=licence,
+                                             currency=currency, flags=flags, as_of=as_of)
+    tbl = PS.old_name()
     days = [b.day for b in bars]
     cur = {r["price_date"]: r for r in await conn.fetch(
-        "SELECT id, price_date, price FROM portfolio.securities_global_prices WHERE global_security_id = $1::uuid "
+        f"SELECT id, price_date, price FROM {tbl} WHERE global_security_id = $1::uuid "
         "AND provider_key = $2 AND price_type = 'close' AND org_id IS NULL AND price_date >= $3 AND price_date <= $4 "
         "AND " + LIVE + " FOR UPDATE", str(gsid), provider_key, min(days), max(days))}
     stamp = as_of or datetime.now(timezone.utc)
@@ -185,11 +200,10 @@ async def upsert_eod_bars(conn, gsid: str, bars, *, provider_key: str, licence: 
         rows.append((str(gsid), b.day, b.close, b.currency or currency, provider_key, provider_key, stamp,
                      list((flags or {}).get(b.day) or []), lic, b.adjustment_factor, json.dumps(b.bar_json())))
     if restate_ids:
-        await conn.execute("UPDATE portfolio.securities_global_prices SET system_to = now() WHERE id = ANY($1::uuid[])",
-                           restate_ids)
+        await conn.execute(f"UPDATE {tbl} SET system_to = now() WHERE id = ANY($1::uuid[])", restate_ids)
     if rows:
         await conn.executemany(
-            "INSERT INTO portfolio.securities_global_prices (global_security_id, price_date, price, currency_code, "
+            f"INSERT INTO {tbl} (global_security_id, price_date, price, currency_code, "
             "source, provider_key, as_of, quality_flags, licence, adjustment_factor, bar, price_type) VALUES "
             "($1::uuid, $2, $3, $4, $5, $6, $7, $8::text[], $9::jsonb, $10, $11::jsonb, 'close')", rows)
     return out
