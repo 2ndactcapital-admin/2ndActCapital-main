@@ -250,3 +250,15 @@ succeeded`, so the row was this worker's own close. **With the fix: `--section q
 * [FIND] Other EDGAR verifies (`verify_bulkfetchui*`, …) do not set `EDGAR_FIXTURE_RUNS`. Their laptop-target fixture
   runs are still claimable by a real laptop worker, the same defect class. Not changed here (out of this fix's scope).
   One line each (`os.environ["EDGAR_FIXTURE_RUNS"] = "1"` before imports) when they are next touched.
+
+## Proof log — fix 3 (2026-11-13), one-offs (`timeout 600`), Joe's pre-fix laptop worker online throughout
+* `--section q`: **32 PASS / 0 FAIL** (after both fixes; 2,000 → `succeeded`, 22 racing heartbeats → `succeeded`).
+  Pre-fix reproduction: 29 / 3.
+* `--section l`: **27 PASS / 0 FAIL** (5 cross-claim checks; waiting run stamped fixture; no outside worker touched it).
+* `--self-checks-only`: 26 / 0. `--cleanup-only`: 1 / 0, zero fixture rows.
+* Sibling `--self-checks-only`: bulkfetchui 1/0 · bulkfetchui2 1/0 · bulkfetchui3 8/0 · dailyops1 28/0.
+* Not run here (WSL memory rule): the full verify (incl. section j's nested regressions) is the runner's.
+* OPERATOR: restart the laptop worker (`tmux attach -t bulkworker`, Ctrl-C, start again) so it loads the split claim.
+  Its `edgar_fetch_workers.details.claims` then reads "real runs only". Until then the verify's sentinel covers it.
+  Never set `EDGAR_FIXTURE_RUNS` on Render or a laptop worker: it would put that worker on the fixture side, and the
+  runs it queued would be ignored by every real worker.
