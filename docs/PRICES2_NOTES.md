@@ -150,3 +150,8 @@ Branch commits (real UTC) run 22:18:23 (Task 1) → 23:43:22; the only step near
 (16a1bc6, committed 22:19:43). Re-checked 2026-11-13: `_apply_prices2.py --verify` → SCHEMA OK (both tables, RLS,
 four policies each, app_service privileges, unique indexes; 0 rows in each); every PRICES2 index (5 part-1, 5
 part-2 FK indexes) `indisvalid` AND `indisready` (10/10). Every one-off run was after 22:30. **None affected.**
+
+### 5b. FIX 1 — proof completed (2026-11-13)
+
+Sections already run one-off during the build leg (all six): d, x, m, r, w, j — none left to run. Re-run now:
+`verify_prices2 --cleanup-only` 1/0 (zero fixture rows, nothing removed); `--self-checks-only` 39/0.
