@@ -983,6 +983,8 @@ class Worker:
         self.restrict_to = restrict_to
         self.current_run_id = None
         self.fenced = False
+        self._run_stop: asyncio.Event | None = None
+        self._watcher: asyncio.Task | None = None
         self.executed: list[dict] = []
 
     # ── heartbeat ─────────────────────────────────────────────────────────
@@ -1042,6 +1044,18 @@ class Worker:
                 run_stop.set()
                 break
 
+    async def _end_watch(self) -> None:
+        """Stop the heartbeat/stop-poll watcher (idempotent)."""
+        if self._run_stop is not None:
+            self._run_stop.set()
+        w, self._watcher = self._watcher, None
+        if w is not None:
+            w.cancel()
+            try:
+                await w
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
     async def write_progress(self, run_id, progress: dict) -> None:
         async with self.pool.acquire() as conn, platform_scope(conn):
             await conn.execute(
@@ -1069,6 +1083,7 @@ class Worker:
         await self.heartbeat()
         run_stop = asyncio.Event()
         watcher = asyncio.create_task(self._watch(run_stop, run_id))
+        self._run_stop, self._watcher = run_stop, watcher
         params = _as_dict(run["params"])
         self.out(f"worker {self.worker_id}: claimed {run['run_kind']} run {run_id}")
         try:
@@ -1083,12 +1098,7 @@ class Worker:
                                   stop_reason="the run raised before or after the fetch loop")
             self.out(f"run {run_id} failed: {type(exc).__name__}: {exc}")
         finally:
-            run_stop.set()
-            watcher.cancel()
-            try:
-                await watcher
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+            await self._end_watch()
             self.current_run_id = None
             await self.heartbeat()
         self.executed.append({"run_id": run_id, "status": status})
@@ -1109,6 +1119,15 @@ class Worker:
             try:
                 await runner.run()
             finally:
+                # EDGAROPS1 fix 3. The Runner has CLOSED the run row ('succeeded' / 'stopped' / 'failed') when its
+                # list ended. From here on the watcher's heartbeat ("WHERE worker_id = me AND status = 'running'")
+                # matches nothing, and it would call this worker fenced while it is still writing the final progress
+                # and the summary (verify_edgarops1 [Q]: a finished 2,000-filing chunk returned 'fenced' when a 30 s
+                # heartbeat landed in that window). Stop the watcher first. If this runner closed the row as its
+                # owner (it checked owns_run() just before), the run was never taken away.
+                await self._end_watch()
+                if runner.closed_as_owner:
+                    self.fenced = False
                 if not self.fenced and runner.stats.run_id is not None:
                     await self.write_progress(run_id, eb.progress_snapshot(runner) | {"final": True})
                 if not self.fenced and opts.accessions is not None:

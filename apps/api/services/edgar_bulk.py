@@ -1150,6 +1150,9 @@ class Runner:
         # its heartbeat was stale) must not close a run another worker now owns.
         self.on_progress = on_progress
         self.owns_run = owns_run
+        # EDGAROPS1 fix 3 — True once THIS runner wrote the run row's close as its owner. The worker reads it: a
+        # heartbeat that finds the row no longer 'running' after this is the worker's own close, not a fence.
+        self.closed_as_owner = False
         self._progress_mark = 0
         self._lock = asyncio.Lock()
 
@@ -1233,6 +1236,7 @@ class Runner:
                         error=(f"{type(error[0]).__name__}: {error[0]}"[:2000] if error else None),
                         details={"bulk_result": s.summary() | {"sec_retries": self.sec.retries}},
                     )
+                    self.closed_as_owner = True
         self.stats.bytes_uploaded += self.supplements.bytes_uploaded
         self._final_summary()
         if error:

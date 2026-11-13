@@ -667,11 +667,39 @@ async def y_queue(conn):
           "the first scheduled download run", "the next day lists exactly the 500 carried over (cutoff from the first "
           "day's run), cap not reached", f"{len(l2)} {a2.get('new_since_from')}")
     await set_concurrency(conn, row2["id"], 8)
-    w2 = await AD.work_tick(pool, deadline_seconds=900, client_factory=sec_client, host="verify-edgarops1",
-                            capability=(True, None), restrict_to=[row2["id"]], log=lambda m: None)
+    # fix 3 — REPRODUCE the full run's FAIL on purpose: a heartbeat must land AFTER the Runner closed its own run row,
+    # while the worker is still writing the summary. Heartbeat every 0.2 s (not 30 s) and the summary write held
+    # 1.5 s. Before the fix this returned 'fenced' every time; the run must still close 'succeeded'.
+    orig_worker, orig_summary, beats = BQ.Worker, AD.write_summary, []
+
+    class FastBeatWorker(orig_worker):
+        def __init__(self, *a, **k):
+            k.update(heartbeat_seconds=0.2, stop_poll_seconds=0.1)
+            super().__init__(*a, **k)
+
+        async def heartbeat(self):
+            ok = await super().heartbeat()
+            beats.append(ok)
+            return ok
+
+    async def slow_summary(*a, **k):
+        await asyncio.sleep(1.5)
+        return await orig_summary(*a, **k)
+
+    BQ.Worker, AD.write_summary = FastBeatWorker, slow_summary
+    try:
+        w2 = await AD.work_tick(pool, deadline_seconds=900, client_factory=sec_client, host="verify-edgarops1",
+                                capability=(True, None), restrict_to=[row2["id"]], log=lambda m: None)
+    finally:
+        BQ.Worker, AD.write_summary = orig_worker, orig_summary
     st2 = await statuses_of(conn, l2)
     check(w2["status"] == "succeeded" and set(st2.values()) == {"not_pricing_supplement"},
           "the 500 carried over are downloaded the next day", f"{w2.get('status')}")
+    r2 = await platform(conn, "SELECT status, worker_id FROM portfolio.edgar_pipeline_runs WHERE id = $1", row2["id"],
+                        fetch="fetchrow")
+    check(len(beats) >= 5 and w2["status"] == "succeeded" and r2["status"] == "succeeded",
+          "fix 3: heartbeats racing the worker's OWN close (every 0.2 s, summary write held 1.5 s) — the run still "
+          "closes 'succeeded', never 'fenced'", f"{len(beats)} heartbeats; tick {w2.get('status')}; row {r2['status']}")
     check(not set(l1) & set(l2), "no filing is in both days' lists")
     check(SCHED.SCHEDULE_MAX_RPS in RATES and max(RATES) <= 8,
           "the Runner set the SEC rate from the run's own max_rps (the schedule's) — never above 8/s", f"{sorted(set(RATES))}")
