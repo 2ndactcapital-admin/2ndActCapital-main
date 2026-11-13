@@ -326,9 +326,10 @@ async def fresh_org_state(op) -> None:
     async with op.transaction():
         await op.execute("SELECT set_config('execution.teardown', 'fixture', true)")
         orgs = R5.FIXTURE_ORGS
+        # FK order: proposal trades point at instructions (instruction_id), instructions at proposals
         for t in ("public.execution_instruction_events", "public.execution_fills", "public.execution_instruction_lots",
-                  "public.execution_instructions", "public.rebalance_proposal_trades",
-                  "public.account_transition_plans", "public.rebalance_proposals", "public.account_model_links",
+                  "public.rebalance_proposal_trades", "public.account_transition_plans",
+                  "public.execution_instructions", "public.rebalance_proposals", "public.account_model_links",
                   "public.rebalance_schedule_days"):
             await op.execute(f"DELETE FROM {t} WHERE org_id = ANY($1::uuid[])", orgs)
         await op.execute("DELETE FROM member_todos WHERE org_id = ANY($1::uuid[])", orgs)
