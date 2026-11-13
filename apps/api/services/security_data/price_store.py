@@ -276,6 +276,10 @@ BEGIN
         SELECT id INTO r FROM {s}.price_series WHERE global_security_id = p_gsid AND price_type = p_type
            AND provider_key IS NOT DISTINCT FROM p_provider AND org_id IS NOT DISTINCT FROM p_org;
     END IF;
+    IF r IS NULL THEN  -- it exists (the insert conflicted) but this context may not see it: an org's series
+        RAISE EXCEPTION 'prices3: the price series (%, %, %, org %) is not visible to this context', p_gsid, p_type,
+              p_provider, p_org USING ERRCODE = '42501';
+    END IF;
     RETURN r;
 END $f$;
 
@@ -296,6 +300,10 @@ BEGIN
         SELECT id INTO r FROM {s}.price_provenance WHERE provider_key IS NOT DISTINCT FROM p_provider
            AND source IS NOT DISTINCT FROM p_source AND currency_code IS NOT DISTINCT FROM p_currency AND licence = lic
            AND upload_id IS NOT DISTINCT FROM p_upload AND org_id IS NOT DISTINCT FROM p_org;
+    END IF;
+    IF r IS NULL THEN
+        RAISE EXCEPTION 'prices3: the price provenance (%, org %) is not visible to this context', p_provider, p_org
+              USING ERRCODE = '42501';
     END IF;
     RETURN r;
 END $f$;
