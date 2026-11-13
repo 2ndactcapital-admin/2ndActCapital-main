@@ -43,6 +43,7 @@ from datetime import date, datetime, time, timedelta, timezone
 import httpx
 
 from services import edgar_bulk as eb
+from services import edgar_bulk_queue as bq
 from services import edgar_fetch
 from services.database import platform_scope
 
@@ -76,13 +77,14 @@ async def _claim_day(conn, day: date, host: str):
                    (trigger_source, status, stages, fetch_cap, runtime_cap_seconds, run_kind, target, params,
                     queued_at, started_at, heartbeat_at, worker_id, worker_host, details)
                VALUES ('schedule', 'running', ARRAY['discover', 'select'], 0, 3600, 'refresh_index', $1,
-                       '{"to": null}'::jsonb, now(), now(), now(), $2, $3, $4::jsonb)
+                       $5::jsonb, now(), now(), now(), $2, $3, $4::jsonb)
                ON CONFLICT ((details->>'schedule_date'))
                    WHERE trigger_source = 'schedule' AND run_kind = 'refresh_index'
                DO NOTHING
                RETURNING id""",
             SCHEDULE_TARGET, f"schedule:{host}", host,
-            json.dumps({"schedule_date": day.isoformat(), "through": (day - timedelta(days=1)).isoformat()}))
+            json.dumps({"schedule_date": day.isoformat(), "through": (day - timedelta(days=1)).isoformat()}),
+            json.dumps(bq.stamp_fixture({"to": None})))   # EDGAROPS1 fix 3: a fixture refresh is on the fixture side
 
 
 async def _finish(conn, run_id, *, status: str, error: str | None, res: dict | None, lines: list[str]) -> None:

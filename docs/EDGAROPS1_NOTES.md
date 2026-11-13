@@ -226,3 +226,27 @@ Section q gains a check that reproduces the race on purpose (0.2 s heartbeats, s
 2,000-filing run came back `fenced` again, the 500 too, and the new check showed `24 heartbeats; tick fenced; row
 succeeded`, so the row was this worker's own close. **With the fix: `--section q` 32 PASS / 0 FAIL** (2,000 →
 `succeeded`; 23 racing heartbeats → `succeeded`).
+
+### Fix 3 — L (CODE): real and fixture runs never cross
+* `edgar_bulk_queue`: `EDGAR_FIXTURE_RUNS=1` (set by `verify_edgarops1` before import, like `AUTHZ_TEST_MODE`; never
+  on Render or a laptop worker) → `stamp_fixture` marks every queued run the process inserts `params.fixture = true`
+  (`_insert_queued`, `edgar_auto_download._insert_day`, `edgar_index_schedule._claim_day`).
+  `claim_next_run(fixtures=…)` (default: the process's mode) takes only runs on its own side, and the
+  one-at-a-time busy check counts only its own side, because fixture runs talk to a mock SEC and never use the 8/s
+  budget. `Worker.fixtures` is passed to every claim and recorded in `edgar_fetch_workers.details.claims`. The
+  Render tick's `_queued_auto_ids` lists only its own side.
+* A worker process started BEFORE this fix still has the old claim loaded. Joe's `…31084:8a632a79` (started
+  03:13 UTC today) was online and idle during this leg and was not stopped. For section l's duration the verify holds a
+  fixture SENTINEL row `running` on the REAL side (heartbeated every 20 s). An old worker obeys the one-at-a-time rule
+  and claims nothing while it is up. New workers ignore it for fixture work. Its protection against the old process is
+  reasoned from the old claim's busy query, not demonstrated (demonstrating it would mean letting a real worker claim
+  a fixture run). After Joe restarts the worker, the sentinel is redundant but harmless.
+* The `section l NOT RUN` escape is removed. New checks, each with the FORBIDDEN row OLDER so a skip cannot be ordering,
+  and the "claims nothing" cases asserting no busy reason: real skips the fixture run and takes the real one; real,
+  offered only a fixture run, claims nothing; fixture skips the real run; a running fixture run does not hold the real
+  slot; fixture, offered only a real run, claims nothing. Plus: the waiting run is stamped fixture; no worker outside
+  the verify touched section l's runs.
+* **`--section l`: 27 PASS / 0 FAIL with Joe's pre-fix laptop worker online** (INFO line names it).
+* [FIND] Other EDGAR verifies (`verify_bulkfetchui*`, …) do not set `EDGAR_FIXTURE_RUNS`. Their laptop-target fixture
+  runs are still claimable by a real laptop worker, the same defect class. Not changed here (out of this fix's scope).
+  One line each (`os.environ["EDGAR_FIXTURE_RUNS"] = "1"` before imports) when they are next touched.

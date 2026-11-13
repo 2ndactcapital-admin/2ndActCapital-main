@@ -33,16 +33,19 @@ edgar_fetch_workers 'verify-edgarops1…'; securities 'EDGAROPS1 FX …' + their
 99000000-0000-0000-0000-0000e0a10001 (is_test) and its replica_securities entry.
 
 REFUSES TO START (exit 2) while a real queued-kind run is running (the queue's one-run-at-a-time rule would make this
-script wait on it). A real LAPTOP worker that is heartbeating (even idle) would claim section l's laptop-target fixture
-runs and send real SEC requests for fixture accessions, so section l is NOT RUN while one is up — reported as a FAIL
-naming the worker, never silently skipped. Every other section queues only render-target runs, which a laptop worker
-never claims.
+script wait on it). Fix 3: EDGAR_FIXTURE_RUNS=1 (set below) stamps every run this script queues params.fixture = true;
+a real worker (Joe's laptop worker, the Render tick) never claims one, and this script's workers never claim a real
+run — section l runs whether or not a real laptop worker is online, and proves both directions. A worker process
+started BEFORE fix 3 still has the old claim loaded; for section l's duration a fixture SENTINEL row holds the real
+side's one-run-at-a-time slot, which an old worker obeys, so it cannot take the laptop fixture runs either.
 """
 
 from __future__ import annotations
 
 import os as _authz_os
 _authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: set before main is imported
+_authz_os.environ["EDGAR_FIXTURE_RUNS"] = "1"  # fix 3: every run this script queues is a FIXTURE run; its workers
+#                                                claim only fixture runs, and a real worker never claims one
 
 import asyncio
 import gzip
@@ -788,6 +791,103 @@ async def y_laptop(conn):
     section("[L] R2 missing on the scheduler → waiting with the reason; a laptop worker completes it; the next day "
             "queues its own run, no filing twice")
     pool = await get_pool()
+    await cross_claims(conn)
+    live = await real_workers(conn)
+    pre = [w["worker_id"] for w in live if "claims" not in jd(w["details"])]
+    print(f"[INFO] real workers online during section l: {[w['worker_id'] for w in live] or 'none'}"
+          f"{'; started BEFORE fix 3 (old claim): ' + str(pre) if pre else ''}", flush=True)
+    sentinel, beat = await hold_real_slot(conn)
+    try:
+        await laptop_body(conn, pool)
+    finally:
+        beat.cancel()
+        await platform(conn, "UPDATE portfolio.edgar_pipeline_runs SET status = 'cancelled', finished_at = now() "
+                             "WHERE id = $1", sentinel, fetch="execute")
+    after = await platform(conn, "SELECT count(*) FROM portfolio.edgar_pipeline_runs WHERE id = ANY($1::uuid[]) AND "
+                                 "worker_id IS NOT NULL AND NOT starts_with(worker_id, $2)", S["l_runs"], WORKER_PREFIX,
+                           fetch="fetchval")
+    check(after == 0, "no worker outside this verify (real or pre-fix) touched section l's fixture runs",
+          f"{after} of {len(S['l_runs'])}")
+
+
+async def _cross_row(conn, *, fixture: bool, age_s: int) -> UUID:
+    """A queued RENDER-target bulk_fetch row (a laptop worker never claims render), tagged for teardown by its
+    institution; ``fixture`` picks its side. ``age_s`` back-dates queued_at so claim ORDER cannot be the reason."""
+    return await platform(conn, """INSERT INTO portfolio.edgar_pipeline_runs
+                   (trigger_source, status, stages, fetch_cap, runtime_cap_seconds, run_kind, target, params, queued_at,
+                    details)
+               VALUES ('verify', 'queued', ARRAY['fetch'], 1, 60, 'bulk_fetch', 'render', $1::jsonb,
+                       now() - make_interval(secs => $2::int), $3::jsonb) RETURNING id""",
+                          json.dumps({"fixture": True} if fixture else {"cross_check": True}), age_s,
+                          json.dumps({"bulk": {"institutions": [GROUP_PREFIX + "Cross"]}}), fetch="fetchval")
+
+
+async def cross_claims(conn) -> None:
+    """fix 3 — the claim never crosses sides, in either direction. In each case the forbidden row is the OLDER one,
+    so taking the allowed row proves a skip, not ordering; then the forbidden row alone is offered and nothing is
+    claimed, with no busy reason (a vacuous None would pass otherwise)."""
+    async def claim(ids, fixtures, tag):
+        async with conn.transaction():
+            return await BQ.claim_next_run(conn, target="render", worker_id=f"{WORKER_PREFIX}-{tag}", host="verify",
+                                           restrict_to=ids, fixtures=fixtures)
+
+    async def status(rid):
+        return await platform(conn, "SELECT status FROM portfolio.edgar_pipeline_runs WHERE id = $1", rid,
+                              fetch="fetchval")
+
+    async def close(*rids):
+        await platform(conn, "UPDATE portfolio.edgar_pipeline_runs SET status = 'cancelled', finished_at = now() "
+                             "WHERE id = ANY($1::uuid[])", list(rids), fetch="execute")
+
+    f_old, r_new = await _cross_row(conn, fixture=True, age_s=120), await _cross_row(conn, fixture=False, age_s=60)
+    got, why = await claim([f_old, r_new], False, "real")
+    check(got is not None and got["id"] == r_new and await status(f_old) == "queued",
+          "a REAL worker's claim skips the (older) fixture run and takes the real one", f"{got and got['id']} {why}")
+    await close(r_new)
+    got, why = await claim([f_old], False, "real")
+    check(got is None and why is None and await status(f_old) == "queued",
+          "offered ONLY a fixture run, a real worker claims nothing (not busy — it is not its side)", f"{got} {why}")
+    r_old, f_new = await _cross_row(conn, fixture=False, age_s=180), await _cross_row(conn, fixture=True, age_s=60)
+    got, why = await claim([r_old, f_new, f_old], True, "fixture")
+    check(got is not None and got["id"] == f_old and await status(r_old) == "queued",
+          "a FIXTURE worker's claim skips the (older) real run and takes a fixture one", f"{got and got['id']} {why}")
+    got, why = await claim([r_old], False, "real")
+    check(got is not None and got["id"] == r_old,
+          "a running fixture run does not hold the real side's one-at-a-time slot (it never touches the SEC)",
+          f"{got and got['id']} {why}")
+    await close(f_old, r_old)
+    r_only = await _cross_row(conn, fixture=False, age_s=180)
+    got, why = await claim([r_only], True, "fixture")
+    check(got is None and why is None and await status(r_only) == "queued",
+          "offered ONLY a real run, a fixture worker claims nothing", f"{got} {why}")
+    await close(f_new, r_only)
+
+
+async def hold_real_slot(conn):
+    """A fixture SENTINEL row 'running' on the REAL side, heartbeated, for section l's duration: a worker started
+    before fix 3 (old claim, no sides) obeys the one-at-a-time rule and claims nothing while it is up."""
+    sid = await platform(conn, """INSERT INTO portfolio.edgar_pipeline_runs
+                   (trigger_source, status, stages, fetch_cap, runtime_cap_seconds, run_kind, target, params, queued_at,
+                    started_at, heartbeat_at, worker_id, worker_host, details)
+               VALUES ('verify', 'running', ARRAY['fetch'], 0, 3600, 'bulk_fetch', 'laptop', '{}'::jsonb, now(), now(),
+                       now(), $1, 'verify-sentinel', $2::jsonb) RETURNING id""",
+                         f"{WORKER_PREFIX}-sentinel-{uuid4().hex[:6]}",
+                         json.dumps({"bulk": {"institutions": [GROUP_PREFIX + "Sentinel"]}}), fetch="fetchval")
+    hconn = await connect(os.environ["DATABASE_URL"])
+
+    async def beat():
+        try:
+            while True:
+                await asyncio.sleep(20)
+                await platform(hconn, "UPDATE portfolio.edgar_pipeline_runs SET heartbeat_at = now() WHERE id = $1",
+                               sid, fetch="execute")
+        finally:
+            await close_conn(hconn)
+
+    return sid, asyncio.create_task(beat())
+
+
+async def laptop_body(conn, pool):
     ciks = await make_group(conn, "Laptop", 1)
     first = await make_filings(conn, ciks[0], 6, cover=COVER_FINAL, day=date(2026, 10, 8))
     d1, d2 = DAY["l1"], DAY["l2"]
@@ -803,6 +903,7 @@ async def y_laptop(conn):
                                            host="verify-edgarops1", ciks=ciks, restrict_to=[], log=lambda m: None)
         row = await auto_row(conn, d1)
         rid1 = row["id"]
+        S["l_runs"] = [rid1]
         w = await AD.work_tick(pool, client_factory=sec_client, host="verify-edgarops1", restrict_to=[rid1],
                                log=lambda m: None)
     finally:
@@ -813,6 +914,9 @@ async def y_laptop(conn):
     out = BQ.run_out(dict(re1))
     check(res["queue"]["action"] == "queued" and re1["status"] == "queued" and re1["target"] == "laptop",
           "the day's list is still queued — target laptop, claimable by the laptop worker", f"{re1['status']}/{re1['target']}")
+    check(jd(re1["params"]).get("fixture") is True,
+          "the waiting run is stamped a FIXTURE run (params.fixture) — only a fixture worker can claim it",
+          f"{jd(re1['params']).get('fixture')}")
     check(w["action"] == "waiting" and out["display_status"] == "waiting" and out["auto_download"]["waiting"]
           and out["auto_download"]["waiting"].startswith("waiting — Render cannot store files: R2_ACCOUNT_ID")
           and "laptop worker can run it" in out["auto_download"]["waiting"],
@@ -828,6 +932,7 @@ async def y_laptop(conn):
     await refresh_ok(conn, d2)
     res2 = await step(conn, pool, d2, ciks, capability=(False, "waiting — test"))
     row2 = await auto_row(conn, d2)
+    S["l_runs"].append(row2["id"])
     l2 = jd(row2["params"]).get("accessions") or []
     check(res2["queue"]["action"] == "queued" and sorted(l2) == sorted(second) and not set(l2) & set(first),
           "the next day queues ITS OWN run: only that day's new filings, none already in the waiting run",
@@ -1242,10 +1347,12 @@ async def run(name, fn, *args):
     print(f"[INFO] {name}: {time.monotonic() - t0:.1f}s", flush=True)
 
 
-async def real_worker(conn) -> str | None:
-    return await platform(conn, f"""SELECT worker_id FROM portfolio.edgar_fetch_workers WHERE stopped_at IS NULL
+async def real_workers(conn) -> list[dict]:
+    """Real workers heartbeating now; ``details.claims`` is absent on a process started before fix 3."""
+    return [dict(r) for r in await platform(conn, f"""SELECT worker_id, target, details FROM portfolio.edgar_fetch_workers
+                                 WHERE stopped_at IS NULL
                                  AND heartbeat_at > now() - interval '{BQ.WORKER_LOST_SECONDS} seconds'
-                                 AND NOT starts_with(worker_id, $1) LIMIT 1""", WORKER_PREFIX, fetch="fetchval")
+                                 AND NOT starts_with(worker_id, $1)""", WORKER_PREFIX)]
 
 
 async def refuse_if_busy(conn) -> str | None:
@@ -1304,10 +1411,6 @@ async def main_async() -> int:
         seeded = True
         for k, fn in SECTIONS.items():
             if fn is not None and (only is None or only == k):
-                if k == "l" and (w := await real_worker(conn)):
-                    check(False, "section l NOT RUN: a real laptop worker is heartbeating and would claim the "
-                          "laptop-target fixture runs — stop it, then run --section l", f"{w}")
-                    continue
                 await run(k, fn, conn)
         if only in (None, "h"):
             await run("live", y_live, conn)

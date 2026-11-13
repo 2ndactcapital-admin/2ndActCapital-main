@@ -216,7 +216,7 @@ async def _insert_day(conn, *, day: date, status: str, target: str, params: dict
                    WHERE {AUTO_RUN_SQL}
                DO NOTHING
                RETURNING *""",
-            status, int(n), eb.RUNTIME_CAP_SECONDS, target, _json(params), closed, stop_reason, error,
+            status, int(n), eb.RUNTIME_CAP_SECONDS, target, _json(bq.stamp_fixture(params)), closed, stop_reason, error,
             _json({"auto_download": auto | {"date": day.isoformat()}}))
 
 
@@ -346,7 +346,7 @@ async def _queued_auto_ids(conn) -> list:
     async with platform_scope(conn):
         return [r["id"] for r in await conn.fetch(
             f"SELECT id FROM portfolio.edgar_pipeline_runs WHERE {AUTO_RUN_SQL} AND status = 'queued' "
-            "ORDER BY queued_at, id")]
+            f"AND {bq.FIXTURE_SQL} = $1 ORDER BY queued_at, id", bq.fixture_mode())]   # fix 3: own side only
 
 
 async def _mark_waiting(conn, ids: list, why: str | None, *, retarget: str | None = None) -> None:
@@ -401,7 +401,7 @@ async def work_tick(pool, *, deadline_seconds: float | None = None, client_facto
                        runner_kwargs=runner_kwargs)
     async with pool.acquire() as conn:
         run, busy = await bq.claim_next_run(conn, target="render", worker_id=worker.worker_id, host=worker.host,
-                                            restrict_to=ids)
+                                            restrict_to=ids, fixtures=worker.fixtures)
     if run is None:
         return {"action": "busy", "reason": busy} if busy else {"action": "idle"}
     bound = float(deadline_seconds if deadline_seconds is not None else tick_seconds())

@@ -78,6 +78,22 @@ STOP_POLL_SECONDS = 5
 POLL_SECONDS = 15
 WORKER_LOST_SECONDS = 120          # a laptop worker is "online" within this; a running run past it is "worker lost"
 RENDER_ALIVE_SECONDS = 300
+
+# EDGAROPS1 fix 3 — REAL and FIXTURE runs never cross. A process with EDGAR_FIXTURE_RUNS=1 (the verify scripts; never
+# set on Render or a laptop worker) stamps every queued run it inserts params.fixture = true, and its workers claim
+# ONLY such runs. Any other worker claims ONLY unstamped runs. The one-at-a-time rule protects the SEC's 8/s budget,
+# so it is kept per side: fixture runs talk to a mock SEC, and they neither take that slot nor wait for it.
+FIXTURE_ENV = "EDGAR_FIXTURE_RUNS"
+FIXTURE_SQL = "(COALESCE(params->>'fixture', '') = 'true')"
+
+
+def fixture_mode() -> bool:
+    return os.environ.get(FIXTURE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def stamp_fixture(params: dict) -> dict:
+    """``params`` + fixture = true when this process inserts fixture runs."""
+    return {**params, "fixture": True} if fixture_mode() else params
 MAX_CONCURRENCY = 16
 DEFAULT_CONCURRENCY = 6
 RENDER_WORKER_ENV = "EDGAR_BULK_RENDER_WORKER_SERVICE_ID"
@@ -685,7 +701,7 @@ async def _insert_queued(conn, *, run_kind: str, target: str, params: dict, requ
                VALUES ('manual', $1, 'queued', $2::text[], $3, $4, $5, $6, $7::jsonb, now(), $8::jsonb)
                RETURNING *""",
             requested_by, stages, min(int(fetch_cap), 2_000_000_000), eb.RUNTIME_CAP_SECONDS, run_kind, target,
-            _json(params), _json(details))
+            _json(stamp_fixture(params)), _json(details))
 
 
 async def _check_target(conn, target: str) -> dict:
@@ -922,36 +938,44 @@ async def get_run(conn, run_id) -> dict:
 # ═══ The worker ═════════════════════════════════════════════════════════════
 
 async def claim_next_run(conn, *, target: str, worker_id: str, host: str,
-                         restrict_to: list | None = None) -> tuple[dict | None, str | None]:
+                         restrict_to: list | None = None,
+                         fixtures: bool | None = None) -> tuple[dict | None, str | None]:
     """Claim the oldest queued run for ``target``. Returns (row, None) or
     (None, why-not). One run at a time across all workers: the check and the
     claim share one transaction-scoped advisory lock.
 
     ``restrict_to`` (run ids) is the verify's isolation: a verify worker must
-    never claim a REAL queued run. None = every queued run (production)."""
+    never claim a REAL queued run. None = every queued run (production).
+
+    ``fixtures`` (default: this process's EDGAR_FIXTURE_RUNS) picks the side: a
+    real worker never claims a fixture run, a fixture worker never a real one,
+    and the busy check counts only runs on the claimer's own side."""
+    fixtures = fixture_mode() if fixtures is None else bool(fixtures)
     async with platform_scope(conn):
         await conn.execute("SELECT pg_advisory_xact_lock($1)", CLAIM_LOCK_KEY)
         busy = await conn.fetchrow(
             f"""SELECT id, worker_id, target FROM portfolio.edgar_pipeline_runs
                  WHERE status = 'running' AND run_kind = ANY($1::text[])
                    AND heartbeat_at >= now() - interval '{WORKER_LOST_SECONDS} seconds'
-                 LIMIT 1""", list(QUEUED_KINDS))
+                   AND {FIXTURE_SQL} = $2
+                 LIMIT 1""", list(QUEUED_KINDS), fixtures)
         if busy:
             return None, (f"run {busy['id']} is running on worker {busy['worker_id']} ({busy['target']}); "
                           "one bulk run at a time keeps the SEC budget at 8/s")
         row = await conn.fetchrow(
-            """UPDATE portfolio.edgar_pipeline_runs
+            f"""UPDATE portfolio.edgar_pipeline_runs
                   SET status = 'running', worker_id = $2, worker_host = $3, heartbeat_at = now(),
                       started_at = now(), finished_at = NULL, stop_requested = false, error = NULL,
                       stop_reason = NULL
                 WHERE id = (SELECT id FROM portfolio.edgar_pipeline_runs
                              WHERE status = 'queued' AND target = $1 AND run_kind = ANY($4::text[])
                                AND ($5::uuid[] IS NULL OR id = ANY($5::uuid[]))
+                               AND {FIXTURE_SQL} = $6
                              ORDER BY queued_at, id
                              LIMIT 1
                              FOR UPDATE SKIP LOCKED)
             RETURNING *""", target, worker_id, host, list(QUEUED_KINDS),
-            None if restrict_to is None else list(restrict_to))
+            None if restrict_to is None else list(restrict_to), fixtures)
         if row:
             # A requeued run: the previous executor is gone; its claims are this
             # run id's and would otherwise block the resume until they lapse.
@@ -968,7 +992,7 @@ class Worker:
                  host: str | None = None, client_factory=None, out=print, poll_seconds: float = POLL_SECONDS,
                  heartbeat_seconds: float = HEARTBEAT_SECONDS, stop_poll_seconds: float = STOP_POLL_SECONDS,
                  stop_event: asyncio.Event | None = None, runner_kwargs: dict | None = None,
-                 restrict_to: list | None = None):
+                 restrict_to: list | None = None, fixtures: bool | None = None):
         if target not in TARGETS:
             raise ValueError(f"--target must be one of {list(TARGETS)}")
         self.pool, self.target, self.out = pool, target, out
@@ -981,6 +1005,7 @@ class Worker:
         self.stop = stop_event or asyncio.Event()       # Ctrl-C: finish the run as 'stopped', then exit
         self.runner_kwargs = runner_kwargs or {}
         self.restrict_to = restrict_to
+        self.fixtures = fixture_mode() if fixtures is None else bool(fixtures)   # fix 3: which side it claims from
         self.current_run_id = None
         self.fenced = False
         self._run_stop: asyncio.Event | None = None
@@ -994,7 +1019,9 @@ class Worker:
                 """INSERT INTO portfolio.edgar_fetch_workers (worker_id, target, host, pid, details)
                    VALUES ($1, $2, $3, $4, $5::jsonb)
                    ON CONFLICT (worker_id) DO UPDATE SET heartbeat_at = now(), stopped_at = NULL""",
-                self.worker_id, self.target, self.host, os.getpid(), _json({"started_by": "run_bulk_fetch --worker"}))
+                self.worker_id, self.target, self.host, os.getpid(),
+                _json({"started_by": "run_bulk_fetch --worker", "fixtures": self.fixtures,
+                       "claims": "fixture runs only" if self.fixtures else "real runs only"}))
 
     async def heartbeat(self) -> bool:
         """Worker row + (when running) the run row. False = fenced: the run row
@@ -1186,7 +1213,8 @@ class Worker:
                 await self.heartbeat()
                 async with self.pool.acquire() as conn:
                     run, why = await claim_next_run(conn, target=self.target, worker_id=self.worker_id,
-                                                    host=self.host, restrict_to=self.restrict_to)
+                                                    host=self.host, restrict_to=self.restrict_to,
+                                                    fixtures=self.fixtures)
                 if run is not None:
                     await self.execute(run)
                     n += 1
