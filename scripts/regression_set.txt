@@ -76,3 +76,4 @@ verify_cpsim06.py
 verify_dailyops1.py
 verify_track1.py
 verify_readerfix1.py
+verify_prices2.py

@@ -77,6 +77,15 @@ Studio registry entry (once per day by a unique index; idempotent per file;
 failures recorded per fund on portfolio.replica_refresh_events, exit code 1
 when the step itself failed). REPLICA_HOLDINGS_AUTO_REFRESH=0 turns it off.
 
+END-OF-DAY PRICES (prices2). Then ``services.security_data.prices.prices_tick``:
+the 21:15 New York job "Security data — prices" opens the day's row
+(portfolio.price_refresh_days) and does the first slice; every tick after it
+continues that day with one bounded slice (inside the 180 s step deadline)
+until every covered security is refreshed for the day or the source's daily
+call budget is spent — one row per day, a lease so two ticks never race,
+progress on the row. It never starts a day, does nothing while the job is
+switched off, and never raises. PRICES_DAY_TICK=0 turns it off.
+
 DEAL-ROOM ACCESS (dealroom3). ``services.deal_room_control.access_tick`` sweeps
 every NON-test org with live deal access: granted → expired the day after the
 access end date, the "expiring" notice, granted → paused on a lapsed
@@ -176,6 +185,16 @@ async def main() -> int:
             holdings = {"action": "failed", "error": f"{type(exc).__name__}: {exc}"}
         if holdings["action"] in ("succeeded", "partial", "failed"):
             print(f"[scheduler] replica holdings refresh: { {k: v for k, v in holdings.items() if k != 'results'} }")
+        # PRICES2 — continue today's end-of-day price refresh (one slice), started by the 21:15 New York job; only
+        # while that job is switched on. Its own step; never raises (a failure is recorded on the day row).
+        try:
+            from services.security_data.prices import prices_tick
+
+            px = await prices_tick(pool)
+            if px.get("action") not in ("off", "job_off", "idle", "not_deployed"):
+                print(f"[scheduler] end-of-day prices: {px}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] end-of-day prices failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         try:
             expiry = await expire_tick(pool)
             if any(expiry.values()):

@@ -7937,6 +7937,41 @@
 --   account_id                               uuid
 --   PRIMARY KEY positions_pkey: (id)
 
+-- ===== portfolio.price_refresh_days =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   scope                                    text NOT NULL DEFAULT 'platform'::text
+--   price_day                                date NOT NULL
+--   status                                   text NOT NULL DEFAULT 'running'::text
+--   covered                                  integer NOT NULL DEFAULT 0
+--   refreshed                                integer NOT NULL DEFAULT 0
+--   calls                                    integer NOT NULL DEFAULT 0
+--   slices                                   integer NOT NULL DEFAULT 0
+--   deferred                                 integer NOT NULL DEFAULT 0
+--   new_loaded                               integer NOT NULL DEFAULT 0
+--   consecutive_failures                     integer NOT NULL DEFAULT 0
+--   errors                                   jsonb NOT NULL DEFAULT '[]'::jsonb
+--   summary                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   stop_detail                              text
+--   workflow_run_id                          uuid
+--   lease_until                              timestamp with time zone
+--   started_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   heartbeat_at                             timestamp with time zone
+--   finished_at                              timestamp with time zone
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   PRIMARY KEY price_refresh_days_pkey: (id)
+
+-- ===== portfolio.price_refresh_state =====
+--   global_security_id                       uuid NOT NULL
+--   last_refreshed_on                        date NOT NULL
+--   last_outcome                             text NOT NULL
+--   last_provider                            text
+--   last_day_id                              uuid
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   PRIMARY KEY price_refresh_state_pkey: (global_security_id)
+
 -- ===== portfolio.provider_call_log =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   provider_key                             text NOT NULL

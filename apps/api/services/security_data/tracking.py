@@ -226,30 +226,38 @@ def _confirm(sel: dict, expected_total, verb: str) -> None:
 
 # ── the estimate ────────────────────────────────────────────────────────────
 def nightly_capacity(spec, deadline_s: float) -> int:
-    """Securities the nightly prices step can fetch inside its deadline (the backfill's own per-call timing)."""
+    """Securities ONE slice of the nightly prices refresh can fetch inside its deadline (the backfill's own per-call
+    timing). PRICES2: the day's refresh runs a slice every scheduler tick, so this is per slice, not per night."""
     per_call_s = spec.min_interval_s + 0.4
     return max(0, int(deadline_s // per_call_s)) * max(1, spec.max_symbols_per_call)
 
 
 def estimate_numbers(*, selected: int, to_load: int, coverage_after: int, per_call: int, budget: int | None,
-                     nightly_cap: int, nightly_max_new: int) -> dict:
+                     nightly_cap: int, nightly_max_new: int, new_per_day: int | None = None) -> dict:
     """Pure arithmetic (the verify recomputes it by hand)."""
     calls = math.ceil(to_load / max(1, per_call))
     days = (math.ceil(calls / budget) if calls else 0) if budget else None
-    new_per_night = min(nightly_max_new, nightly_cap) if nightly_cap else 0
+    # PRICES2: new members' history is capped per DAY (nightly_max_new across the day's slices) — the caller passes
+    # new_per_day; without it, the old per-run arithmetic (one slice a night) is kept
+    new_per_night = new_per_day if new_per_day is not None else (min(nightly_max_new, nightly_cap) if nightly_cap else 0)
     nights = (math.ceil(to_load / new_per_night) if to_load else 0) if new_per_night else None
     upkeep = math.ceil(coverage_after / max(1, per_call))
     warnings = []
     if budget and upkeep > budget:
         warnings.append(f"keeping {coverage_after:,} securities current needs {upkeep:,} calls a day — more than the "
                         f"daily budget of {budget:,}; some will go stale")
-    if nightly_cap and coverage_after > nightly_cap:
-        warnings.append(f"the nightly job refreshes about {nightly_cap:,} securities a night; {coverage_after:,} "
-                        "covered means each is refreshed every "
-                        f"{math.ceil(coverage_after / nightly_cap)} nights (run the backfill to catch up)")
+    # PRICES2: the nightly refresh continues tick after tick through the day, so its limit is the DAILY BUDGET (budget
+    # × securities per call), not one run's deadline (nightly_cap is now the capacity of ONE ~180 s slice)
+    per_day = budget * max(1, per_call) if budget else None
+    every = math.ceil(coverage_after / per_day) if per_day and coverage_after else (1 if coverage_after else 0)
+    if per_day and coverage_after > per_day:
+        warnings.append(f"the nightly price refresh keeps at most {per_day:,} securities current a day (the daily "
+                        f"budget of {budget:,} calls); {coverage_after:,} covered means each is refreshed every "
+                        f"{every} days, oldest first — held, modelled and benchmark securities every day")
     return {"selected": selected, "to_load": to_load, "estimated_calls": calls, "daily_budget": budget,
             "days_at_budget": days, "nights_nightly_only": nights, "coverage_after": coverage_after,
-            "upkeep_calls_per_day": upkeep, "nightly_capacity": nightly_cap, "warnings": warnings}
+            "upkeep_calls_per_day": upkeep, "nightly_capacity": nightly_cap, "refreshes_per_day": per_day,
+            "refresh_every_days": every, "warnings": warnings}
 
 
 async def estimate(conn, gsids, *, removing: bool = False) -> dict:
@@ -282,7 +290,9 @@ async def estimate(conn, gsids, *, removing: bool = False) -> dict:
         to_load = len([g for g in ids if g not in priced])
     out = estimate_numbers(selected=len(ids), to_load=to_load, coverage_after=coverage_after,
                            per_call=spec.max_symbols_per_call, budget=int(budget) if budget is not None else None,
-                           nightly_cap=nightly_capacity(spec, P.NIGHTLY_DEADLINE_S), nightly_max_new=P.NIGHTLY_MAX_NEW)
+                           nightly_cap=nightly_capacity(spec, P.NIGHTLY_DEADLINE_S), nightly_max_new=P.NIGHTLY_MAX_NEW,
+                           new_per_day=min(P.NIGHTLY_MAX_NEW, int(budget) * max(1, spec.max_symbols_per_call))
+                           if budget is not None else P.NIGHTLY_MAX_NEW)
     return {"provider": key, "coverage_now": len(cov), **out}
 
 

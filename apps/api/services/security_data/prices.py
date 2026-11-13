@@ -12,8 +12,12 @@ vendor is named here; every adapter is an ``EodPriceProvider`` and is asked only
     backfill(...)                the operator's history load (scripts/prices_backfill.py): --dry-run estimates,
                                  --resume checkpoints, a run row in the job history.
     nightly(pool, ...)           the platform job "Security data — prices": gap fill for the coverage set's last few
-                                 days + full history for NEW members, within budget and a deadline, resuming next
-                                 night. A source failure RAISES → the engine holds the run and alerts a Super Admin.
+                                 days + full history for NEW members, within budget and a deadline. PRICES2: one
+                                 SLICE of the day's refresh (portfolio.price_refresh_days); prices_tick continues it
+                                 every scheduler tick until every covered security is refreshed for the day or the
+                                 daily budget is spent; priority + oldest-first (refresh_order). A source failure
+                                 RAISES in the job step → the engine holds the run and alerts a Super Admin; the tick
+                                 records it on the day row and never raises.
 
 QUALITY (never silently stored): a zero / negative close → 'invalid_value' event, not stored (the store's CHECK
 refuses it too); a currency other than the security's → 'currency_mismatch' event, nothing stored for it; a spike
@@ -52,6 +56,22 @@ GAP_FILL_DAYS = 10          # the nightly re-reads this many calendar days for e
 NIGHTLY_MAX_NEW = 200       # new coverage-set members given full history per night (the rest next night)
 NIGHTLY_DEADLINE_S = 180.0  # inside the 200 s step deadline (security_master_jobs.STEP_DEADLINE_S)
 BATCH = 25                  # securities per batch (one transaction each; streaming)
+#: PRICES2 — the day's refresh resumes across scheduler ticks (portfolio.price_refresh_days, one row per scope + day)
+DAY_SCOPE = "platform"      # the scheduled job's day rows (a verify uses its own scope)
+DAY_LEASE_S = 600           # a slice's lease; a holder that died is picked up once it expires
+SLICE_CHUNK = 100           # securities per planning chunk inside a slice (split into gap fill / new history)
+FAILED_SLICES_STOP = 3      # consecutive failed slices → the day stops 'stopped_error' (no retry every 5 min forever)
+STALE_DAY_ROWS = 3          # a 'running' day row older than this many days is closed 'carried_over' by the tick
+#: refresh priority. The org uses first — held positions, then models / replicas, then the benchmarks, then any other
+#: org use — refreshed EVERY day before anything else; then the tracked lists in this order; anything else last.
+ORG_SOURCE_TIERS = {"position": 0, "model": 1, "replica": 1, "replica_constituent": 1, "benchmark": 2,
+                    "option_underlying": 3, "note": 3, "substitution": 3, "backtest": 3}
+LIST_PRIORITY = ("core_etfs", "fixed_income", "commodities", "key_benchmarks", "sp500", "russell2000")
+LIST_TIER_BASE = 10         # list i → tier 10 + i; a tracked security in no ranked list → OTHER_TIER
+OTHER_TIER = 99
+DAY_STATUS_LABELS = {"running": "Running", "complete": "Complete — every covered security refreshed",
+                     "stopped_budget": "Stopped — the daily call budget is spent (the rest goes first tomorrow)",
+                     "stopped_error": "Stopped — the source failed", "carried_over": "Carried over to the next day"}
 CONTEXT_POINTS = 40         # stored closes read before a batch, so a spike / gap at its start is judged too
 
 #: verify only: provider key → zero-arg factory of a RECORDED transport. Production leaves it empty and each
@@ -70,6 +90,7 @@ class Item:
     currency: str | None
     sources: list[str] = field(default_factory=list)
     coverage: str = "unknown"
+    tier: int = 99              # PRICES2 refresh priority (assign_tiers; lower = sooner)
 
 
 @dataclass
@@ -261,7 +282,7 @@ async def limits(conn) -> Limits:
 
 async def ingest(pool, provider: EodPriceProvider, items: list[Item], start: date, end: date, *, today: date,
                  run_id, budget_left: int | None = None, deadline: float | None = None, batch: int = BATCH,
-                 on_batch=None, judge_coverage: bool = True) -> IngestOutcome:
+                 on_batch=None, judge_coverage: bool = True, clock=time.monotonic) -> IngestOutcome:
     """Fetch [start, end] for ``items`` through ``provider``, batch by batch; each batch's quality events, writes and
     coverage in ONE platform transaction. Stops cleanly at the budget / deadline (the rest → ``deferred``). An
     EodSourceError stops this provider (recorded in ``errors``); what was stored before it stays. ``on_batch(done
@@ -276,7 +297,7 @@ async def ingest(pool, provider: EodPriceProvider, items: list[Item], start: dat
     i = 0
     while i < len(items):
         chunk = items[i:i + batch]
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock() >= deadline:
             out.deferred += [it.gsid for it in items[i:]]
             break
         sym_of = {it.gsid: provider.symbol_for(it.identifiers) for it in chunk}
@@ -511,59 +532,455 @@ async def backfill(pool, provider: EodPriceProvider, items: list[Item], *, years
     return {"dry_run": False, "status": status, **summary}
 
 
+# ── PRICES2: priority + oldest-first order (pure) ───────────────────────────
+def tier_of(sources, lists=(), list_priority=LIST_PRIORITY) -> int:
+    """Pure. The refresh tier of one covered security: the best (lowest) of its org uses (ORG_SOURCE_TIERS) and the
+    ranked lists it is tracked through (LIST_TIER_BASE + the list's place in ``list_priority``); else OTHER_TIER.
+    'requested' / 'tracked' alone rank nothing."""
+    t = [ORG_SOURCE_TIERS[s_] for s_ in (sources or ()) if s_ in ORG_SOURCE_TIERS]
+    t += [LIST_TIER_BASE + list_priority.index(k) for k in (lists or ()) if k in list_priority]
+    return min(t) if t else OTHER_TIER
+
+
+def refresh_order(items: list[Item], last_refreshed: dict, latest_close: dict) -> list[Item]:
+    """Pure. The order a day's refresh asks for securities:
+      1. the org uses (tier < LIST_TIER_BASE) before everything tracked — refreshed every day first;
+      2. oldest last refresh first (never refreshed = oldest) — what was not reached yesterday goes first today;
+      3. tier (core ETFs → fixed income → commodities → key benchmarks → S&P 500 → Russell 2000 → other);
+      4. the stalest stored close first (TRACK1), never-priced first; 5. gsid."""
+    return sorted(items, key=lambda it: (0 if it.tier < LIST_TIER_BASE else 1, last_refreshed.get(it.gsid) or date.min,
+                                         it.tier, latest_close.get(it.gsid) or date.min, it.gsid))
+
+
+async def assign_tiers(conn, items: list[Item], *, list_priority=LIST_PRIORITY) -> None:
+    """Set ``item.tier`` from its sources and the live lists it is tracked through (list members + the tracked row's
+    own list_key). Platform scope, own transaction. Tables not deployed → sources only."""
+    gsids = [it.gsid for it in items]
+    lists: dict[str, set] = {}
+    if gsids:
+        async with conn.transaction():
+            await _platform(conn)
+            have = await conn.fetchval("SELECT to_regclass('portfolio.security_list_members') IS NOT NULL AND "
+                                       "to_regclass('portfolio.tracked_securities') IS NOT NULL")
+            if have:
+                for r in await conn.fetch(
+                        "SELECT t.global_security_id::text AS g, m.list_key FROM portfolio.tracked_securities t JOIN "
+                        "portfolio.security_list_members m ON m.global_security_id = t.global_security_id AND "
+                        "m.valid_to IS NULL AND m.system_to IS NULL WHERE t.status = 'tracked' AND t.valid_to IS NULL "
+                        "AND t.system_to IS NULL AND t.global_security_id = ANY($1::uuid[]) UNION SELECT "
+                        "global_security_id::text, list_key FROM portfolio.tracked_securities WHERE status = 'tracked' "
+                        "AND list_key IS NOT NULL AND valid_to IS NULL AND system_to IS NULL AND global_security_id = "
+                        "ANY($1::uuid[])", gsids):
+                    lists.setdefault(r["g"], set()).add(r["list_key"])
+    for it in items:
+        it.tier = tier_of(it.sources, lists.get(it.gsid, ()), list_priority)
+
+
+async def refresh_state(conn, gsids: list[str]) -> dict:
+    """{gsid: last_refreshed_on} (portfolio.price_refresh_state; {} where it is not deployed)."""
+    if not gsids:
+        return {}
+    async with conn.transaction():
+        await _platform(conn)
+        if not await conn.fetchval("SELECT to_regclass('portfolio.price_refresh_state') IS NOT NULL"):
+            return {}
+        rows = await conn.fetch("SELECT global_security_id::text AS g, last_refreshed_on AS d FROM "
+                                "portfolio.price_refresh_state WHERE global_security_id = ANY($1::uuid[])", gsids)
+    return {r["g"]: r["d"] for r in rows}
+
+
+async def mark_refreshed(pool, gsids: list[str], *, day: date, outcome: str, provider_key: str | None,
+                         day_id=None) -> int:
+    """Record ``day`` as the last refresh of each security (one statement). Never moves a later day backwards."""
+    if not gsids:
+        return 0
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _platform(conn)
+            if not await conn.fetchval("SELECT to_regclass('portfolio.price_refresh_state') IS NOT NULL"):
+                return 0
+            await conn.execute(
+                "INSERT INTO portfolio.price_refresh_state (global_security_id, last_refreshed_on, last_outcome, "
+                "last_provider, last_day_id, updated_at) SELECT g, $2, $3, $4, $5::uuid, now() FROM "
+                "unnest($1::uuid[]) AS g ON CONFLICT (global_security_id) DO UPDATE SET last_refreshed_on = "
+                "EXCLUDED.last_refreshed_on, last_outcome = EXCLUDED.last_outcome, last_provider = "
+                "EXCLUDED.last_provider, last_day_id = EXCLUDED.last_day_id, updated_at = now() WHERE "
+                "portfolio.price_refresh_state.last_refreshed_on <= EXCLUDED.last_refreshed_on",
+                sorted(set(gsids)), day, outcome, provider_key, str(day_id) if day_id else None)
+    return len(set(gsids))
+
+
+def _merge(into: IngestOutcome, add: IngestOutcome) -> None:
+    for k, v in add.__dict__.items():
+        if k == "provider":
+            continue
+        cur = getattr(into, k)
+        if isinstance(v, int):
+            setattr(into, k, cur + v)
+        elif isinstance(v, list):
+            cur.extend(v)
+        elif isinstance(v, dict):
+            for kk, vv in v.items():
+                cur[kk] = cur.get(kk, 0) + vv
+
+
+# ── the day row (portfolio.price_refresh_days) ──────────────────────────────
+def day_out(r) -> dict | None:
+    if r is None:
+        return None
+    d = dict(r)
+    for k in ("id", "workflow_run_id"):
+        if d.get(k) is not None:
+            d[k] = str(d[k])
+    for k in ("started_at", "heartbeat_at", "finished_at", "lease_until"):
+        if d.get(k) is not None:
+            d[k] = d[k].isoformat()
+    if d.get("price_day") is not None:
+        d["price_day"] = d["price_day"].isoformat()
+    for k in ("errors", "summary"):
+        if isinstance(d.get(k), str):
+            d[k] = json.loads(d[k])
+    d["status_label"] = DAY_STATUS_LABELS.get(d.get("status"), d.get("status"))
+    d["progress_label"] = f"{int(d.get('refreshed') or 0):,} of {int(d.get('covered') or 0):,} refreshed"
+    return d
+
+
+async def open_day(pool, *, scope: str, day: date, workflow_run_id=None) -> dict:
+    """Today's row for ``scope`` (created once — the unique (scope, price_day) index decides, never a read-then-write
+    race). A still-running row of an EARLIER day is closed 'carried_over': what it did not reach goes first today."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _platform(conn)
+            await conn.execute(
+                "UPDATE portfolio.price_refresh_days SET status = 'carried_over', finished_at = now(), lease_until = "
+                "NULL, stop_detail = 'a new day started before this one finished' WHERE scope = $1 AND status = "
+                "'running' AND price_day < $2", scope, day)
+            await conn.execute(
+                "INSERT INTO portfolio.price_refresh_days (scope, price_day, workflow_run_id) VALUES ($1, $2, $3::uuid) "
+                "ON CONFLICT (scope, price_day) DO NOTHING", scope, day, str(workflow_run_id) if workflow_run_id else None)
+            row = await conn.fetchrow("SELECT * FROM portfolio.price_refresh_days WHERE scope = $1 AND price_day = $2",
+                                      scope, day)
+    return day_out(row)
+
+
+async def claim_day(pool, day_id) -> dict | None:
+    """The slice's lease: only a RUNNING row whose lease is free or expired — two ticks never refresh the same day at
+    once."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _platform(conn)
+            row = await conn.fetchrow(
+                "UPDATE portfolio.price_refresh_days SET lease_until = now() + make_interval(secs => $2::integer), "
+                "heartbeat_at = now() WHERE id = $1::uuid AND status = 'running' AND (lease_until IS NULL OR "
+                "lease_until < now()) RETURNING *", str(day_id), DAY_LEASE_S)
+    return day_out(row)
+
+
+async def _close_slice(pool, day_id, **cols) -> dict | None:
+    sets, args = [], [str(day_id)]
+    for k, v in cols.items():
+        args.append(json.dumps(v, default=str) if k in ("errors", "summary") else v)
+        sets.append(f"{k} = ${len(args)}" + ("::jsonb" if k in ("errors", "summary") else ""))
+    sets += ["lease_until = NULL", "heartbeat_at = now()"]
+    if cols.get("status") and cols["status"] != "running":
+        sets.append("finished_at = now()")
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _platform(conn)
+            row = await conn.fetchrow(f"UPDATE portfolio.price_refresh_days SET {', '.join(sets)} WHERE id = $1::uuid "
+                                      "RETURNING *", *args)
+    return day_out(row)
+
+
+async def day_rows(conn, *, scope: str = DAY_SCOPE, limit: int = 10) -> list[dict]:
+    """The latest day rows for ``scope`` (caller holds platform scope or reads under the SELECT-for-all policy)."""
+    if not await conn.fetchval("SELECT to_regclass('portfolio.price_refresh_days') IS NOT NULL"):
+        return []
+    return [day_out(r) for r in await conn.fetch(
+        "SELECT * FROM portfolio.price_refresh_days WHERE scope = $1 ORDER BY price_day DESC LIMIT $2", scope, limit)]
+
+
 # ── the nightly job step ────────────────────────────────────────────────────
 async def nightly(pool, *, today: date | None = None, run_id=None, include_test_orgs: bool = False,
                   only_gsids: list[str] | None = None, keys: list[str] | None = None, years: int = DEFAULT_YEARS,
                   gap_days: int = GAP_FILL_DAYS, max_new: int = NIGHTLY_MAX_NEW,
-                  deadline_s: float = NIGHTLY_DEADLINE_S, providers: dict | None = None) -> dict:
-    """Gap fill + new members' history, rank order with fallback: what the first adapter does not find goes to the
-    next. Raises PricesJobError when any adapter's request failed (after storing what it could)."""
+                  deadline_s: float = NIGHTLY_DEADLINE_S, providers: dict | None = None, scope: str | None = None,
+                  list_priority=LIST_PRIORITY, raise_errors: bool = True, clock=time.monotonic) -> dict:
+    """ONE slice of the day's refresh: gap fill + new members' history, in priority / oldest-first order, rank order
+    with fallback (what the first adapter does not find goes to the next), inside ``deadline_s`` and each adapter's
+    daily budget.
+
+    DAY MODE (the scheduled job: ``only_gsids`` None, or an explicit ``scope``): the day's row in
+    portfolio.price_refresh_days is opened (once) and leased; securities already refreshed for ``today`` are skipped;
+    the slice's progress is recorded on the row, which ends 'complete' (every covered security refreshed today),
+    'stopped_budget' (the first source's daily budget is spent — the rest goes first tomorrow) or 'stopped_error'
+    (FAILED_SLICES_STOP failed slices in a row); otherwise it stays 'running' and the scheduler tick (prices_tick)
+    continues it. A day row that another slice holds → nothing is done ('busy').
+
+    ONE-OFF MODE (``only_gsids`` without a ``scope`` — the operator's --gsid, PRICES1 / TRACK1 verifies): no day row
+    and no price_refresh_state write; every requested security is refreshed (PRICES1's behaviour). (A state row is
+    platform data keyed by the security: written by a one-off run, it made those verifies' org-keyed teardown refuse.)
+
+    Raises PricesJobError when any adapter's request failed (after storing and recording what it could) unless
+    ``raise_errors`` is False (the tick)."""
     today = today or datetime.now(timezone.utc).date()
+    day_mode = scope is not None or only_gsids is None
+    scope = scope or DAY_SCOPE
+    deadline = clock() + deadline_s
+    day = None
+    wf_run = run_id
+    if day_mode:
+        day = await open_day(pool, scope=scope, day=today, workflow_run_id=run_id)
+        if day["status"] != "running":
+            return {"coverage_set": day["covered"], "providers": {}, "today": today.isoformat(), "run_id": day["id"],
+                    "errors": [], "action": "day_finished", "day": day, "deferred": 0}
+        claimed = await claim_day(pool, day["id"])
+        if claimed is None:
+            return {"coverage_set": day["covered"], "providers": {}, "today": today.isoformat(), "run_id": day["id"],
+                    "errors": [], "action": "busy", "day": day, "deferred": 0}
+        day = claimed
+        run_id = uuid.UUID(day["id"])
     run_id = run_id or uuid.uuid4()
-    deadline = time.monotonic() + deadline_s
+    try:
+        summary = await _slice(pool, today=today, run_id=run_id, include_test_orgs=include_test_orgs,
+                               only_gsids=only_gsids, keys=keys, years=years, gap_days=gap_days, max_new=max_new,
+                               deadline=deadline, providers=providers, day=day, list_priority=list_priority,
+                               clock=clock)
+    except Exception as exc:  # noqa: BLE001 — recorded on the day row, then re-raised (the step holds) or returned
+        if day is None:
+            raise
+        err = f"{type(exc).__name__}: {str(exc)[:500]}"
+        fails = int(day["consecutive_failures"]) + 1
+        await _close_slice(pool, day["id"], slices=int(day["slices"]) + 1, consecutive_failures=fails,
+                           errors=(day.get("errors") or [])[-49:] + [{"at": datetime.now(timezone.utc).isoformat(),
+                                                                       "error": err}],
+                           status="stopped_error" if fails >= FAILED_SLICES_STOP else "running",
+                           stop_detail=err if fails >= FAILED_SLICES_STOP else None)
+        if raise_errors:
+            raise
+        return {"coverage_set": day["covered"], "providers": {}, "today": today.isoformat(), "run_id": day["id"],
+                "errors": [err], "action": "failed", "day": None, "deferred": 0}
+    summary["tracked_progress"] = await _tracked_progress(pool)
+    if day is not None:
+        summary["workflow_run_id"] = str(wf_run) if wf_run else None
+        summary["day"] = await _record_slice(pool, day, summary, keys_order=summary.pop("_order"), today=today)
+    else:
+        summary.pop("_order", None)
+        summary.pop("_refreshable_ids", None)
+    errors = summary["errors"]
+    if errors and raise_errors:
+        raise PricesJobError("end-of-day prices: " + "; ".join(errors[:5]))
+    return summary
+
+
+async def _slice(pool, *, today, run_id, include_test_orgs, only_gsids, keys, years, gap_days, max_new, deadline,
+                 providers, day, list_priority, clock) -> dict:
     async with pool.acquire() as conn:
         items = await coverage_set(conn, include_test_orgs=include_test_orgs, only_gsids=only_gsids)
         order = keys if keys is not None else await eod_rank(conn)
-    summary = {"coverage_set": len(items), "providers": {}, "today": today.isoformat(), "run_id": str(run_id)}
+        state = await refresh_state(conn, [it.gsid for it in items])
+    summary = {"coverage_set": len(items), "providers": {}, "today": today.isoformat(), "run_id": str(run_id),
+               "_order": order}
     errors: list[str] = []
     pending = [it for it in items if it.coverage != "no_public_source"]
     summary["skipped_no_public_source"] = len(items) - len(pending)
+    summary["refreshable"] = len(pending)
+    summary["_refreshable_ids"] = [it.gsid for it in pending]
+    if day is not None:
+        done_today = [it for it in pending if state.get(it.gsid) == today]
+        summary["already_refreshed_today"] = len(done_today)
+        pending = [it for it in pending if state.get(it.gsid) != today]
+        # new members' history: at most max_new a DAY (not per slice) — the day row counts what was loaded
+        max_new = max(0, max_new - int(day.get("new_loaded") or 0))
+    async with pool.acquire() as conn:
+        await assign_tiers(conn, pending, list_priority=list_priority)
+    deferred_total = 0
+    new_loaded = 0
+    asked: list[str] = []          # the order this slice asked for securities (the verify reads it)
     for key in order:
         if not pending:
             break
         prov = fetcher(key, providers=providers)
         async with pool.acquire() as conn:
             last = await latest_dates(conn, key, [it.gsid for it in pending])
-        # TRACK1: stalest first — with a deadline the old gsid order refreshed the SAME first securities every night
-        old = sorted((it for it in pending if it.gsid in last), key=lambda it: (last[it.gsid], it.gsid))
-        new = [it for it in pending if it.gsid not in last]
-        new_now, new_later = new[:max_new], new[max_new:]
+        ordered = refresh_order(pending, state, last)
+        new_all = [it for it in ordered if it.gsid not in last]
+        new_ok = {it.gsid for it in new_all[:max_new]}
+        new_later = len(new_all) - len(new_ok)
+        work = [it for it in ordered if it.gsid in last or it.gsid in new_ok]
         budget = await _budget(pool, key, today)
-        # TRACK1: while new members wait, the gap fill takes at most half of what is left of the deadline, so new
-        # history is never starved by a coverage set larger than one night's capacity
-        gap_deadline = (time.monotonic() + (deadline - time.monotonic()) / 2) if new_now else deadline
-        res_old = await ingest(pool, prov, old, today - timedelta(days=gap_days), today, today=today, run_id=run_id,
-                               budget_left=budget, deadline=gap_deadline) if old else IngestOutcome(key)
-        left = None if budget is None else max(0, budget - res_old.calls)
-        start = date(today.year - years, today.month, min(today.day, 28))
-        res_new = await ingest(pool, prov, new_now, start, today, today=today, run_id=run_id, budget_left=left,
-                               deadline=deadline) if new_now and not res_old.errors else IngestOutcome(key)
+        res_old, res_new = IngestOutcome(key), IngestOutcome(key)
+        gap_start = today - timedelta(days=gap_days)
+        hist_start = date(today.year - years, today.month, min(today.day, 28))
+        stop = False
+        # the order is kept EXACTLY: consecutive runs of the same kind (gap fill / new history — different date
+        # ranges) are asked in turn, each in chunks of SLICE_CHUNK; never "all gap fills of a chunk first"
+        runs: list[tuple[bool, list]] = []
+        for it in work:
+            old_ = it.gsid in last
+            if not runs or runs[-1][0] != old_ or len(runs[-1][1]) >= SLICE_CHUNK:
+                runs.append((old_, []))
+            runs[-1][1].append(it)
+        for old_, part in runs:
+            res, start_ = (res_old, gap_start) if old_ else (res_new, hist_start)
+            if stop:
+                res.deferred += [it.gsid for it in part]
+                continue
+            left = None if budget is None else max(0, budget - res_old.calls - res_new.calls)
+            asked += [it.gsid for it in part]
+            # a multi-symbol source asks a whole batch in ONE request: the batch is at least its per-call size
+            r = await ingest(pool, prov, part, start_, today, today=today, run_id=run_id, budget_left=left,
+                             deadline=deadline, clock=clock, batch=max(BATCH, int(prov.spec.max_symbols_per_call or 1)))
+            _merge(res, r)
+            if r.errors or r.deferred:
+                stop = True
         calls = res_old.calls + res_new.calls
         if calls:
             await W.record_calls(pool, key, calls, data_type=DATA_TYPE, ok=not (res_old.errors or res_new.errors),
                                  error="; ".join(res_old.errors + res_new.errors)[:2000] or None, run_id=run_id,
                                  day=today)
         await _aclose(prov)
+        if day is not None:      # the state belongs to the DAY refresh; a one-off run (--gsid, a verify) leaves it alone
+            await mark_refreshed(pool, res_old.done_ids + res_new.done_ids, day=today, outcome="found",
+                                 provider_key=key, day_id=day["id"])
+        new_loaded += len(res_new.done_ids)
+        deferred_total += len(res_old.deferred) + len(res_new.deferred)
         summary["providers"][key] = {"gap_fill": res_old.summary(), "new_history": res_new.summary(),
-                                     "new_deferred_to_next_night": len(new_later)}
+                                     "new_deferred_to_next_night": new_later, "calls": calls}
         errors += res_old.errors + res_new.errors
         nf = set(res_old.not_found_ids) | set(res_new.not_found_ids)
         pending = [it for it in pending if it.gsid in nf]      # the next adapter tries only what this one lacked
+        max_new = max(0, max_new - len(res_new.done_ids))
+    # what EVERY adapter answered "no data" for has been asked today: refreshed (not found), not retried all day
+    if pending and order and day is not None:
+        await mark_refreshed(pool, [it.gsid for it in pending], day=today, outcome="not_found", provider_key=order[-1],
+                             day_id=day["id"])
     summary["errors"] = errors
-    summary["tracked_progress"] = await _tracked_progress(pool)
-    if errors:
-        raise PricesJobError("end-of-day prices: " + "; ".join(errors[:5]))
+    summary["deferred"] = deferred_total
+    summary["new_loaded"] = new_loaded
+    summary["asked"] = asked
     return summary
+
+
+async def _record_slice(pool, day: dict, summary: dict, *, keys_order: list[str], today: date) -> dict | None:
+    """The slice's progress on the day row: covered / refreshed today (READ BACK from the state table, not counted),
+    calls, slices, what is left; the status the day is now in."""
+    ids = summary.pop("_refreshable_ids", [])
+    async with pool.acquire() as conn:
+        state = await refresh_state(conn, ids)
+    covered = len(ids)
+    refreshed = sum(1 for g in ids if state.get(g) == today)
+    calls = sum(int(v.get("calls") or 0) for v in summary["providers"].values())
+    left = await _budget(pool, keys_order[0], today) if keys_order else None
+    errs = summary["errors"]
+    fails = int(day["consecutive_failures"]) + 1 if errs else 0
+    remaining = max(0, covered - refreshed)
+    if remaining == 0:
+        status, detail = "complete", None
+    elif left == 0:
+        status, detail = "stopped_budget", (f"{keys_order[0]}'s daily call budget is spent; {remaining:,} not refreshed "
+                                            "today go first tomorrow")
+    elif fails >= FAILED_SLICES_STOP:
+        status, detail = "stopped_error", "; ".join(errs[:3])[:2000]
+    else:
+        status, detail = "running", None
+    slim = {k: v for k, v in summary.items() if k not in ("asked", "tracked_progress", "day")}
+    return await _close_slice(
+        pool, day["id"], covered=covered, refreshed=refreshed, calls=int(day["calls"]) + calls,
+        slices=int(day["slices"]) + 1, deferred=remaining, new_loaded=int(day["new_loaded"]) + int(summary["new_loaded"]),
+        consecutive_failures=fails, status=status, stop_detail=detail, summary=slim,
+        errors=((day.get("errors") or []) + [{"at": datetime.now(timezone.utc).isoformat(), "error": e}
+                                             for e in errs[:5]])[-50:])
+
+
+# ── PRICES2: the scheduler tick continues the day ───────────────────────────
+TICK_ENV = "PRICES_DAY_TICK"     # '0' turns the continuation step off (the 21:15 job still does its first slice)
+
+
+def tick_enabled() -> bool:
+    import os
+
+    return (os.environ.get(TICK_ENV) or "1").strip().lower() not in ("0", "false", "off", "no")
+
+
+async def job_trigger_active(conn) -> bool:
+    """Is the platform job 'Security data — prices' switched on (its scheduled trigger active)? Platform scope."""
+    from services import security_master_jobs as J
+
+    async with conn.transaction():
+        await _platform(conn)
+        v = await conn.fetchval(
+            "SELECT bool_or(t.is_active) FROM workflow_definitions d JOIN workflow_triggers t ON "
+            "t.workflow_definition_id = d.id AND t.trigger_type = 'scheduled' WHERE d.org_id = $1::uuid AND d.name = $2",
+            str(J.PLATFORM_ORG_ID), J.JOBS["security_data_prices"].name)
+    return bool(v)
+
+
+async def prices_tick(pool, *, now_utc: datetime | None = None, scope: str = DAY_SCOPE, check_trigger: bool = True,
+                      nightly_kwargs: dict | None = None, budget_seconds: float | None = None,
+                      clock=time.monotonic) -> dict:
+    """One scheduler tick's price step: CONTINUE the latest running day row of ``scope`` with one slice. It never
+    starts a day (the job's own schedule — weekdays 21:15 New York — does), never runs while the job is switched off,
+    and never raises: a failure is recorded on the day row and returned."""
+    now_utc = now_utc or datetime.now(timezone.utc)
+    if not tick_enabled():
+        return {"action": "off", "reason": f"{TICK_ENV} is off"}
+    try:
+        async with pool.acquire() as conn:
+            if check_trigger and not await job_trigger_active(conn):
+                return {"action": "job_off"}
+            async with conn.transaction():
+                await _platform(conn)
+                if not await conn.fetchval("SELECT to_regclass('portfolio.price_refresh_days') IS NOT NULL"):
+                    return {"action": "not_deployed"}
+                await conn.execute(
+                    "UPDATE portfolio.price_refresh_days SET status = 'carried_over', finished_at = now(), lease_until = "
+                    "NULL, stop_detail = 'not finished within ' || $3::integer || ' days' WHERE scope = $1 AND status = "
+                    "'running' AND price_day < $2", scope, now_utc.date() - timedelta(days=STALE_DAY_ROWS),
+                    STALE_DAY_ROWS)
+                row = await conn.fetchrow("SELECT id, price_day FROM portfolio.price_refresh_days WHERE scope = $1 AND "
+                                          "status = 'running' ORDER BY price_day DESC LIMIT 1", scope)
+        if row is None:
+            return {"action": "idle"}
+        kw = dict(nightly_kwargs or {})
+        kw.setdefault("deadline_s", min(NIGHTLY_DEADLINE_S, budget_seconds or NIGHTLY_DEADLINE_S))
+        summ = await nightly(pool, today=row["price_day"], scope=scope, raise_errors=False, clock=clock, **kw)
+        d = summ.get("day") or {}
+        return {"action": summ.get("action") or "continued", "day_id": str(row["id"]),
+                "price_day": row["price_day"].isoformat(), "status": d.get("status"),
+                "progress": d.get("progress_label"), "errors": summ.get("errors") or []}
+    except Exception as exc:  # noqa: BLE001 — never raised into the tick
+        return {"action": "failed", "error": f"{type(exc).__name__}: {str(exc)[:500]}"}
+
+
+# ── PRICES2: the Security master screen's line ──────────────────────────────
+async def refresh_status(conn, *, today: date | None = None, scope: str = DAY_SCOPE,
+                         include_test_orgs: bool = False, only_gsids: list[str] | None = None) -> dict:
+    """"covered N · refreshed today M · oldest price date D": N = the coverage set; M = covered securities whose last
+    refresh is ``today`` (or the latest day row's day); D = the oldest LATEST platform close across the covered
+    securities that have one (the stalest series), with how many covered hold none. Plus the latest day rows."""
+    days = await day_rows(conn, scope=scope, limit=7)
+    day = date.fromisoformat(days[0]["price_day"]) if days else (today or datetime.now(timezone.utc).date())
+    if today is not None:
+        day = today
+    items = await coverage_set(conn, include_test_orgs=include_test_orgs, only_gsids=only_gsids)
+    ids = [it.gsid for it in items]
+    state = await refresh_state(conn, ids)
+    async with conn.transaction():
+        await _platform(conn)
+        rows = await conn.fetch(
+            "SELECT global_security_id::text AS g, max(price_date) AS d FROM portfolio.securities_global_prices WHERE "
+            f"global_security_id = ANY($1::uuid[]) AND org_id IS NULL AND price_type = 'close' AND {LIVE} GROUP BY 1",
+            ids) if ids else []
+    latest = {r["g"]: r["d"] for r in rows}
+    covered = len(ids)
+    refreshed = sum(1 for g in ids if state.get(g) == day)
+    oldest = min(latest.values()) if latest else None
+    label = (f"covered {covered:,} · refreshed today {refreshed:,} · oldest price date "
+             f"{oldest.isoformat() if oldest else '—'}")
+    return {"covered": covered, "refreshed_today": refreshed, "day": day.isoformat(),
+            "oldest_price_date": oldest.isoformat() if oldest else None, "without_prices": covered - len(latest),
+            "label": label, "days": days}
 
 
 async def _tracked_progress(pool) -> dict | None:
