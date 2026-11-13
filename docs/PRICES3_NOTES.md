@@ -196,3 +196,17 @@ all, 4 policies per org/series table and 2 per platform table, the view is secur
 in order and the old types, the INSTEAD OF trigger, the grants (app_service RW, cpsim_app R), lean indexes = PK +
 date btree + recorded_at BRIN, the switch = 'legacy', and **portfolio.securities_global_prices is still the table**.
 `_apply_prices3.py` refuses to re-apply once the migration has swapped.
+
+## 4. Writers (Task 3)
+
+ONE switch, read at run time on every write call: `price_store.store_mode(conn)` → `portfolio.prices3_migration.
+store_mode` ('legacy' until the operator swap flips it in the swap transaction; table absent ⇒ legacy).
+
+| writer | legacy (unchanged behaviour) | lean |
+|---|---|---|
+| `writes.upsert_eod_bars` (receptor → backfill, nightly, prices_tick) | old table via `PS.old_name()` | `PS.lean_upsert_eod_bars`: equal close → nothing; changed → history row (system_to = now(), keeps the view id) + lean update; new → lean insert; bar → `price_bars_pending` |
+| `writes.upsert_prices` (org uploads, valid axis) | `_restate` on `PS.old_name()` | `PS.lean_restate_point`: changed → history (valid_to = now()) + lean update with the new provenance (upload) |
+| `securities_global.add_price` (platform_entry) | old INSERT … RETURNING id | `PS.lean_add_price` → the view's id |
+
+`PS.old_name()` = the old table before the swap and the compatibility view after it, so a legacy-mode write after the
+swap (a stale process, a verify fixture) still lands correctly through the view's INSTEAD OF trigger.

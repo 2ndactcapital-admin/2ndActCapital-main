@@ -720,6 +720,11 @@ async def add_price(
                 f"price_coverage='has_series'."
             )
 
+        from services.security_data import price_store as PS
+
+        if await PS.store_mode(c) == "lean":  # PRICES3: the lean price of record (after the operator swap)
+            return await PS.lean_add_price(c, gsid=row["id"], price_date=price_date, amount=amount,
+                                           currency_code=currency_code, price_type=price_type, source=source)
         return await c.fetchval(
             f"""
             INSERT INTO {TABLE_PRICE}
