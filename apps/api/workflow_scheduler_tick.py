@@ -70,6 +70,17 @@ never reach the SEC. Once-per-day is enforced by a unique index, a failure is
 recorded on the run row (exit code 1, so Render shows it), and
 EDGAR_INDEX_AUTO_REFRESH=0 turns it off.
 
+NIGHTLY DOWNLOAD OF NEW SELECTED FILINGS (edgarops1). Right after it,
+``services.edgar_auto_download.maybe_auto_download``: once the day's scheduled
+refresh has SUCCEEDED, the day's new selected filings (up to
+EDGAR_AUTO_DOWNLOAD_DAILY_CAP, default 2000; the rest carried over) are queued
+as ONE scheduled bulk_fetch run in the existing bulk queue (once per day by a
+unique index); then, on every tick, if this process can store to R2, one
+bounded chunk (EDGAR_AUTO_DOWNLOAD_TICK_SECONDS, default 120) of the oldest
+queued scheduled download runs through the bulk Runner and the run goes back to
+'queued' until its list is done. If it cannot, the run waits — with the reason
+on it — for the laptop worker. Never raises; EDGAR_AUTO_DOWNLOAD=0 turns it off.
+
 WEEKDAY REPLICA HOLDINGS REFRESH (rep1). Then, on the same path,
 ``services.replica_schedule.maybe_refresh_holdings``: once per weekday, the
 first tick at or after 11:00 UTC ingests holdings for every active Replication
@@ -136,6 +147,7 @@ import asyncpg
 
 from services.database import close_pool, get_pool
 from services.deal_room_control import access_tick
+from services.edgar_auto_download import maybe_auto_download
 from services.edgar_index_schedule import maybe_refresh_index
 from services.ai_daily_runs import daily_tick
 from services.blocks import expire_tick as blocks_expire_tick
@@ -166,6 +178,7 @@ async def main() -> int:
         return 2
 
     index = {"action": "not_run"}
+    download = {"action": "not_run"}
     holdings = {"action": "not_run"}
     try:
         pool = await get_pool()
@@ -178,6 +191,16 @@ async def main() -> int:
             index = {"action": "failed", "error": f"{type(exc).__name__}: {exc}"}
         if index["action"] in ("succeeded", "failed"):
             print(f"[scheduler] edgar index refresh: {index}")
+        # EDGAROPS1 — its own step: queue the day's new selected filings, then one bounded download chunk.
+        try:
+            download = await maybe_auto_download(conn, pool)
+        except Exception as exc:  # noqa: BLE001
+            download = {"action": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        q = (download.get("queue") or {}).get("action")
+        w = (download.get("work") or {}).get("action")
+        if download["action"] == "failed" or q in ("queued", "nothing_new") or w in ("worked", "waiting"):
+            print(f"[scheduler] edgar nightly download: queue={download.get('queue')} "
+                  f"work={ {k: v for k, v in (download.get('work') or {}).items() if k != 'summary'} }")
         # Its own step again: a holdings problem never stops the steps above.
         try:
             holdings = await maybe_refresh_holdings(pool)
@@ -308,7 +331,10 @@ async def main() -> int:
         print(f"[scheduler] edgar index refresh failed: {index.get('error')}", file=sys.stderr)
     if holdings["action"] == "failed":
         print(f"[scheduler] replica holdings refresh failed: {holdings.get('error')}", file=sys.stderr)
-    return 1 if result.errors or index["action"] == "failed" or holdings["action"] == "failed" else 0
+    if download["action"] == "failed":
+        print(f"[scheduler] edgar nightly download failed: {download}", file=sys.stderr)
+    return 1 if (result.errors or index["action"] == "failed" or holdings["action"] == "failed"
+                 or download["action"] == "failed") else 0
 
 
 if __name__ == "__main__":

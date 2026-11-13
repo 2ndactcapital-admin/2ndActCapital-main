@@ -331,7 +331,8 @@ async def create_entry(pool, *, org_id, actor_id, ticker: str | None, cusip: str
     sec = fund.sec or {}
     async with pool.acquire() as conn:
         source = await H.choose_source(conn, ticker=fund.ticker, series_id=sec.get("series_id"),
-                                       override_key=holdings_source_key)
+                                       override_key=holdings_source_key,
+                                       cik=sec.get("cik") if sec.get("uit") else None)   # EDGAROPS1 — a UIT
         dup = await conn.fetchval(
             f"SELECT id FROM {T_ENTRY} WHERE org_id = $1::uuid AND global_security_id = $2::uuid "
             "AND valid_to IS NULL AND system_to IS NULL", str(org_id), fund.global_security_id)
@@ -387,18 +388,47 @@ def build_specs(registry: list[dict], *, model_only: bool = True) -> list[NS.Fie
 
 
 # ── prospectus ──────────────────────────────────────────────────────────────
+# EDGAROPS1 — a unit investment trust (SPY, DIA, MDY, QQQ: no series / class id)
+# is located by the TRUST's own CIK. Newest of, in this order: 497K (summary
+# prospectus), 485BPOS (the full prospectus in the trust's annual post-effective
+# amendment), 497 (a definitive prospectus filed under Rule 497). S-6 is the
+# trust's INITIAL registration (decades old for these trusts — every later
+# prospectus is a 485BPOS amendment of it) and is not a form the document table
+# accepts (replica_source_documents_form_chk: 497K / 485BPOS / 497).
+UIT_PROSPECTUS_FORMS = (("497K", "summary_prospectus"), ("485BPOS", "prospectus"), ("497", "prospectus"))
+
+
+async def locate_uit_prospectus(http: httpx.AsyncClient, *, ticker: str, cik: str | None) -> tuple[dict, str]:
+    """(filing, doc_kind) for a fund with no series id, by its trust CIK
+    (resolved from the SEC exchange ticker file when not given). Raises
+    ExtractionBlocked with the reason — never a guess."""
+    cik = cik or await H.sec_trust_cik(http, ticker)
+    if not cik:
+        raise ExtractionBlocked(f"{ticker} has no SEC series id and no trust CIK in the SEC ticker files — "
+                                "its prospectus cannot be located on EDGAR")
+    for form, kind in UIT_PROSPECTUS_FORMS:
+        filing = await H.latest_series_filing(http, cik, (form,))
+        if filing is not None:
+            return filing | {"cik": filing.get("cik") or str(int(cik))}, kind
+    raise ExtractionBlocked(f"{ticker} is a unit investment trust (CIK {int(cik)}) with no "
+                            f"{', '.join(f for f, _ in UIT_PROSPECTUS_FORMS)} prospectus on EDGAR")
+
+
 async def pull_prospectus(pool, *, fund_id: str, ticker: str, series_id: str | None,
-                          http: httpx.AsyncClient) -> dict:
+                          http: httpx.AsyncClient, cik: str | None = None) -> dict:
     """The fund's latest summary prospectus (497K), else its prospectus
     (485BPOS), stored once as a platform source document (+ gzipped bytes in
-    R2). Same bytes again = the existing row."""
+    R2). Same bytes again = the existing row. EDGAROPS1: a fund with no series
+    id (a unit investment trust) is located by its trust CIK instead
+    (locate_uit_prospectus); the series path is unchanged."""
     if not series_id:
-        raise ExtractionBlocked(f"{ticker} has no SEC series id — its prospectus cannot be located on EDGAR")
-    filing = await H.latest_series_filing(http, series_id, ("497K",))
-    kind = "summary_prospectus"
-    if filing is None:
-        filing = await H.latest_series_filing(http, series_id, ("485BPOS",))
-        kind = "prospectus"
+        filing, kind = await locate_uit_prospectus(http, ticker=ticker, cik=cik)
+    else:
+        filing = await H.latest_series_filing(http, series_id, ("497K",))
+        kind = "summary_prospectus"
+        if filing is None:
+            filing = await H.latest_series_filing(http, series_id, ("485BPOS",))
+            kind = "prospectus"
     if filing is None or not filing.get("cik"):
         raise ExtractionBlocked(f"no 497K or 485BPOS found on EDGAR for series {series_id}")
     folder = H.filing_folder(filing["cik"], filing["accession"])
@@ -623,7 +653,8 @@ def reread_due_sql(fund_expr: str, p_prompt: str, p_m1: str, p_m2: str) -> str:
 
 
 async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | None, http: httpx.AsyncClient,
-                         catalog_loader=None, instrument_class: str | None = None) -> ExtractionRun:
+                         catalog_loader=None, instrument_class: str | None = None,
+                         cik: str | None = None) -> ExtractionRun:
     """Pull the prospectus, run both readers, write readings (platform).
     A run for the same document + ensemble + prompt already on record is
     REUSED — the documents and readings are shared, fetched and read once."""
@@ -644,7 +675,7 @@ async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | No
         return run
     run.models = slots
     try:
-        doc = await pull_prospectus(pool, fund_id=fund_id, ticker=ticker, series_id=series_id, http=http)
+        doc = await pull_prospectus(pool, fund_id=fund_id, ticker=ticker, series_id=series_id, http=http, cik=cik)
     except (ExtractionBlocked, H.ReplicaHoldingsError, httpx.HTTPError, RuntimeError) as exc:
         run.reason = f"{type(exc).__name__}: {exc}"
         return run
@@ -857,6 +888,7 @@ async def build_draft(pool, *, org_id, entry: dict, actor_id, http: httpx.AsyncC
     'extracted' are refreshed."""
     run = await run_extraction(pool, fund_id=str(entry["global_security_id"]), ticker=entry["ticker"],
                                series_id=entry.get("sec_series_id"), http=http, catalog_loader=catalog_loader,
+                               cik=entry.get("sec_cik"),
                                instrument_class=entry["instrument_class"])
     data = await _data_readings(pool, fund_id=str(entry["global_security_id"]), entry=entry)
     async with pool.acquire() as conn:

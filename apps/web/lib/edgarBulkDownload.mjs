@@ -252,8 +252,72 @@ export function sortValue(row, key, years = []) {
   if (key === "entities") return Array.isArray(row.filers) ? row.filers.length : 0;
   if (key === "total") return Number(rowCount(row, years)) || 0;
   if (key === "downloaded" || key === "stored") return Number(row[key] ?? 0) || 0;
+  // EDGAROPS1 — the columns that make the row add up
+  if (key === "earlier") return earlierCount(row, years);
+  if (["skipped", "failed", "eligible"].includes(key)) return Number(row[key] ?? 0) || 0;
+  if (key === "pct_done") return row.pct_done === null || row.pct_done === undefined ? -1 : Number(row.pct_done);
   if (key.startsWith("year:")) return Number(row.years?.[key.slice(5)] ?? 0) || 0;
   return 0;
+}
+
+// ─── EDGAROPS1 — the table adds up; run summaries ───────────────────────────
+
+/** To fetch filed BEFORE the first year shown, so the shown years + Earlier
+ * sum to To fetch. Computed from the same `years` the header shows. */
+export function earlierCount(row, years) {
+  if (!years?.length) return Object.values(row?.years ?? {}).reduce((s, n) => s + Number(n || 0), 0);
+  const first = Number(years[0]);
+  return Object.entries(row?.years ?? {}).reduce((s, [y, n]) => (Number(y) < first ? s + Number(n || 0) : s), 0);
+}
+
+/** "12.5%" or "—" (nothing eligible). */
+export function fmtPct(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return `${Number(value).toFixed(1)}%`;
+}
+
+/** The arithmetic the table promises, for one row (institution or filer). */
+export function rowAddsUp(row, years) {
+  const shown = (years ?? []).reduce((s, y) => s + Number(row?.years?.[y] ?? 0), 0);
+  const toFetch = Number(row?.to_fetch ?? row?.total ?? 0);
+  const eligible = toFetch + Number(row?.downloaded ?? 0) + Number(row?.skipped ?? 0) + Number(row?.failed ?? 0);
+  return shown + earlierCount(row, years) === toFetch && eligible === Number(row?.eligible ?? eligible)
+    && Number(row?.stored ?? 0) <= Number(row?.downloaded ?? 0);
+}
+
+/** A run's summary as [label, value] pairs from the envelope's own field list
+ * (vocabularies.summary_fields — no client-side labels); null = the run has no
+ * summary (shown "—"). Skipped carries its reasons as a title. */
+export function runSummaryItems(run, vocab) {
+  const s = run?.summary;
+  const fields = vocab?.summary_fields;
+  if (!s || !Array.isArray(fields)) return null;
+  const reasons = vocab?.skip_reason_labels ?? {};
+  return fields
+    .filter((f) => !(f.key === "carried_over" && (s.carried_over === null || s.carried_over === undefined)))
+    .map((f) => {
+      const v = s[f.key];
+      const text = f.key === "duration_seconds" ? fmtDuration(v) || "—" : v === null || v === undefined ? "—" : Number(v).toLocaleString();
+      const title = f.key === "skipped_total"
+        ? Object.entries(s.skipped ?? {}).map(([k, n]) => `${reasons[k] ?? k}: ${n}`).join("\n")
+        : undefined;
+      return { key: f.key, label: f.label, text, title };
+    });
+}
+
+/** "cap reached — N carried over" for a scheduled download that hit its cap. */
+export function capNote(run) {
+  const a = run?.auto_download;
+  if (!a?.cap_reached) return null;
+  return `cap reached — ${Number(a.carried_over ?? 0).toLocaleString()} carried over`;
+}
+
+/** "N scheduled runs waiting — M filings" (null when none). */
+export function scheduledWaitingNote(runsPayload) {
+  const w = runsPayload?.scheduled_waiting;
+  if (!w || !w.runs) return null;
+  const runs = `${w.runs} scheduled run${w.runs === 1 ? "" : "s"} waiting`;
+  return `${runs} — ${Number(w.filings ?? 0).toLocaleString()} filing${w.filings === 1 ? "" : "s"} to download`;
 }
 
 /** Comparator for one sort: numeric for counts, case-insensitive for names;

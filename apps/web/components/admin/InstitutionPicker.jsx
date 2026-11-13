@@ -4,7 +4,9 @@ import { useMemo, useState } from "react";
 
 import {
   DEFAULT_INSTITUTION_SORT,
+  earlierCount,
   fmtAsOf,
+  fmtPct,
   nextSort,
   sortInstitutions,
 } from "@/lib/edgarBulkDownload.mjs";
@@ -23,6 +25,24 @@ import {
 // below xl the table scrolls within 70vh); the header row carries Refresh (with
 // "as of h:mm") and — only when writable — Refresh index with its "Index loaded
 // through" note.
+//
+// EDGAROPS1 — the row ADDS UP: after the year columns (latest 3 present, still
+// dynamic) come Earlier (to fetch before them — so the year columns + Earlier
+// sum to To fetch), To fetch, Downloaded, Stored (of Downloaded), Skipped,
+// Failed, Eligible (= To fetch + Downloaded + Skipped + Failed) and % done.
+// Every label and its explanation comes from vocabularies.institution_columns;
+// a missing label renders empty (no client-side label) — except To fetch, which
+// keeps the literal "Total" it has always had (BUGFIX1's header test).
+const COUNT_COLUMNS = [
+  { key: "earlier", col: "earlier" },
+  { key: "total", col: "to_fetch", strong: true },
+  { key: "downloaded", col: "downloaded" },
+  { key: "stored", col: "stored" },
+  { key: "skipped", col: "skipped" },
+  { key: "failed", col: "failed" },
+  { key: "eligible", col: "eligible" },
+  { key: "pct_done", col: "pct_done" },
+];
 const CARD = "rounded-md border border-[var(--2a-border)] bg-[var(--2a-bg-card)]";
 const CONTROL =
   "rounded border border-[var(--2a-border)] bg-[var(--2a-bg-card)] px-2 py-1.5 text-xs text-[var(--2a-text)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]";
@@ -43,6 +63,13 @@ export function institutionYears(rows) {
 
 function rowTotal(r, years) {
   return r.total ?? years.reduce((s, y) => s + (r.years?.[y] ?? 0), 0);
+}
+
+function countCell(r, c, years) {
+  if (c.key === "earlier") return fmtInt(earlierCount(r, years));
+  if (c.key === "total") return fmtInt(rowTotal(r, years));
+  if (c.key === "pct_done") return fmtPct(r.pct_done);
+  return fmtInt(r[c.key] ?? 0);
 }
 
 function SortHeader({ label, title, sortKey, sort, onSort, align = "right", className = "" }) {
@@ -165,7 +192,9 @@ export default function InstitutionPicker({
             {indexMessage}
           </div>
         )}
-        <p className={`mb-2 ${MUTED_NOTE}`}>Selected filings still to fetch, by year.</p>
+        <p className={`mb-2 ${MUTED_NOTE}`}>
+          Year columns: selected filings still to fetch, by filing year. Each row adds up across the columns.
+        </p>
         <div className="max-h-[70vh] min-h-0 flex-1 overflow-auto xl:max-h-none" data-testid="institutions-scroll">
           <table className="w-full text-xs" data-testid="institutions-table">
             <thead className="sticky top-0 z-[1] bg-[var(--2a-bg-card)]">
@@ -176,21 +205,16 @@ export default function InstitutionPicker({
                 {years.map((y) => (
                   <SortHeader key={y} label={y} sortKey={`year:${y}`} sort={sort} onSort={onSort} />
                 ))}
-                <SortHeader label="Total" sortKey="total" sort={sort} onSort={onSort} />
-                <SortHeader
-                  label={cols.downloaded?.label ?? ""}
-                  title={cols.downloaded?.help}
-                  sortKey="downloaded"
-                  sort={sort}
-                  onSort={onSort}
-                />
-                <SortHeader
-                  label={cols.stored?.label ?? ""}
-                  title={cols.stored?.help}
-                  sortKey="stored"
-                  sort={sort}
-                  onSort={onSort}
-                />
+                {COUNT_COLUMNS.map((c) => (
+                  <SortHeader
+                    key={c.key}
+                    label={cols[c.col]?.label ?? (c.key === "total" ? "Total" : "")}
+                    title={cols[c.col]?.help}
+                    sortKey={c.key}
+                    sort={sort}
+                    onSort={onSort}
+                  />
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -222,9 +246,15 @@ export default function InstitutionPicker({
                     {years.map((y) => (
                       <td key={y} className={`${NUM} text-[var(--2a-text-secondary)]`}>{fmtInt(r.years[y] ?? 0)}</td>
                     ))}
-                    <td className={`${NUM} font-medium text-[var(--2a-text)]`}>{fmtInt(rowTotal(r, years))}</td>
-                    <td className={`${NUM} text-[var(--2a-text-secondary)]`} data-col="downloaded">{fmtInt(r.downloaded ?? 0)}</td>
-                    <td className={`${NUM} text-[var(--2a-text-secondary)]`} data-col="stored">{fmtInt(r.stored ?? 0)}</td>
+                    {COUNT_COLUMNS.map((c) => (
+                      <td
+                        key={c.key}
+                        className={`${NUM} ${c.strong ? "font-medium text-[var(--2a-text)]" : "text-[var(--2a-text-secondary)]"}`}
+                        data-col={c.col === "to_fetch" ? "total" : c.col}
+                      >
+                        {countCell(r, c, years)}
+                      </td>
+                    ))}
                   </tr>,
                 ];
                 if (open.has(r.name)) {
@@ -241,9 +271,12 @@ export default function InstitutionPicker({
                         {years.map((y) => (
                           <td key={y} className={`${NUM} py-0.5 text-[var(--2a-text)]`}>{fmtInt(f.years?.[y] ?? 0)}</td>
                         ))}
-                        <td className={`${NUM} py-0.5 text-[var(--2a-text)]`}>{fmtInt(rowTotal(f, years))}</td>
-                        <td className={`${NUM} py-0.5 text-[var(--2a-text)]`} data-col="downloaded">{fmtInt(f.downloaded ?? 0)}</td>
-                        <td className={`${NUM} py-0.5 text-[var(--2a-text)]`} data-col="stored">{fmtInt(f.stored ?? 0)}</td>
+                        {COUNT_COLUMNS.map((c) => (
+                          <td key={c.key} className={`${NUM} py-0.5 text-[var(--2a-text)]`}
+                            data-col={c.col === "to_fetch" ? "total" : c.col}>
+                            {countCell(f, c, years)}
+                          </td>
+                        ))}
                       </tr>,
                     );
                   }
@@ -252,7 +285,7 @@ export default function InstitutionPicker({
               })}
               {!shown.length && (
                 <tr>
-                  <td colSpan={years.length + 6} className="py-3 text-xs text-[var(--2a-text-muted)]">
+                  <td colSpan={years.length + 3 + COUNT_COLUMNS.length} className="py-3 text-xs text-[var(--2a-text-muted)]">
                     No institution matches.
                   </td>
                 </tr>

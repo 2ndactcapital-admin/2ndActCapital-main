@@ -35,6 +35,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import InstitutionPicker from "@/components/admin/InstitutionPicker";
 
 import LaptopWorkerDialog, { CopyButton } from "@/components/admin/LaptopWorkerDialog";
+import RunSummary from "@/components/admin/RunSummary";
 import DataGrid from "@/components/ui/DataGrid";
 import { BusyButton } from "@/components/ui/Busy";
 import {
@@ -56,6 +57,7 @@ import {
   renderStatus,
   rowActions,
   runsActive,
+  scheduledWaitingNote,
   stepsDialog,
   writeHideWhenOnline,
 } from "@/lib/edgarBulkDownload.mjs";
@@ -321,6 +323,14 @@ function RunsTable({ runsPayload, pageIndex, onPage, loading, onAction, pendingA
         ) : (
           row.progress?.new_filings !== undefined ? `${fmtInt(row.progress.new_filings)} new filings` : ""
         ),
+    },
+    {
+      // EDGAROPS1 — every run's summary (requested / fetched / stored / skipped / failed / carried over / duration)
+      field: "summary",
+      headerName: "Summary",
+      enableSorting: false,
+      minWidth: 240,
+      cell: (_v, row) => <RunSummary run={row} vocab={vocab} />,
     },
     {
       field: "rate_per_second",
@@ -891,6 +901,11 @@ export default function BulkDownloadTab() {
           <span className="text-[11px] text-[var(--2a-text-muted)]">
             {active ? "Refreshing every 10 s while a run is active." : ""}
           </span>
+          {scheduledWaitingNote(runs) && (
+            <span className="text-[11px] text-[var(--2a-navy)]" data-testid="scheduled-waiting">
+              {scheduledWaitingNote(runs)}
+            </span>
+          )}
           <button type="button" className={GHOST} onClick={() => refreshRuns(runsPage)} disabled={runsLoading}>
             Refresh
           </button>

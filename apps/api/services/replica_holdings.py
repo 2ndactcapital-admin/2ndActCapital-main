@@ -70,6 +70,11 @@ T_SNAP = "portfolio.replica_holdings_snapshots"
 T_ROWS = "portfolio.replica_holdings_rows"
 
 SEC_MF_URL = "https://www.sec.gov/files/company_tickers_mf.json"
+# EDGAROPS1 — a unit investment trust (SPY, DIA, MDY, QQQ) has no series / class
+# and is absent from the mutual-fund file; the trust is its own SEC registrant,
+# listed with its CIK in the exchange ticker file (the same file the security
+# master's sec_tickers provider reads).
+SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
 SEC_SERIES_FEED = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={series}&type={form}"
                    "&dateb=&owner=include&count=10&output=atom")
 
@@ -158,6 +163,43 @@ async def sec_fund_ids(http: httpx.AsyncClient, ticker: str) -> dict | None:
 
 def clear_sec_cache() -> None:
     _MF_CACHE.update(at=0.0, map=None)
+    _TRUST_CACHE.update(at=0.0, map=None)
+
+
+_TRUST_CACHE: dict[str, Any] = {"at": 0.0, "map": None}
+
+
+async def sec_trust_cik(http: httpx.AsyncClient, ticker: str) -> str | None:
+    """EDGAROPS1 — the CIK of a fund that has NO series id (a unit investment
+    trust), from the SEC's company_tickers_exchange.json; None when the ticker
+    is not listed or the file cannot be read (never a guess — the caller then
+    reports a clear reason). Only ever asked for a fund absent from the
+    mutual-fund file, so the series path of an ordinary fund never changes."""
+    if _TRUST_CACHE["map"] is None or time.monotonic() - _TRUST_CACHE["at"] > MF_CACHE_SECONDS:
+        try:
+            body = (await edgar_fetch._get(http, SEC_TICKERS_URL)).json()
+            fields = [str(f).lower() for f in body.get("fields") or []]
+            i_cik, i_tic = fields.index("cik"), fields.index("ticker")
+        except Exception:  # noqa: BLE001 — unreadable: no CIK, and the caller says so
+            return None
+        m = {}
+        for row in body.get("data") or []:
+            sym = str(row[i_tic] or "").upper()
+            if sym and row[i_cik] is not None and sym not in m:
+                m[sym] = str(int(row[i_cik]))
+        _TRUST_CACHE.update(at=time.monotonic(), map=m)
+    return _TRUST_CACHE["map"].get(ticker.upper().replace(".", "-"))
+
+
+async def sec_ids(http: httpx.AsyncClient, ticker: str) -> dict | None:
+    """The mutual-fund file's ids (unchanged); else, for a unit investment
+    trust, ``{"cik": <trust CIK>, "series_id": None, "class_id": None,
+    "uit": True}``; else None."""
+    sec = await sec_fund_ids(http, ticker)
+    if sec is not None:
+        return sec
+    cik = await sec_trust_cik(http, ticker)
+    return {"cik": cik, "series_id": None, "class_id": None, "uit": True} if cik else None
 
 
 # ── EDGAR series feed (N-PORT, prospectus) ──────────────────────────────────
@@ -240,7 +282,7 @@ async def resolve_fund(pool, *, ticker: str | None, cusip: str | None, http: htt
     if ticker is None:
         raise ReplicaHoldingsError(
             f"CUSIP {cusip} is not in the security master and carries no ticker to look up — add the fund by ticker")
-    sec = await sec_fund_ids(http, ticker)
+    sec = await sec_ids(http, ticker)          # EDGAROPS1 — a UIT gets its trust CIK (no series)
     if hit is not None:
         if hit["security_type"] not in ("fund", "other"):
             raise ReplicaHoldingsError(
@@ -269,10 +311,12 @@ async def list_sources(conn, *, active_only: bool = False) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def choose_source(conn, *, ticker: str, series_id: str | None, override_key: str | None = None) -> dict:
+async def choose_source(conn, *, ticker: str, series_id: str | None, override_key: str | None = None,
+                        cik: str | None = None) -> dict:
     """The fund's holdings source. An explicit, ACTIVE override wins; else the
     first active issuer source that lists the ticker; else N-PORT when the fund
-    has an SEC series; else there is none (a UIT outside every issuer list)."""
+    has an SEC series — or (EDGAROPS1) is a unit investment trust with its own
+    CIK, whose N-PORT is filed under that CIK; else there is none."""
     sources = await list_sources(conn, active_only=True)
     by_key = {s["key"]: s for s in sources}
     if override_key:
@@ -282,12 +326,13 @@ async def choose_source(conn, *, ticker: str, series_id: str | None, override_ke
     for s in sources:
         if s["parser"] != "sec_nport" and ticker.upper() in [t.upper() for t in s["match_tickers"] or []]:
             return s
-    if series_id:
+    if series_id or cik:
         for s in sources:
             if s["parser"] == "sec_nport":
                 return s
     raise NoHoldingsSource(
-        f"no active holdings source covers {ticker}: no issuer parser lists it and it has no SEC series for N-PORT")
+        f"no active holdings source covers {ticker}: no issuer parser lists it and it has no SEC series "
+        f"or trust CIK for N-PORT")
 
 
 # ── fetch ───────────────────────────────────────────────────────────────────
@@ -299,10 +344,23 @@ class Fetched:
     ext: str = "bin"
 
 
-async def fetch_holdings(http: httpx.AsyncClient, source: dict, *, ticker: str, series_id: str | None) -> Fetched:
+async def fetch_holdings(http: httpx.AsyncClient, source: dict, *, ticker: str, series_id: str | None,
+                         cik: str | None = None) -> Fetched:
     if source["parser"] == "sec_nport":
         if not series_id:
-            raise NoHoldingsSource(f"{ticker} has no SEC series id — N-PORT cannot be located")
+            # EDGAROPS1 — a unit investment trust (no series): its N-PORT by the trust's own CIK, or a clear
+            # "no holdings source" reason. Never a guess. The series path below is unchanged.
+            cik = cik or await sec_trust_cik(http, ticker)
+            if not cik:
+                raise NoHoldingsSource(f"{ticker} has no SEC series id and no trust CIK — N-PORT cannot be located")
+            filing = await latest_series_filing(http, cik, ("NPORT-P",))
+            if filing is None:
+                raise NoHoldingsSource(
+                    f"no holdings source for {ticker}: no issuer file lists it and its trust (CIK {cik}) has no "
+                    "NPORT-P filing on EDGAR")
+            url = f"{filing_folder(filing.get('cik') or cik, filing['accession'])}/primary_doc.xml"
+            r = await edgar_fetch._get(http, url)
+            return Fetched(r.content, url, filing["accession"], "xml")
         filing = await latest_series_filing(http, series_id, ("NPORT-P",))
         if filing is None or not filing.get("cik"):
             raise ReplicaHoldingsError(f"no NPORT-P filing found for series {series_id}")
@@ -466,12 +524,12 @@ class IngestResult:
 
 
 async def ingest(pool, *, fund_global_security_id: str | None, ticker: str, source: dict, series_id: str | None,
-                 http: httpx.AsyncClient, dry_run: bool = False) -> IngestResult:
+                 http: httpx.AsyncClient, dry_run: bool = False, cik: str | None = None) -> IngestResult:
     if fund_global_security_id is None and not dry_run:
         raise ReplicaHoldingsError("a fund that is not in the security master can only be dry-run")
     res = IngestResult(str(fund_global_security_id) if fund_global_security_id else "", ticker.upper(),
                        source["key"], dry_run)
-    fetched = await fetch_holdings(http, source, ticker=ticker, series_id=series_id)
+    fetched = await fetch_holdings(http, source, ticker=ticker, series_id=series_id, cik=cik)
     sha = hashlib.sha256(fetched.data).hexdigest()
     res.sha256 = sha
     existing = None

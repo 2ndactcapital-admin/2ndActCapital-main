@@ -25,9 +25,17 @@ const {
 
 // The envelope's column vocabulary — sentinels, so a rendered label can only
 // have come from the envelope.
+// EDGAROPS1 restatement: To fetch (sort key "total", the bulkfetchui3 "Total") and the new count columns are
+// labelled from the envelope too; every bulkfetchui3 check below is kept.
 const COLUMNS = {
   downloaded: { label: "DL-FROM-ENVELOPE", help: "handled help" },
   stored: { label: "ST-FROM-ENVELOPE", help: "stored help" },
+  to_fetch: { label: "TF-FROM-ENVELOPE", help: "to fetch help" },
+  earlier: { label: "EA-FROM-ENVELOPE", help: "earlier help" },
+  skipped: { label: "SK-FROM-ENVELOPE", help: "skipped help" },
+  failed: { label: "FA-FROM-ENVELOPE", help: "failed help" },
+  eligible: { label: "EL-FROM-ENVELOPE", help: "eligible help" },
+  pct_done: { label: "PD-FROM-ENVELOPE", help: "pct help" },
 };
 const f = (cik, name, total, downloaded, stored, years) => ({ cik, name, role: "issuer", years, total, downloaded, stored });
 // Every column orders these three differently; "alpha Bank" is lower-case on
@@ -50,9 +58,17 @@ const ASC = {
   total: ["Gamma", "alpha Bank", "Beta"],
   downloaded: ["Beta", "alpha Bank", "Gamma"],
   stored: ["alpha Bank", "Gamma", "Beta"],
+  // EDGAROPS1 — these rows carry no skipped / failed / eligible / % done and no year before 2025: every value
+  // ties, so the order is the name tie-break (reversed with the direction).
+  earlier: ["alpha Bank", "Beta", "Gamma"],
+  skipped: ["alpha Bank", "Beta", "Gamma"],
+  failed: ["alpha Bank", "Beta", "Gamma"],
+  eligible: ["alpha Bank", "Beta", "Gamma"],
+  pct_done: ["alpha Bank", "Beta", "Gamma"],
 };
-const LABEL = { name: "Institution", entities: "Entities", "year:2025": "2025", "year:2026": "2026", total: "Total",
-  downloaded: "DL-FROM-ENVELOPE", stored: "ST-FROM-ENVELOPE" };
+const LABEL = { name: "Institution", entities: "Entities", "year:2025": "2025", "year:2026": "2026",
+  total: "TF-FROM-ENVELOPE", downloaded: "DL-FROM-ENVELOPE", stored: "ST-FROM-ENVELOPE", earlier: "EA-FROM-ENVELOPE",
+  skipped: "SK-FROM-ENVELOPE", failed: "FA-FROM-ENVELOPE", eligible: "EL-FROM-ENVELOPE", pct_done: "PD-FROM-ENVELOPE" };
 
 const render = (props) =>
   renderToStaticMarkup(h(InstitutionPicker, {
@@ -96,7 +112,7 @@ test("each header is a sort button with aria-sort; the sorted column alone carri
     for (const dir of ["asc", "desc"]) {
       const html = render({ initialSort: { key, dir } });
       const ths = [...html.matchAll(/<th([^>]*)>([\s\S]*?)<\/th>/g)].filter(([, a]) => a.includes("data-sort-key"));
-      assert.equal(ths.length, 7, "seven sortable headers");
+      assert.equal(ths.length, 12, "twelve sortable headers (bulkfetchui3's seven + Earlier, Skipped, Failed, Eligible, % done)");
       for (const [, attrs, inner] of ths) {
         const k = attrs.match(/data-sort-key="([^"]+)"/)[1];
         assert.match(inner, /<button type="button"/);
@@ -140,7 +156,7 @@ test("filer sub-rows stay under their institution and sort the same way among th
 test("Downloaded and Stored render after Total, labelled from the envelope, with each row's numbers", () => {
   const html = render({ initialOpen: ["alpha Bank"] });
   const head = html.match(/<thead[\s\S]*?<\/thead>/)[0];
-  const order = ["Institution", "Entities", "2025", "2026", "Total", "DL-FROM-ENVELOPE", "ST-FROM-ENVELOPE"]
+  const order = ["Institution", "Entities", "2025", "2026", "TF-FROM-ENVELOPE", "DL-FROM-ENVELOPE", "ST-FROM-ENVELOPE"]
     .map((l) => head.indexOf(l));
   assert.ok(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1])), `header order ${order}`);
   assert.match(head, /title="handled help"/);

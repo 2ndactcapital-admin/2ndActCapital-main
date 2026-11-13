@@ -78,6 +78,22 @@ STOP_POLL_SECONDS = 5
 POLL_SECONDS = 15
 WORKER_LOST_SECONDS = 120          # a laptop worker is "online" within this; a running run past it is "worker lost"
 RENDER_ALIVE_SECONDS = 300
+
+# EDGAROPS1 fix 3 — REAL and FIXTURE runs never cross. A process with EDGAR_FIXTURE_RUNS=1 (the verify scripts; never
+# set on Render or a laptop worker) stamps every queued run it inserts params.fixture = true, and its workers claim
+# ONLY such runs. Any other worker claims ONLY unstamped runs. The one-at-a-time rule protects the SEC's 8/s budget,
+# so it is kept per side: fixture runs talk to a mock SEC, and they neither take that slot nor wait for it.
+FIXTURE_ENV = "EDGAR_FIXTURE_RUNS"
+FIXTURE_SQL = "(COALESCE(params->>'fixture', '') = 'true')"
+
+
+def fixture_mode() -> bool:
+    return os.environ.get(FIXTURE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def stamp_fixture(params: dict) -> dict:
+    """``params`` + fixture = true when this process inserts fixture runs."""
+    return {**params, "fixture": True} if fixture_mode() else params
 MAX_CONCURRENCY = 16
 DEFAULT_CONCURRENCY = 6
 RENDER_WORKER_ENV = "EDGAR_BULK_RENDER_WORKER_SERVICE_ID"
@@ -122,7 +138,18 @@ TARGET_LABELS = {"laptop": "Laptop", "render": "Render"}
 STATUS_LABELS = {
     "queued": "Queued", "running": "Running", "succeeded": "Succeeded", "failed": "Failed",
     "stopped": "Stopped", "cancelled": "Cancelled", "worker_lost": "Worker lost",
+    # EDGAROPS1 — a scheduled download queued where the Render tick cannot run it (reason on the run).
+    "waiting": "Waiting",
 }
+# EDGAROPS1 — the run summary's fields, labels from the server (Rule 1).
+SUMMARY_FIELDS = [
+    {"key": "requested", "label": "Requested"}, {"key": "fetched", "label": "Fetched"},
+    {"key": "stored", "label": "Stored"}, {"key": "skipped_total", "label": "Skipped"},
+    {"key": "failed", "label": "Failed"}, {"key": "carried_over", "label": "Carried over"},
+    {"key": "duration_seconds", "label": "Duration"},
+]
+SKIP_REASON_LABELS = {"not_pricing_supplement": "not a final pricing supplement",
+                      "prefilter_skipped": "prefilter (not a note we read)"}
 RUN_KIND_LABELS = {"bulk_fetch": "Bulk download", "refresh_index": "Refresh index"}
 # bulkfetchui3 — the weekday automatic index refresh writes trigger_source 'schedule'.
 TRIGGER_SOURCE_LABELS = {"manual": "From the screen", "cli": "Command line", "schedule": "Scheduled",
@@ -285,6 +312,8 @@ def run_options_from_params(params: dict, run_id, **overrides) -> eb.RunOptions:
         max_rps=int(params.get("max_rps") or eb.DEFAULT_MAX_RPS), peek=bool(params.get("peek", True)),
         keep_preliminaries=bool(params.get("keep_preliminaries", False)), trigger_source="manual",
         run_id=run_id,
+        # EDGAROPS1 — a scheduled download's list; absent on every screen / CLI run.
+        accessions=list(params["accessions"]) if params.get("accessions") is not None else None,
     )
     base.update(overrides)
     return eb.RunOptions(**base)
@@ -362,37 +391,104 @@ _INSTITUTIONS_CACHE: dict = {}
 DOWNLOADED_STATUSES = ("fetched", "fetch_failed", "not_pricing_supplement", "prefilter_skipped",
                        "ready_for_extraction", "extraction_submitted", "extracted", "needs_review",
                        "extraction_failed")
+# EDGAROPS1 — the table ADDS UP (docs/EDGAROPS1_NOTES.md §6). Every eligible
+# status lands in exactly one column:
+#   To fetch   = selected
+#   Downloaded = fetched, ready_for_extraction, extraction_submitted, extracted, needs_review, extraction_failed
+#   Skipped    = not_pricing_supplement (peek or full text), prefilter_skipped
+#   Failed     = fetch_failed
+#   (discovered / not_selected were never offered to a fetch: not eligible)
+# Eligible = To fetch + Downloaded + Skipped + Failed; Stored = Downloaded rows
+# with an R2 key; % done = (Downloaded + Skipped + Failed) / Eligible.
+# The bulkfetchui3 fields keep their numbers under new names: ``handled`` (=
+# Downloaded + Skipped + Failed, the old "downloaded") and ``handled_stored``
+# (the old "stored": any handled row with an R2 key).
 INSTITUTION_COLUMNS = {
+    "eligible": {"label": "Eligible",
+                 "help": "Offered to a download by the selection: to fetch + downloaded + skipped + failed"},
+    "to_fetch": {"label": "To fetch", "help": "Selected and not downloaded yet (all years; the year columns split it)"},
+    "earlier": {"label": "Earlier", "help": "To fetch, filed before the years shown"},
     "downloaded": {"label": "Downloaded",
-                   "help": "Handled by a bulk download: fetched, peeked or failed (all years)"},
+                   "help": "Downloaded in full and kept: ready for the reader, read, or waiting (all years)"},
     "stored": {"label": "Stored",
-               "help": "Kept in storage, by the document kinds chosen at the time (all years)"},
+               "help": "Of Downloaded, the documents still held in storage (all years)"},
+    "skipped": {"label": "Skipped",
+                "help": "Looked at and not kept: not a final pricing supplement, or skipped by the prefilter"},
+    "failed": {"label": "Failed", "help": "The download failed (retried automatically when the failure was transient)"},
+    "pct_done": {"label": "% done", "help": "(Downloaded + Skipped + Failed) / Eligible"},
 }
-# One pass over the handled rows of the catalog's CIKs, all years (the same
-# scope as Total). Served by a BitmapAnd of edgar_index_filings_queue_idx
-# (pipeline_status) and edgar_index_filings_primary_issuer_idx (measured
-# 2026-10-22: 478 ms cold for the three biggest programs, 12,069 rows).
+INSTITUTION_YEARS_SHOWN = 3
+_TABLE_STATUSES = {"to_fetch": ("selected",),
+                   "downloaded": ("fetched", "ready_for_extraction", "extraction_submitted", "extracted",
+                                  "needs_review", "extraction_failed"),
+                   "skipped": ("not_pricing_supplement", "prefilter_skipped"), "failed": ("fetch_failed",)}
+ELIGIBLE_STATUSES = tuple(s for v in _TABLE_STATUSES.values() for s in v)
+# Two passes, as bulkfetchui3 measured them: To fetch by CIK x year is an
+# index-only scan of edgar_index_filings_selected_count_idx (SELECTED_YEARS_SQL;
+# a single pass joining reference_filings for every selected row measured 9.3 s
+# on 2026-11-13); the handled statuses by CIK x status with the stored count
+# (DOWNLOADED_STORED_SQL) use edgar_index_filings_primary_issuer_idx.
+SELECTED_YEARS_SQL = """
+    SELECT f.primary_issuer_cik AS cik, extract(year FROM f.filing_date)::int AS y, count(*)::int AS n
+      FROM portfolio.edgar_index_filings f
+     WHERE f.pipeline_status = 'selected'
+       AND f.form_type = ANY($2::text[])
+       AND f.primary_issuer_cik = ANY($1::text[])
+     GROUP BY 1, 2"""
 DOWNLOADED_STORED_SQL = """
-    SELECT f.primary_issuer_cik AS cik,
-           count(*)::int AS downloaded,
+    SELECT f.primary_issuer_cik AS cik, f.pipeline_status AS status, count(*)::int AS n,
            count(*) FILTER (WHERE r.r2_key IS NOT NULL OR r.text_r2_key IS NOT NULL)::int AS stored
       FROM portfolio.edgar_index_filings f
       LEFT JOIN portfolio.reference_filings r ON r.id = f.reference_filing_id
      WHERE f.pipeline_status = ANY($3::text[])
        AND f.form_type = ANY($2::text[])
        AND f.primary_issuer_cik = ANY($1::text[])
-     GROUP BY 1"""
+     GROUP BY 1, 2"""
+
+
+def _pct(done: int, eligible: int) -> float | None:
+    return None if not eligible else round(100.0 * done / eligible, 1)
+
+
+def _counts_row(per_status: dict[str, tuple[int, int]], years: dict[int, int]) -> dict:
+    """One table row from {status: (n, stored)} and the to-fetch years."""
+    def total(col):
+        return sum(per_status.get(s, (0, 0))[0] for s in _TABLE_STATUSES[col])
+    to_fetch, downloaded = total("to_fetch"), total("downloaded")
+    skipped, failed = total("skipped"), total("failed")
+    stored = sum(per_status.get(s, (0, 0))[1] for s in _TABLE_STATUSES["downloaded"])
+    handled = downloaded + skipped + failed
+    eligible = to_fetch + handled
+    return {"years": {str(y): n for y, n in sorted(years.items())}, "total": to_fetch, "to_fetch": to_fetch,
+            "downloaded": downloaded, "stored": stored, "skipped": skipped,
+            "skipped_by_reason": {s: per_status[s][0] for s in _TABLE_STATUSES["skipped"]
+                                  if per_status.get(s, (0, 0))[0]},
+            "failed": failed, "eligible": eligible, "pct_done": _pct(handled, eligible),
+            "handled": handled,
+            "handled_stored": sum(per_status.get(s, (0, 0))[1] for s in DOWNLOADED_STATUSES)}
+
+
+def shown_years(rows: list[dict], n: int = INSTITUTION_YEARS_SHOWN) -> list[str]:
+    """The latest ``n`` to-fetch years present anywhere in the table."""
+    ys = sorted({y for r in rows for y in (r.get("years") or {})}, key=int)
+    return ys[-n:]
+
+
+def with_earlier(row: dict, years: list[str]) -> dict:
+    """``earlier`` = To fetch filed before the years shown, so the shown year
+    columns + Earlier sum to To fetch."""
+    first = int(years[0]) if years else None
+    earlier = sum(n for y, n in (row.get("years") or {}).items() if first is None or int(y) < first)
+    return row | {"earlier": earlier}
 
 
 async def institutions(conn, *, source_name: str = eb.DEFAULT_SOURCE, use_cache: bool = True) -> dict:
     """Every institution (issuer group) the source can fetch, with its filer
-    entities (name, CIK, role) and SELECTED counts by year. One index-only scan
-    (edgar_index_filings_selected_count_idx); cached for 60 s because a live
-    bulk run's claims keep dirtying the visibility map.
-
-    BULKFETCHUI3 — plus ``downloaded`` and ``stored`` per filer and per
-    institution (DOWNLOADED_STORED_SQL, all years) and ``as_of`` (the database
-    clock when the numbers were read). ``use_cache=False`` is the screen's
+    entities (name, CIK, role) and, per filer and per institution, one row that
+    ADDS UP (EDGAROPS1): Eligible = To fetch + Downloaded + Skipped + Failed,
+    Stored (of Downloaded), % done, To fetch by year with ``years_shown`` (the
+    latest 3 present) and ``earlier``. ``as_of`` = the database clock when the
+    numbers were read. Cached for 60 s; ``use_cache=False`` is the screen's
     Refresh (``?fresh=1``): it reads now and replaces the cached entry."""
     hit = _INSTITUTIONS_CACHE.get(source_name)
     if use_cache and hit and time.monotonic() - hit[0] < INSTITUTIONS_CACHE_SECONDS:
@@ -401,41 +497,46 @@ async def institutions(conn, *, source_name: str = eb.DEFAULT_SOURCE, use_cache:
     catalog = await eb.institution_catalog(conn, source)
     ciks = [c for inst in catalog.values() for c in inst.ciks]
     async with platform_scope(conn):
-        rows = await conn.fetch(
-            """SELECT f.primary_issuer_cik AS cik, extract(year FROM f.filing_date)::int AS y, count(*)::int AS n
-                 FROM portfolio.edgar_index_filings f
-                WHERE f.pipeline_status = 'selected'
-                  AND f.form_type = ANY($2::text[])
-                  AND f.primary_issuer_cik = ANY($1::text[])
-                GROUP BY 1, 2""",
-            ciks, list(source.form_types))
-        handled = await conn.fetch(DOWNLOADED_STORED_SQL, ciks, list(source.form_types),
-                                   list(DOWNLOADED_STATUSES))
+        sel = await conn.fetch(SELECTED_YEARS_SQL, ciks, list(source.form_types))
+        rows = await conn.fetch(DOWNLOADED_STORED_SQL, ciks, list(source.form_types),
+                                [x for x in ELIGIBLE_STATUSES if x != "selected"])
         as_of = await conn.fetchval("SELECT now()")
-    by_cik: dict[str, dict[int, int]] = {}
+    per_cik: dict[str, dict[str, list[int]]] = {}
+    years_cik: dict[str, dict[int, int]] = {}
     for r in rows:
-        by_cik.setdefault(r["cik"], {})[r["y"]] = r["n"]
-    done = {r["cik"]: (r["downloaded"], r["stored"]) for r in handled}
+        per_cik.setdefault(r["cik"], {})[r["status"]] = [r["n"], r["stored"]]
+    for r in sel:
+        years_cik.setdefault(r["cik"], {})[r["y"]] = r["n"]
+        st = per_cik.setdefault(r["cik"], {}).setdefault("selected", [0, 0])
+        st[0] += r["n"]
     out = []
     for name in sorted(catalog, key=str.casefold):
         inst = catalog[name]
-        years: dict[int, int] = {}
         filers = []
+        agg: dict[str, list[int]] = {}
+        years: dict[int, int] = {}
         for f in inst.filers:
-            fy = by_cik.get(f.cik, {})
+            ps = {k: tuple(v) for k, v in per_cik.get(f.cik, {}).items()}
+            fy = years_cik.get(f.cik, {})
+            for k, (n, st) in ps.items():
+                a = agg.setdefault(k, [0, 0])
+                a[0] += n
+                a[1] += st
             for y, n in fy.items():
                 years[y] = years.get(y, 0) + n
-            d, st = done.get(f.cik, (0, 0))
             filers.append({"cik": f.cik, "name": f.filer_name, "role": f.filer_role,
-                           "credit_entity": f.credit_entity,
-                           "years": {str(y): n for y, n in sorted(fy.items())}, "total": sum(fy.values()),
-                           "downloaded": d, "stored": st})
-        out.append({"name": name, "filers": filers, "years": {str(y): n for y, n in sorted(years.items())},
-                    "total": sum(years.values()),
-                    "downloaded": sum(f["downloaded"] for f in filers),
-                    "stored": sum(f["stored"] for f in filers)})
-    result = {"source": source.name, "rows": out, "last_indexed_date": str(await eb.last_indexed_date(conn)),
-              "as_of": as_of.isoformat()}
+                           "credit_entity": f.credit_entity, **_counts_row(ps, fy)})
+        out.append({"name": name, "filers": filers, **_counts_row({k: tuple(v) for k, v in agg.items()}, years)})
+    ys = shown_years(out)
+    for r in out:
+        r.update(with_earlier(r, ys))
+        for f in r["filers"]:
+            f.update(with_earlier(f, ys))
+    totals = {k: sum(r[k] for r in out) for k in ("to_fetch", "downloaded", "stored", "skipped", "failed",
+                                                  "eligible", "handled", "earlier")}
+    totals["pct_done"] = _pct(totals["handled"], totals["eligible"])
+    result = {"source": source.name, "rows": out, "years_shown": ys, "totals": totals,
+              "last_indexed_date": str(await eb.last_indexed_date(conn)), "as_of": as_of.isoformat()}
     _INSTITUTIONS_CACHE[source_name] = (time.monotonic(), result)
     return result
 
@@ -600,7 +701,7 @@ async def _insert_queued(conn, *, run_kind: str, target: str, params: dict, requ
                VALUES ('manual', $1, 'queued', $2::text[], $3, $4, $5, $6, $7::jsonb, now(), $8::jsonb)
                RETURNING *""",
             requested_by, stages, min(int(fetch_cap), 2_000_000_000), eb.RUNTIME_CAP_SECONDS, run_kind, target,
-            _json(params), _json(details))
+            _json(stamp_fixture(params)), _json(details))
 
 
 async def _check_target(conn, target: str) -> dict:
@@ -717,12 +818,64 @@ async def requeue(conn, run_id) -> dict:
 
 # ═══ Reads ══════════════════════════════════════════════════════════════════
 
+def _duration(start, end) -> int | None:
+    if not start or not end:
+        return None
+    if isinstance(start, str):
+        start = datetime.fromisoformat(start)
+    if isinstance(end, str):
+        end = datetime.fromisoformat(end)
+    return max(0, round((end - start).total_seconds()))
+
+
+def run_summary(r: dict) -> dict | None:
+    """EDGAROPS1 — requested / fetched / stored / skipped (by reason) / failed /
+    carried over / duration, for any bulk run. A scheduled download's summary is
+    where its listed filings stand (details.auto_download.summary, written by
+    the worker); a screen / CLI run's comes from its Runner's own counts
+    (progress.by_status — every full download went through store_fetched, so
+    stored = fetched). None ("—") for a run that has neither: a refresh, a run
+    that never started, or an old run from before the counts were kept."""
+    if r.get("run_kind") != "bulk_fetch":
+        return None
+    details = _as_dict(r.get("details"))
+    auto = details.get("auto_download")
+    from services import edgar_auto_download as ad
+
+    if auto:
+        s = auto.get("summary")
+        if not s:
+            return None
+        first = auto.get("first_started_at") or r.get("started_at")
+        return {**s, "carried_over": int(auto.get("carried_over") or 0),
+                "duration_seconds": _duration(first, r.get("finished_at")),
+                "working_seconds": auto.get("working_seconds")}
+    progress = _as_dict(r.get("progress"))
+    by = progress.get("by_status")
+    if not by:
+        return None
+    skipped = {k: int(by[k]) for k in ad.SKIPPED_STATUSES if by.get(k)}
+    fetched = sum(int(by.get(k) or 0) for k in ad.DOWNLOADED_STATUSES)
+    return {"requested": progress.get("scope_total", r.get("fetch_cap")), "fetched": fetched, "stored": fetched,
+            "skipped": skipped, "skipped_total": sum(skipped.values()),
+            "failed": int(by.get("fetch_failed") or 0), "still_to_fetch": progress.get("remaining"),
+            "carried_over": None, "duration_seconds": _duration(r.get("started_at"), r.get("finished_at"))}
+
+
 def run_out(r: dict) -> dict:
     params = _as_dict(r.get("params"))
     progress = _as_dict(r.get("progress"))
+    details = _as_dict(r.get("details"))
+    auto = details.get("auto_download")
     lost = bool(r.get("worker_lost"))
     status = r["status"]
     display = "worker_lost" if lost else status
+    if auto and status == "queued" and auto.get("waiting"):
+        display = "waiting"
+    if auto:
+        # the list itself is not shipped to the screen (up to the cap of accession numbers)
+        params = {k: v for k, v in params.items() if k != "accessions"} | {
+            "accessions_count": len(params.get("accessions") or [])}
     total = progress.get("scope_total")
     if total is None:
         total = r.get("fetch_cap")
@@ -737,12 +890,21 @@ def run_out(r: dict) -> dict:
         "rate_per_second": progress.get("rate_per_second"), "eta_seconds": progress.get("eta_seconds"),
         "failed": progress.get("failed", r.get("fetch_failed", 0)), "failures": progress.get("failures", []),
         "stop_reason": r.get("stop_reason"), "error": r.get("error"),
+        "summary": run_summary(r),
+        "auto_download": None if not auto else {
+            "date": auto.get("date"), "listed": auto.get("listed"), "eligible": auto.get("eligible"),
+            "cap": auto.get("cap"), "cap_reached": bool(auto.get("cap_reached")),
+            "carried_over": int(auto.get("carried_over") or 0), "new_since": auto.get("new_since"),
+            "waiting": auto.get("waiting") if status == "queued" else None,
+        },
         "actions": {
-            "stop": status == "running" and r.get("trigger_source") != "schedule",
+            # A scheduled download IS a queued run (any worker can take it), so it
+            # gets the queue's actions; a scheduled REFRESH ran in the cron process,
+            # not a worker queue: requeuing it would wait for a worker forever.
+            "stop": status == "running" and (r.get("trigger_source") != "schedule" or bool(auto)),
             "cancel": status == "queued",
-            # A scheduled refresh ran in the cron process, not a worker queue:
-            # requeuing it would wait for a worker forever. Tomorrow's tick retries.
-            "requeue": (status in ("stopped", "failed") or lost) and r.get("trigger_source") != "schedule",
+            "requeue": (status in ("stopped", "failed") or lost) and (r.get("trigger_source") != "schedule"
+                                                                       or (bool(auto) and bool(params.get("banks")))),
         },
     }
 
@@ -758,9 +920,15 @@ async def list_runs(conn, *, page: int = 1, page_size: int = 25) -> dict:
                  ORDER BY COALESCE(r.queued_at, r.requested_at) DESC, r.id DESC
                  LIMIT $2 OFFSET $3""",
             list(QUEUED_KINDS), page_size, (page - 1) * page_size)
+        from services import edgar_auto_download as ad
+
+        waiting = await ad.waiting_summary(conn)
     out = [run_out(dict(r)) for r in rows]
     return {"rows": out, "total": int(total), "page": page, "page_size": page_size,
-            "active": any(r["status"] in ("queued", "running") for r in out)}
+            "active": any(r["status"] in ("queued", "running") for r in out),
+            # EDGAROPS1 — scheduled downloads still queued and the filings they hold
+            "scheduled_waiting": waiting, "summary_fields": SUMMARY_FIELDS,
+            "skip_reason_labels": SKIP_REASON_LABELS}
 
 
 async def get_run(conn, run_id) -> dict:
@@ -770,36 +938,44 @@ async def get_run(conn, run_id) -> dict:
 # ═══ The worker ═════════════════════════════════════════════════════════════
 
 async def claim_next_run(conn, *, target: str, worker_id: str, host: str,
-                         restrict_to: list | None = None) -> tuple[dict | None, str | None]:
+                         restrict_to: list | None = None,
+                         fixtures: bool | None = None) -> tuple[dict | None, str | None]:
     """Claim the oldest queued run for ``target``. Returns (row, None) or
     (None, why-not). One run at a time across all workers: the check and the
     claim share one transaction-scoped advisory lock.
 
     ``restrict_to`` (run ids) is the verify's isolation: a verify worker must
-    never claim a REAL queued run. None = every queued run (production)."""
+    never claim a REAL queued run. None = every queued run (production).
+
+    ``fixtures`` (default: this process's EDGAR_FIXTURE_RUNS) picks the side: a
+    real worker never claims a fixture run, a fixture worker never a real one,
+    and the busy check counts only runs on the claimer's own side."""
+    fixtures = fixture_mode() if fixtures is None else bool(fixtures)
     async with platform_scope(conn):
         await conn.execute("SELECT pg_advisory_xact_lock($1)", CLAIM_LOCK_KEY)
         busy = await conn.fetchrow(
             f"""SELECT id, worker_id, target FROM portfolio.edgar_pipeline_runs
                  WHERE status = 'running' AND run_kind = ANY($1::text[])
                    AND heartbeat_at >= now() - interval '{WORKER_LOST_SECONDS} seconds'
-                 LIMIT 1""", list(QUEUED_KINDS))
+                   AND {FIXTURE_SQL} = $2
+                 LIMIT 1""", list(QUEUED_KINDS), fixtures)
         if busy:
             return None, (f"run {busy['id']} is running on worker {busy['worker_id']} ({busy['target']}); "
                           "one bulk run at a time keeps the SEC budget at 8/s")
         row = await conn.fetchrow(
-            """UPDATE portfolio.edgar_pipeline_runs
+            f"""UPDATE portfolio.edgar_pipeline_runs
                   SET status = 'running', worker_id = $2, worker_host = $3, heartbeat_at = now(),
                       started_at = now(), finished_at = NULL, stop_requested = false, error = NULL,
                       stop_reason = NULL
                 WHERE id = (SELECT id FROM portfolio.edgar_pipeline_runs
                              WHERE status = 'queued' AND target = $1 AND run_kind = ANY($4::text[])
                                AND ($5::uuid[] IS NULL OR id = ANY($5::uuid[]))
+                               AND {FIXTURE_SQL} = $6
                              ORDER BY queued_at, id
                              LIMIT 1
                              FOR UPDATE SKIP LOCKED)
             RETURNING *""", target, worker_id, host, list(QUEUED_KINDS),
-            None if restrict_to is None else list(restrict_to))
+            None if restrict_to is None else list(restrict_to), fixtures)
         if row:
             # A requeued run: the previous executor is gone; its claims are this
             # run id's and would otherwise block the resume until they lapse.
@@ -816,7 +992,7 @@ class Worker:
                  host: str | None = None, client_factory=None, out=print, poll_seconds: float = POLL_SECONDS,
                  heartbeat_seconds: float = HEARTBEAT_SECONDS, stop_poll_seconds: float = STOP_POLL_SECONDS,
                  stop_event: asyncio.Event | None = None, runner_kwargs: dict | None = None,
-                 restrict_to: list | None = None):
+                 restrict_to: list | None = None, fixtures: bool | None = None):
         if target not in TARGETS:
             raise ValueError(f"--target must be one of {list(TARGETS)}")
         self.pool, self.target, self.out = pool, target, out
@@ -829,8 +1005,11 @@ class Worker:
         self.stop = stop_event or asyncio.Event()       # Ctrl-C: finish the run as 'stopped', then exit
         self.runner_kwargs = runner_kwargs or {}
         self.restrict_to = restrict_to
+        self.fixtures = fixture_mode() if fixtures is None else bool(fixtures)   # fix 3: which side it claims from
         self.current_run_id = None
         self.fenced = False
+        self._run_stop: asyncio.Event | None = None
+        self._watcher: asyncio.Task | None = None
         self.executed: list[dict] = []
 
     # ── heartbeat ─────────────────────────────────────────────────────────
@@ -840,7 +1019,9 @@ class Worker:
                 """INSERT INTO portfolio.edgar_fetch_workers (worker_id, target, host, pid, details)
                    VALUES ($1, $2, $3, $4, $5::jsonb)
                    ON CONFLICT (worker_id) DO UPDATE SET heartbeat_at = now(), stopped_at = NULL""",
-                self.worker_id, self.target, self.host, os.getpid(), _json({"started_by": "run_bulk_fetch --worker"}))
+                self.worker_id, self.target, self.host, os.getpid(),
+                _json({"started_by": "run_bulk_fetch --worker", "fixtures": self.fixtures,
+                       "claims": "fixture runs only" if self.fixtures else "real runs only"}))
 
     async def heartbeat(self) -> bool:
         """Worker row + (when running) the run row. False = fenced: the run row
@@ -890,6 +1071,18 @@ class Worker:
                 run_stop.set()
                 break
 
+    async def _end_watch(self) -> None:
+        """Stop the heartbeat/stop-poll watcher (idempotent)."""
+        if self._run_stop is not None:
+            self._run_stop.set()
+        w, self._watcher = self._watcher, None
+        if w is not None:
+            w.cancel()
+            try:
+                await w
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
     async def write_progress(self, run_id, progress: dict) -> None:
         async with self.pool.acquire() as conn, platform_scope(conn):
             await conn.execute(
@@ -917,6 +1110,7 @@ class Worker:
         await self.heartbeat()
         run_stop = asyncio.Event()
         watcher = asyncio.create_task(self._watch(run_stop, run_id))
+        self._run_stop, self._watcher = run_stop, watcher
         params = _as_dict(run["params"])
         self.out(f"worker {self.worker_id}: claimed {run['run_kind']} run {run_id}")
         try:
@@ -931,12 +1125,7 @@ class Worker:
                                   stop_reason="the run raised before or after the fetch loop")
             self.out(f"run {run_id} failed: {type(exc).__name__}: {exc}")
         finally:
-            run_stop.set()
-            watcher.cancel()
-            try:
-                await watcher
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+            await self._end_watch()
             self.current_run_id = None
             await self.heartbeat()
         self.executed.append({"run_id": run_id, "status": status})
@@ -950,14 +1139,34 @@ class Worker:
         async def progress(runner):
             await self.write_progress(run_id, eb.progress_snapshot(runner))
 
+        t0 = time.monotonic()
         try:
             runner = eb.Runner(self.pool, opts, client=client, out=self.out, stop_event=run_stop,
                                on_progress=progress, owns_run=self.owns_run, **self.runner_kwargs)
             try:
                 await runner.run()
             finally:
+                # EDGAROPS1 fix 3. The Runner has CLOSED the run row ('succeeded' / 'stopped' / 'failed') when its
+                # list ended. From here on the watcher's heartbeat ("WHERE worker_id = me AND status = 'running'")
+                # matches nothing, and it would call this worker fenced while it is still writing the final progress
+                # and the summary (verify_edgarops1 [Q]: a finished 2,000-filing chunk returned 'fenced' when a 30 s
+                # heartbeat landed in that window). Stop the watcher first. If this runner closed the row as its
+                # owner (it checked owns_run() just before), the run was never taken away.
+                await self._end_watch()
+                if runner.closed_as_owner:
+                    self.fenced = False
                 if not self.fenced and runner.stats.run_id is not None:
                     await self.write_progress(run_id, eb.progress_snapshot(runner) | {"final": True})
+                if not self.fenced and opts.accessions is not None:
+                    # EDGAROPS1 — a scheduled download's summary is where its LISTED filings stand now
+                    # (cumulative across ticks and workers), whichever worker ran it.
+                    from services import edgar_auto_download as ad
+
+                    try:
+                        async with self.pool.acquire() as conn:
+                            await ad.write_summary(conn, run_id, working_seconds=time.monotonic() - t0)
+                    except Exception as exc:  # noqa: BLE001 — the run's own outcome stands; the summary is a read
+                        self.out(f"run {run_id}: summary not written: {type(exc).__name__}: {exc}")
         finally:
             await client.aclose()
         if self.fenced:
@@ -1004,7 +1213,8 @@ class Worker:
                 await self.heartbeat()
                 async with self.pool.acquire() as conn:
                     run, why = await claim_next_run(conn, target=self.target, worker_id=self.worker_id,
-                                                    host=self.host, restrict_to=self.restrict_to)
+                                                    host=self.host, restrict_to=self.restrict_to,
+                                                    fixtures=self.fixtures)
                 if run is not None:
                     await self.execute(run)
                     n += 1

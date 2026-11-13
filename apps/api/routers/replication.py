@@ -216,7 +216,8 @@ async def lookup(request: Request, ticker: str | None = Query(default=None, max_
         async with pool.acquire() as conn:
             tmpl = await DL.text_for(conn, "replica.fund_affiliation", org_id=org_id)   # DISCLOSURES1
             try:
-                source = await H.choose_source(conn, ticker=fund.ticker, series_id=sec.get("series_id"))
+                source = await H.choose_source(conn, ticker=fund.ticker, series_id=sec.get("series_id"),
+                                               cik=sec.get("cik") if sec.get("uit") else None)   # EDGAROPS1
                 source_out = {"key": source["key"], "label": source["issuer"], "parser": source["parser"]}
             except H.NoHoldingsSource as exc:
                 source_out = {"key": None, "label": None, "error": str(exc)}
@@ -241,7 +242,7 @@ async def _ingest_entry(pool, entry: dict, http) -> H.IngestResult:
     if source is None or not source["active"]:
         raise H.NoHoldingsSource(f"holdings source '{entry['holdings_source_key']}' is not active")
     return await H.ingest(pool, fund_global_security_id=str(entry["global_security_id"]), ticker=entry["ticker"],
-                          source=source, series_id=entry.get("sec_series_id"), http=http)
+                          source=source, series_id=entry.get("sec_series_id"), http=http, cik=entry.get("sec_cik"))
 
 
 async def _step(coro, cap: float) -> dict:
