@@ -393,7 +393,17 @@ async def org_daily(pool, *, org_id, now_utc: datetime | None = None, include_te
         status = "failed"
         errors.append(f"step: {type(exc).__name__}: {str(exc)[:400]}")
     proposed = [r for r in results if r["action"] == "proposed"]
-    vdates = [r["valuation_as_of"] for r in results if r.get("valuation_as_of")]
+    # the oldest valuation date across EVERY opted-in account checked (whatever its outcome — an account skipped
+    # before compute still holds the data a person would approve against): the "oldest price date" of the run
+    vdates = []
+    try:
+        async with pool.acquire() as conn:
+            for ln in links or []:
+                v = await AM.valuation_as_of(conn, org_id, ln["account_id"])
+                if v:
+                    vdates.append(v.isoformat())
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"valuation dates: {type(exc).__name__}: {str(exc)[:300]}")
     todo_ids: list[str] = []
     try:
         async with pool.acquire() as conn:
