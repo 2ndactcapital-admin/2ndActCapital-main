@@ -204,3 +204,7 @@ Earlier legs: t 34/0, u 25/0, s 14/0, f 16/0, w 21/0. This leg, one section at a
   dates 2019-01-02 … 2026-10-30.
 * j (fast regressions): not run here — it runs eight full verifies nested; WSL memory rule for this leg. The runner's
   full verify covers it.
+* `--cleanup-only`: 1/0, zero fixture rows. `--self-checks-only`: 26/0.
+* Fast-mode self-checks (`--self-checks-only`): dailyops1 28/0 · readerfix1 26/0 · bulkfetch 1/0 · bulkfetchui 1/0 ·
+  bulkfetchui2 1/0 · bulkfetchui3 8/0 · edgarpipelinea 1/0. (edgarcohorts / edgarcorpus / edgarinventory_* have no
+  fast mode — full runs only, left to the runner.)
