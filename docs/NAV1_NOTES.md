@@ -123,3 +123,87 @@ clickable mockup "Hollisworks navigation redesign" (2026-11-12). Phase 2 (nav2: 
 | `/admin/note-extraction/results` | Admin — Platform · Structured Notes | Accuracy results | Platform · Structured notes pipeline → Accuracy | `{"roles":["super_admin"]}` |
 | `/admin/pricing/surface` | Admin — Platform · Structured Notes | Volatility surface | Platform · Structured notes pipeline → Volatility surface | `{"roles":["super_admin"]}` |
 | `/treasury` | — (NO menu entry before NAV1) | — | Main · Treasury (NEW) | `{"anyOf":["view_portfolio","manage_portfolio"],"strict":true}` — the page's API gate (GET /cash/households) |
+
+## 3. Where did it go? (for Joe)
+
+| You used to click… | Now it is… |
+|---|---|
+| CRM | **Entities** (same page, `/crm`) |
+| Portfolio → Overview / Positions / Transactions / Securities / Commitments / Households / Allocation / Ownership tree / Approvals | **Cross Book** → same tabs (a member reads **My accounts**) |
+| Portfolio → Models, Model catalog | **Model Portfolios** → Models, Model catalog |
+| Portfolio → Replication | **Model Portfolios** → Build from a fund |
+| Portfolio → Tilts / Backtest | **Model Portfolios** → Tilts & completion / Backtest |
+| Portfolio → Accounts / Tax / Section 351 | **Model Portfolios** → Accounts & rebalancing / Tax management / Transitions |
+| Portfolio → Blocks / Instructions | **Model Portfolios** → Blocks / Instructions (the trading tabs) |
+| Portfolio → Notes / New issues | **Structured Notes** (main menu) → Notes / New issues |
+| Portfolio → Underlying queue | **Platform · Super Admin → Structured notes pipeline** → Underlying queue |
+| `/treasury` (no menu entry) | **Treasury** (main menu) |
+| Admin — Organization → Settings → Organization / TA Model Defaults / Disclosures / Hypothetical-performance policy | **Firm settings** → Organization & branding / TA model defaults / Disclosures / Hypothetical-performance policy |
+| Settings → Price sources / Data quality | **Data & pricing** |
+| Settings → Allocation policy / Executing accounts | **Model Portfolio Admin** |
+| People & Access (Teams & Coverage, Permission Sets) | **People & Access** (Teams & coverage, Permission sets) |
+| Workflows → Workflows / Runs / Triggers / Templates / Autonomy | **Automation** → … / Triggers & schedules / … |
+| Billing & Custody → Billing Groups / Custody Import / Fee schedules / Profitability / Custodian capabilities | **Custody & Billing** → same (sentence-case labels) |
+| Admin — Platform → Controls → Counterparties | **Organization admin → Custody & Billing** → Counterparties (still Super Admin only) |
+| Deal Intake → VDR Proposals | **Deal Intake** → VDR proposals |
+| Tenants; Controls → Restricted Access / Trading Authority / Integrated import | **Platform → Tenants & controls** |
+| Controls → Security data / Security master | **Platform → Security data** → Providers & licences / Security master |
+| Controls → Published models / Workflow templates | **Platform → Publishing** |
+| AI Models → Model Catalog / Model Jobs / Model Research / Drift monitor | **Platform → AI** → Model catalog / Jobs & budgets / Model research / Drift monitor |
+| Structured Notes (platform) → Download / Review queue / Accuracy results | **Platform → Structured notes pipeline** → EDGAR download / Terms review / Accuracy |
+| The assistant panel (open for most people) | **Closed by default**; the **Assistant** button in the top bar opens / closes it and remembers your choice |
+
+Section headings: "Admin — Organization" → **Organization admin**; "Admin — Platform" → **Platform · Super Admin**.
+Page headings follow the tab labels (they come from `labelFor`), so e.g. `/portfolio/replication` is now titled
+"Build from a fund" and `/portfolio/replication/section351` "Transitions".
+
+## 4. Assistant panel
+
+* `lib/assistantPanelPref.mjs` — the rule (pure, node-tested): closed unless the account says `"expanded"` or this
+  browser remembers open; legacy postures (`collapsible`, empty) = closed. `lib/useAssistantPanel.js` — one shared
+  store for the top-bar button and the panel; toggling writes localStorage (try/catch) and PATCHes
+  `/api/users/me {assistant_panel_posture}` — the existing column, no API or schema change.
+* `components/assistant/AssistantToggle.jsx` — the one control (top bar). `AssistantPanel` renders nothing while
+  closed (the old in-panel rail toggle is gone — one button only). Views, chat and to-dos are unchanged.
+
+## 5. Tests changed (placement only — no gate assertion weakened)
+
+* `tests/nav/navregroup.test.mjs`: navregroup's hand list is KEPT and still asserted — each of its hrefs must still
+  be offered to that persona in the same section (now as an entry OR a tab, since regrouping turned some entries
+  into tabs, e.g. Billing Groups, Restricted Access); NAV1's own hand-written entry list added beside it; section
+  headings, the collapsed title "Cross Book", the pipeline's tab labels and the single-tab example (Deal Intake —
+  Tenants now has 4 tabs) updated.
+* `cpsim01` (Counterparties now `org_admin` / `billing`, gate still asserted Super Admin), `rep1` (group
+  `model_portfolios`, label "Build from a fund"), `rep2` / `rep3` / `rep5` / `rep6` (group `model_portfolios`). Every
+  gate assertion in them is unchanged.
+
+## 6. Proof
+
+| Run | Result |
+|---|---|
+| `timeout 600 python3 apps/api/scripts/verify_nav1.py` | **30 PASS, 0 FAIL** (A self-checks, B node tests 232/0 across 24 files, C both matrices CURRENT) |
+| `… verify_nav1.py --self-checks-only` | **28 PASS, 0 FAIL** |
+| `node --test tests/nav1/` | **33 pass, 0 fail** |
+| `node --test tests/` (whole web suite) | **854 pass, 0 fail**, 1 pre-existing skip |
+| `authz1_routes.py --check`, `visibility1_routes.py --check` | **CURRENT**, CURRENT |
+| mutation check (Allocation gate → null, SoD tab removed) | nav1 tests **15 fail** as they should; module restored |
+| `menuvisibility_harness.mjs`, `navregroup_today.mjs` over the new menu | exit 0 (the inputs verify_navregroup reads) |
+
+Not run (per the sprint rules): `npm run build`, and every other sprint's full verify — the runner's regression
+pass covers those. `verify_nav1.py` is in `scripts/regression_set.txt`.
+
+## 7. Findings
+
+* [FIND] Assistant panel was effectively open for everyone (session user has no role / posture) — fixed by NAV1's
+  default.
+* [FIND] Member label "My family" is defined but unreachable: CRM stays internal-only (no gate widened).
+* [FIND] Treasury's sections and Security master's Review queue / Tracked view are in-page sections, not routes.
+* [FIND] The Platform section heading reads "Platform · Super Admin", but an org admin with `manage_org_settings`
+  sees it too (AI → Model research, Drift monitor — their gate, unchanged since modelresearch / S28). Joe may want
+  those two under Organization admin in a later pass; NAV1 kept them where the mockup put them.
+* [FIND] Model Portfolios / Structured Notes / Model Portfolio Admin / Data & pricing / Security data / Publishing
+  have no landing route of their own (NAV1 adds no routes); like Marketplace and Cross Book, the group's `landing`
+  is its first tab and the sidebar entry links to the caller's first visible tab.
+* Pages with no menu tab today, left out as instructed: taxonomy, firm search, enrollment.
+* The model-subscription side of the catalog (Model Portfolio Admin) is not switched on — the catalog stays at
+  Model Portfolios → Model catalog.
