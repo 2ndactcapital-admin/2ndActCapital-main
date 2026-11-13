@@ -184,3 +184,15 @@ is needed at run time.
 30 securities × 5 y = 36,778 rows, an index scan touching 4,612 pages (~2.2 s cold). That is an indexed range read,
 not a long scan — and it must see org-uploaded prices and the rank walk, which the platform-only archive cannot.
 **Left on Postgres**; the lean layout makes the same read ~350 pages.
+
+## 3. Schema (Task 2) — APPLIED EMPTY 2026-11-13
+
+`services/security_data/price_store.py` `schema_sql(schema, fks=)` holds every object (parameterised by schema so the
+verify builds identical objects in a fixture schema). Applied with `python3 apps/api/scripts/_apply_prices3.py --all`
+(operator DSN, postgres): first into a scratch schema twice (idempotent, 18/0, dropped), then `portfolio`:
+**SCHEMA OK — 19 PASS, 0 FAIL** (the first read-back said 18/1 — a test bug: `relkind` arrives as bytes; cast to text,
+re-read 19/0). Read back: 9 tables with their expected rows (flags 1 seed row, migration 1 row, the rest 0), RLS on
+all, 4 policies per org/series table and 2 per platform table, the view is security_invoker with the old 19 columns
+in order and the old types, the INSTEAD OF trigger, the grants (app_service RW, cpsim_app R), lean indexes = PK +
+date btree + recorded_at BRIN, the switch = 'legacy', and **portfolio.securities_global_prices is still the table**.
+`_apply_prices3.py` refuses to re-apply once the migration has swapped.
