@@ -113,6 +113,17 @@ VERB_AUTONOMY: dict[str, dict] = {
     "execution.fix_sim_auto": {"class": NEVER, "trades": True,
                                "writes": "sends an APPROVED proposal's trades to the SIMULATED FIX counterparty and books "
                                          "the fills (simulated counterparty only)"},
+    # DAILYREBAL1 — the daily scheduled rebalancer (services.rebalance_schedule.daily_tick, a cron tick step). DRAFT +
+    # SUBMIT-FOR-REVIEW only: it makes SYSTEM rebalance proposals (maker_kind 'system', trigger scheduled / drift)
+    # that wait on a person's review task (approve_proposals), plus one summary to-do per approver. It never approves,
+    # routes, executes or sends — those stay a person's (rep5 decide → execute; rep2's second-person approval of a
+    # system proposal's instructions; cpsim05's execution.fix_sim_auto NEVER above). Not a registered action: no
+    # workflow step, agent or trigger can name it — it runs only from the tick.
+    "rebalance.scheduled_daily": {"class": ELIGIBLE, "draft_only": True, "submits_for_approval": True,
+                                  "writes": "system rebalance proposals awaiting a person's review (rebalance_proposals "
+                                            "status pending_approval + the review task), the org's day row "
+                                            "(rebalance_schedule_days) and one summary to-do per approver — never "
+                                            "approves, routes, executes or sends"},
     "cash.rule_fire": {"class": ELIGIBLE_WITH_CAP, "draft_only": True, "submits_for_approval": True,
                        "quantity": lambda _ctx: 5,
                        "writes": "payment instruction DRAFTS submitted for approval (payment_instructions, status "
