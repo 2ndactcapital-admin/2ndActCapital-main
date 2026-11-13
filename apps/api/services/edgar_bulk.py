@@ -276,6 +276,9 @@ class Scope:
     order: str = "newest"
     retry_failed: bool = False
     refetch_peek_skipped: bool = False
+    # EDGAROPS1 — a scheduled download's own list (params.accessions): the scope
+    # is narrowed to exactly these accessions. None = every other run (unchanged).
+    accessions: list[str] | None = None
 
     def __post_init__(self):
         if self.order not in ("newest", "oldest"):
@@ -299,12 +302,14 @@ _SCOPE_WHERE = """
              AND f.reference_filing_id IS NULL AND f.status_reason LIKE 'peek:%')
          OR (f.pipeline_status = 'fetch_failed'
              AND f.next_attempt_at IS NOT NULL AND f.next_attempt_at <= now()))
+    AND ($7::text[] IS NULL OR f.accession_number = ANY($7::text[]))
 """
 
 
 def _scope_args(scope: Scope, ciks: list[str]) -> list:
     return [ciks, list(scope.source.form_types), scope.date_from, scope.date_to,
-            scope.statuses, scope.refetch_peek_skipped]
+            scope.statuses, scope.refetch_peek_skipped,
+            None if scope.accessions is None else list(scope.accessions)]
 
 
 async def last_indexed_date(conn) -> date | None:
@@ -894,6 +899,8 @@ class RunOptions:
     r2_prefix: str = edgar_pipeline.R2_PREFIX
     bucket: str | None = None
     trigger_source: str = "cli"
+    # EDGAROPS1 — a scheduled download's list (Scope.accessions); None = no list.
+    accessions: list[str] | None = None
     # bulkfetchui: a QUEUED run row (portfolio.edgar_pipeline_runs, status
     # 'running' after the worker's claim) this Runner adopts instead of
     # inserting its own. None = the CLI path (create_run_row).
@@ -1034,15 +1041,15 @@ async def claim_batch(conn, run_id, scope: Scope, inst: Institution, n: int,
     async with platform_scope(conn):
         rows = await conn.fetch(
             f"""UPDATE portfolio.edgar_index_filings f
-                   SET claimed_by = $7::uuid,
-                       claimed_until = now() + make_interval(secs => $8)
+                   SET claimed_by = $8::uuid,
+                       claimed_until = now() + make_interval(secs => $9)
                  WHERE f.accession_number IN (
                        SELECT f.accession_number FROM portfolio.edgar_index_filings f
                         WHERE {_SCOPE_WHERE}
                           AND (f.claimed_until IS NULL OR f.claimed_until <= now())
-                          AND (f.filing_date, f.accession_number) {cmp} ($9::date, $10::text)
+                          AND (f.filing_date, f.accession_number) {cmp} ($10::date, $11::text)
                         ORDER BY f.filing_date {direction}, f.accession_number {direction}
-                        LIMIT $11
+                        LIMIT $12
                         FOR UPDATE SKIP LOCKED)
              RETURNING f.accession_number, f.form_type, f.filing_date, f.submission_path,
                        f.primary_issuer_cik, f.attempt_count, f.pipeline_status""",
@@ -1160,7 +1167,7 @@ class Runner:
             insts = await resolve_institutions(conn, source, o.banks)
             await check_dates_indexed(conn, o.date_to)
             scope = Scope(source, insts, o.date_from, o.date_to, o.order, o.retry_failed,
-                          o.refetch_peek_skipped)
+                          o.refetch_peek_skipped, o.accessions)
             counts = await scope_counts(conn, scope)
             self.stats.scope_total = sum(c["total"] for c in counts.values())
             try:

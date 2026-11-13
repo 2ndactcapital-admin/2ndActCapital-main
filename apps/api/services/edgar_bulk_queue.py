@@ -122,7 +122,18 @@ TARGET_LABELS = {"laptop": "Laptop", "render": "Render"}
 STATUS_LABELS = {
     "queued": "Queued", "running": "Running", "succeeded": "Succeeded", "failed": "Failed",
     "stopped": "Stopped", "cancelled": "Cancelled", "worker_lost": "Worker lost",
+    # EDGAROPS1 — a scheduled download queued where the Render tick cannot run it (reason on the run).
+    "waiting": "Waiting",
 }
+# EDGAROPS1 — the run summary's fields, labels from the server (Rule 1).
+SUMMARY_FIELDS = [
+    {"key": "requested", "label": "Requested"}, {"key": "fetched", "label": "Fetched"},
+    {"key": "stored", "label": "Stored"}, {"key": "skipped_total", "label": "Skipped"},
+    {"key": "failed", "label": "Failed"}, {"key": "carried_over", "label": "Carried over"},
+    {"key": "duration_seconds", "label": "Duration"},
+]
+SKIP_REASON_LABELS = {"not_pricing_supplement": "not a final pricing supplement",
+                      "prefilter_skipped": "prefilter (not a note we read)"}
 RUN_KIND_LABELS = {"bulk_fetch": "Bulk download", "refresh_index": "Refresh index"}
 # bulkfetchui3 — the weekday automatic index refresh writes trigger_source 'schedule'.
 TRIGGER_SOURCE_LABELS = {"manual": "From the screen", "cli": "Command line", "schedule": "Scheduled",
@@ -285,6 +296,8 @@ def run_options_from_params(params: dict, run_id, **overrides) -> eb.RunOptions:
         max_rps=int(params.get("max_rps") or eb.DEFAULT_MAX_RPS), peek=bool(params.get("peek", True)),
         keep_preliminaries=bool(params.get("keep_preliminaries", False)), trigger_source="manual",
         run_id=run_id,
+        # EDGAROPS1 — a scheduled download's list; absent on every screen / CLI run.
+        accessions=list(params["accessions"]) if params.get("accessions") is not None else None,
     )
     base.update(overrides)
     return eb.RunOptions(**base)
@@ -717,12 +730,64 @@ async def requeue(conn, run_id) -> dict:
 
 # ═══ Reads ══════════════════════════════════════════════════════════════════
 
+def _duration(start, end) -> int | None:
+    if not start or not end:
+        return None
+    if isinstance(start, str):
+        start = datetime.fromisoformat(start)
+    if isinstance(end, str):
+        end = datetime.fromisoformat(end)
+    return max(0, round((end - start).total_seconds()))
+
+
+def run_summary(r: dict) -> dict | None:
+    """EDGAROPS1 — requested / fetched / stored / skipped (by reason) / failed /
+    carried over / duration, for any bulk run. A scheduled download's summary is
+    where its listed filings stand (details.auto_download.summary, written by
+    the worker); a screen / CLI run's comes from its Runner's own counts
+    (progress.by_status — every full download went through store_fetched, so
+    stored = fetched). None ("—") for a run that has neither: a refresh, a run
+    that never started, or an old run from before the counts were kept."""
+    if r.get("run_kind") != "bulk_fetch":
+        return None
+    details = _as_dict(r.get("details"))
+    auto = details.get("auto_download")
+    from services import edgar_auto_download as ad
+
+    if auto:
+        s = auto.get("summary")
+        if not s:
+            return None
+        first = auto.get("first_started_at") or r.get("started_at")
+        return {**s, "carried_over": int(auto.get("carried_over") or 0),
+                "duration_seconds": _duration(first, r.get("finished_at")),
+                "working_seconds": auto.get("working_seconds")}
+    progress = _as_dict(r.get("progress"))
+    by = progress.get("by_status")
+    if not by:
+        return None
+    skipped = {k: int(by[k]) for k in ad.SKIPPED_STATUSES if by.get(k)}
+    fetched = sum(int(by.get(k) or 0) for k in ad.DOWNLOADED_STATUSES)
+    return {"requested": progress.get("scope_total", r.get("fetch_cap")), "fetched": fetched, "stored": fetched,
+            "skipped": skipped, "skipped_total": sum(skipped.values()),
+            "failed": int(by.get("fetch_failed") or 0), "still_to_fetch": progress.get("remaining"),
+            "carried_over": None, "duration_seconds": _duration(r.get("started_at"), r.get("finished_at"))}
+
+
 def run_out(r: dict) -> dict:
     params = _as_dict(r.get("params"))
     progress = _as_dict(r.get("progress"))
+    details = _as_dict(r.get("details"))
+    auto = details.get("auto_download")
     lost = bool(r.get("worker_lost"))
     status = r["status"]
     display = "worker_lost" if lost else status
+    if auto and status == "queued" and auto.get("waiting"):
+        display = "waiting"
+    if auto:
+        # the list itself is not shipped to the screen (up to the cap of accession numbers)
+        params = {k: v for k, v in params.items() if k != "accessions"} | {
+            "accessions_count": len(params.get("accessions") or [])}
     total = progress.get("scope_total")
     if total is None:
         total = r.get("fetch_cap")
@@ -737,12 +802,21 @@ def run_out(r: dict) -> dict:
         "rate_per_second": progress.get("rate_per_second"), "eta_seconds": progress.get("eta_seconds"),
         "failed": progress.get("failed", r.get("fetch_failed", 0)), "failures": progress.get("failures", []),
         "stop_reason": r.get("stop_reason"), "error": r.get("error"),
+        "summary": run_summary(r),
+        "auto_download": None if not auto else {
+            "date": auto.get("date"), "listed": auto.get("listed"), "eligible": auto.get("eligible"),
+            "cap": auto.get("cap"), "cap_reached": bool(auto.get("cap_reached")),
+            "carried_over": int(auto.get("carried_over") or 0), "new_since": auto.get("new_since"),
+            "waiting": auto.get("waiting") if status == "queued" else None,
+        },
         "actions": {
-            "stop": status == "running" and r.get("trigger_source") != "schedule",
+            # A scheduled download IS a queued run (any worker can take it), so it
+            # gets the queue's actions; a scheduled REFRESH ran in the cron process,
+            # not a worker queue: requeuing it would wait for a worker forever.
+            "stop": status == "running" and (r.get("trigger_source") != "schedule" or bool(auto)),
             "cancel": status == "queued",
-            # A scheduled refresh ran in the cron process, not a worker queue:
-            # requeuing it would wait for a worker forever. Tomorrow's tick retries.
-            "requeue": (status in ("stopped", "failed") or lost) and r.get("trigger_source") != "schedule",
+            "requeue": (status in ("stopped", "failed") or lost) and (r.get("trigger_source") != "schedule"
+                                                                       or (bool(auto) and bool(params.get("banks")))),
         },
     }
 
@@ -758,9 +832,15 @@ async def list_runs(conn, *, page: int = 1, page_size: int = 25) -> dict:
                  ORDER BY COALESCE(r.queued_at, r.requested_at) DESC, r.id DESC
                  LIMIT $2 OFFSET $3""",
             list(QUEUED_KINDS), page_size, (page - 1) * page_size)
+        from services import edgar_auto_download as ad
+
+        waiting = await ad.waiting_summary(conn)
     out = [run_out(dict(r)) for r in rows]
     return {"rows": out, "total": int(total), "page": page, "page_size": page_size,
-            "active": any(r["status"] in ("queued", "running") for r in out)}
+            "active": any(r["status"] in ("queued", "running") for r in out),
+            # EDGAROPS1 — scheduled downloads still queued and the filings they hold
+            "scheduled_waiting": waiting, "summary_fields": SUMMARY_FIELDS,
+            "skip_reason_labels": SKIP_REASON_LABELS}
 
 
 async def get_run(conn, run_id) -> dict:
@@ -950,6 +1030,7 @@ class Worker:
         async def progress(runner):
             await self.write_progress(run_id, eb.progress_snapshot(runner))
 
+        t0 = time.monotonic()
         try:
             runner = eb.Runner(self.pool, opts, client=client, out=self.out, stop_event=run_stop,
                                on_progress=progress, owns_run=self.owns_run, **self.runner_kwargs)
@@ -958,6 +1039,16 @@ class Worker:
             finally:
                 if not self.fenced and runner.stats.run_id is not None:
                     await self.write_progress(run_id, eb.progress_snapshot(runner) | {"final": True})
+                if not self.fenced and opts.accessions is not None:
+                    # EDGAROPS1 — a scheduled download's summary is where its LISTED filings stand now
+                    # (cumulative across ticks and workers), whichever worker ran it.
+                    from services import edgar_auto_download as ad
+
+                    try:
+                        async with self.pool.acquire() as conn:
+                            await ad.write_summary(conn, run_id, working_seconds=time.monotonic() - t0)
+                    except Exception as exc:  # noqa: BLE001 — the run's own outcome stands; the summary is a read
+                        self.out(f"run {run_id}: summary not written: {type(exc).__name__}: {exc}")
         finally:
             await client.aclose()
         if self.fenced:
