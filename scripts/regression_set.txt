@@ -78,3 +78,4 @@ verify_track1.py
 verify_readerfix1.py
 verify_prices2.py
 verify_prices3.py
+verify_reviewq1.py
