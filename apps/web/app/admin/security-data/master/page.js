@@ -22,6 +22,7 @@ export default async function SecurityMasterPage({ searchParams }) {
   let review = null;
   let summary = null;
   let list = null;
+  let known = null;
   let error = null;
   // TRACK1 — ?view=tracked: the Tracked view. Its filters are only the names the SERVER lists
   // (tracked envelope vocabularies.filters); with none, it shows the tracked securities.
@@ -63,12 +64,14 @@ export default async function SecurityMasterPage({ searchParams }) {
       fetchAPI("/api/v1/admin/security-data/master/jobs"), fetchAPI("/api/v1/admin/security-data/master/summary")]);
     const kinds = (summary?.vocabularies?.review_kinds || []).map((k) => k.key);
     const kind = one(search.review_kind);
-    const reviewQs = kind && kinds.includes(kind) ? `?${new URLSearchParams({ kind })}` : "";
+    const reviewQs = `?${new URLSearchParams({ ...(kind && kinds.includes(kind) ? { kind } : {}), limit: "500" })}`;
     const filter = cleanFilter(Object.fromEntries(Object.entries(search).map(([k, v]) => [k, one(v)])),
       summary?.list_filters);
     const offset = Number(one(search.offset)) > 0 ? Math.floor(Number(one(search.offset))) : 0;
-    [review, list] = await Promise.all([
+    [review, list, known] = await Promise.all([
       fetchAPI(`/api/v1/admin/security-data/master/review${reviewQs}`),
+      // REVIEWQ1 — the Known discrepancies section (decided Use existing / Keep both)
+      fetchAPI("/api/v1/admin/security-data/master/review?status=known"),
       Object.keys(filter).length
         ? fetchAPI(`/api/v1/admin/security-data/master/securities?${new URLSearchParams({ ...filter, offset: String(offset) })}`)
         : Promise.resolve(null),
@@ -93,7 +96,7 @@ export default async function SecurityMasterPage({ searchParams }) {
           </div>
         ) : (
           <SecurityMasterAdmin initialStatus={status} initialJobs={jobs} initialReview={review}
-            initialSummary={summary} initialList={list} />
+            initialSummary={summary} initialList={list} initialKnown={known} />
         )}
       </div>
     </AppShell>

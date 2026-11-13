@@ -7,6 +7,9 @@ import { can, labelOf, vocab } from "./sourceLabel.mjs";
 import { describeFilter, listHref, pct, reviewHref } from "@/lib/secmaster2.mjs";
 import { ESTIMATE_API, TRACK_API, UNTRACK_API, actionBody, canTrack, canUntrack, cleanTrackedFilter, confirmText,
   refusalText, selectionBody, trackedHref } from "@/lib/track1.mjs";
+import { BULK_API, BULK_ESTIMATE_API, RUN_API, bulkBody, bulkConfirmText, canBulk, canMoveBack, canChoose, choiceCounts,
+  choose, cleanReviewFilter, moveBackApi, reviewQuery, rowChoices, runBody, runConfirmText, runResultText,
+  seenText } from "@/lib/reviewq1.mjs";
 
 // SECMASTER1 — Super Admin → Security data → Security master: the status panel, the platform jobs
 // (schedule, last run, Run now, close a held run) and the review queue. Every control renders only
@@ -352,6 +355,184 @@ export function ReviewQueueView({ envelope, onDecide }) {
   );
 }
 
+// REVIEWQ1 — the queue with ONE choice per row (radio-style, nothing pre-selected), the filter (incl. "home-market vs
+// US ISIN"), bulk apply by that filter, and one Run. Choices come only from the server (vocabularies.choices ∩ the
+// row's own `choices`); without can_choose exactly true no choice, Run or bulk control renders.
+export function ReviewChoicesView({ envelope, selections = {}, filter = {}, onChoose, onFilter, onRun, onBulk,
+  busy = false, result = null }) {
+  if (!can(envelope, "can_read")) return null;
+  const rows = envelope?.rows || [];
+  const choose = canChoose(envelope);
+  const bulk = canBulk(envelope);
+  const choices = vocab(envelope, "choices");
+  const facets = envelope?.vocabularies?.facets || {};
+  const f = cleanReviewFilter(filter, envelope);
+  const counts = choiceCounts(selections, envelope);
+  const chosen = Object.values(counts).reduce((a, b) => a + b, 0);
+  const kinds = vocab(envelope, "review_kinds");
+  const allowed = vocab(envelope, "review_filters");
+  const opt = (list, labelFn = (x) => x.key) => (list || []).map((x) => <option key={x.key} value={x.key}>{labelFn(x)} ({x.count})</option>);
+  return (
+    <section className={card} data-testid="review-queue">
+      <h2 className="font-serif text-xl text-navy">Review queue</h2>
+      <p className="mt-1 text-xs text-text-muted">A source that disagrees with the master lands here. Choose per row — Use incoming
+        (the security takes the source's value as a new version; the old one stays in its history), Use existing (nothing
+        changes), or Keep both (the source's identifier is added as an alternate) — then Run. Rows with no choice stay here.</p>
+      <form className="mt-3 flex flex-wrap items-end gap-3 text-sm" data-testid="review-filter"
+        onSubmit={(e) => { e.preventDefault(); const d = new FormData(e.currentTarget); onFilter?.(Object.fromEntries([...d.entries()])); }}>
+        {allowed.includes("kind") ? <label className="block">Kind<select name="kind" defaultValue={f.kind || ""} className="block rounded border border-[#E2E8F0] px-2 py-1">
+          <option value="">any</option>{opt(facets.kind, (x) => labelOf(kinds, x.key))}</select></label> : null}
+        {allowed.includes("field") ? <label className="block">Field<select name="field" defaultValue={f.field || ""} className="block rounded border border-[#E2E8F0] px-2 py-1">
+          <option value="">any</option>{opt(facets.field)}</select></label> : null}
+        {allowed.includes("provider") ? <label className="block">Source<select name="provider" defaultValue={f.provider || ""} className="block rounded border border-[#E2E8F0] px-2 py-1">
+          <option value="">any</option>{opt(facets.provider)}</select></label> : null}
+        {allowed.includes("q") ? <label className="block">Text<input name="q" defaultValue={f.q || ""} className="block rounded border border-[#E2E8F0] px-2 py-1" /></label> : null}
+        {allowed.includes("home_vs_us") ? <label className="flex items-center gap-1"><input type="checkbox" name="home_vs_us" value="true" defaultChecked={f.home_vs_us === "true"} />
+          Home-market vs US ISIN{facets.home_vs_us != null ? ` (${facets.home_vs_us})` : ""}</label> : null}
+        <button type="submit" className={btn}>Filter</button>
+      </form>
+      <p className="mt-2 text-sm text-text-muted" data-testid="review-total">{envelope?.total ?? rows.length} matching{Object.keys(f).length ? " the filter" : ""}</p>
+      {bulk && Object.keys(f).length ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm" data-testid="review-bulk">
+          <span className="text-text-muted">For all {envelope?.total ?? 0} matching:</span>
+          {choices.map((c) => <button key={c.key} type="button" className={btn} disabled={busy} onClick={() => onBulk?.(c.key)}>{c.label}…</button>)}
+        </div>
+      ) : null}
+      {result ? <p className="mt-2 text-sm text-navy" data-testid="review-result">{runResultText(result, envelope)}</p> : null}
+      {(result?.refused || []).length ? (
+        <ul className="mt-1 text-xs text-[#9B2335]" data-testid="review-refused">
+          {result.refused.slice(0, 50).map((r) => <li key={r.id}>{r.reason}</li>)}
+        </ul>) : null}
+      {rows.length === 0 ? <p className="mt-3 text-sm text-text-muted">Nothing to review.</p> : (
+        <table className="mt-3 w-full text-sm">
+          <thead className="text-left text-text-muted"><tr><th>Kind</th><th>Subject</th><th>Incoming</th><th>Existing</th>
+            <th>Source</th>{choose ? <th>Choice</th> : null}</tr></thead>
+          <tbody>
+            {rows.map((r) => {
+              const offered = rowChoices(envelope, r);
+              const notes = r.choice_notes || {};
+              return (
+                <tr key={r.id} className="border-t border-[#E2E8F0] align-top" data-testid="review-row">
+                  <td>{r.kind_label || labelOf(kinds, r.kind)}</td>
+                  <td>{r.subject_key}{r.security_name ? <span className="block text-xs text-text-muted">{r.security_name}</span> : null}</td>
+                  <td>{r.incoming_value}</td><td>{r.existing_value || "—"}</td><td>{r.provider_key}</td>
+                  {choose ? (
+                    <td className="text-xs">
+                      {offered.map((c) => (
+                        <label key={c.key} className="mr-3 inline-flex items-center gap-1" title={c.label}>
+                          <input type="radio" name={`choice-${r.id}`} value={c.key} checked={selections[r.id] === c.key}
+                            onChange={() => onChoose?.(r.id, c.key)} data-testid="review-choice" />{c.label}
+                        </label>
+                      ))}
+                      {selections[r.id] ? <button type="button" className="text-text-muted underline" onClick={() => onChoose?.(r.id, null)}>clear</button> : null}
+                      {choices.filter((c) => !offered.some((o) => o.key === c.key) && notes[c.key]).map((c) => (
+                        <span key={c.key} className="block text-text-muted">{c.label}: {notes[c.key]}</span>
+                      ))}
+                    </td>
+                  ) : null}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {choose ? (
+        <div className="mt-3 flex items-center gap-3">
+          <BusyButton className={btn} busy={busy} disabled={!chosen} onClick={() => onRun?.()}>{`Run (${chosen})`}</BusyButton>
+          <span className="text-xs text-text-muted">{choices.map((c) => `${c.label} ${counts[c.key] || 0}`).join(" · ")}</span>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+// REVIEWQ1 — every item decided Use existing / Keep both: the decision, who, when, note, seen again + last seen. A
+// later source run sending the same value does not re-open it. Move back only with can_move_back exactly true AND the
+// row's own `actions` listing it.
+export function KnownDiscrepanciesView({ envelope, onMoveBack, busy = false }) {
+  if (!can(envelope, "can_read")) return null;
+  const rows = envelope?.rows || [];
+  const move = canMoveBack(envelope);
+  return (
+    <section className={card} data-testid="known-discrepancies">
+      <h2 className="font-serif text-xl text-navy">Known discrepancies</h2>
+      <p className="mt-1 text-xs text-text-muted">Decided Use existing or Keep both. A source that sends the same value again does not
+        re-open the item — it is counted as seen again. A different value opens a new item in the queue.</p>
+      {rows.length === 0 ? <p className="mt-3 text-sm text-text-muted">None yet.</p> : (
+        <table className="mt-3 w-full text-sm">
+          <thead className="text-left text-text-muted"><tr><th>Item</th><th>Incoming</th><th>Existing</th><th>Decision</th>
+            <th>Who / when</th><th>Seen again</th>{move ? <th /> : null}</tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-t border-[#E2E8F0] align-top" data-testid="known-row">
+                <td>{r.kind_label}<span className="block text-xs text-text-muted">{r.subject_key}{r.security_name ? ` · ${r.security_name}` : ""} · {r.provider_key}</span></td>
+                <td>{r.incoming_value}</td><td>{r.existing_value || "—"}</td>
+                <td>{r.status_label}{r.decision_note ? <span className="block text-xs text-text-muted">{r.decision_note}</span> : null}</td>
+                <td className="text-xs">{r.decided_by_email || r.decided_by || "—"}<span className="block text-text-muted">{r.decided_at ? String(r.decided_at).slice(0, 16).replace("T", " ") : ""}</span></td>
+                <td className="text-xs">{seenText(r)}</td>
+                {move ? <td className="text-right">{(r.actions || []).includes("move_back")
+                  ? <button type="button" className={btn} disabled={busy} onClick={() => onMoveBack?.(r.id)}>Move back to queue</button> : null}</td> : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+// The confirm-then-write flows (pure of React; the panel and the render tests call them).
+export async function runChoices({ selections, envelope, ask = (m) => window.confirm(m), askNote = (m) => window.prompt(m), post = call }) {
+  const text = runConfirmText(selections, envelope);
+  if (!text || !ask(text)) return { cancelled: true };
+  const note = askNote("Note for the record (optional)");
+  if (note === null) return { cancelled: true };
+  const body = runBody(selections, envelope, note);
+  if (!body) return { cancelled: true };
+  const out = await post(RUN_API, { method: "POST", body: JSON.stringify(body) });
+  return { result: out.result };
+}
+
+export async function runBulkChoice({ choice, filter, envelope, ask = (m) => window.confirm(m), askNote = (m) => window.prompt(m), post = call }) {
+  const filters = cleanReviewFilter(filter, envelope);
+  if (!Object.keys(filters).length) return { error: "Filter the queue first." };
+  const est = await post(BULK_ESTIMATE_API, { method: "POST", body: JSON.stringify({ filters, choice }) });
+  if (est.over_cap) return { error: `${est.total} items — above the cap of ${est.cap}; narrow the filter.` };
+  const text = bulkConfirmText(est, envelope);
+  if (!text) return { error: "The filter selects nothing." };
+  if (!ask(text)) return { cancelled: true };
+  const note = askNote("Note for the record (optional)");
+  if (note === null) return { cancelled: true };
+  const out = await post(BULK_API, { method: "POST", body: JSON.stringify(bulkBody(filter, envelope, est, note)) });
+  return { result: out.result };
+}
+
+export function ReviewPanel({ initialReview, initialKnown }) {
+  const [env, setEnv] = useState(initialReview);
+  const [known, setKnown] = useState(initialKnown);
+  const [filter, setFilter] = useState(initialReview?.filters ? cleanReviewFilter(initialReview.filters, initialReview) : {});
+  const [selections, setSelections] = useState({});
+  const [result, setResult] = useState(null);
+  const work = useBusy();
+  const reload = async (f = filter) => {
+    const [r, k] = await Promise.all([call(reviewQuery(f, env)), call(reviewQuery({}, env, "known"))]);
+    setEnv(r); setKnown(k);
+  };
+  const go = (fn) => { if (!work.busy) work.run(fn); };
+  return (
+    <div className="space-y-6">
+      <BusyError error={work.error} className="block text-sm text-[#9B2335]" />
+      <ReviewChoicesView envelope={env} selections={selections} filter={filter} busy={work.busy} result={result}
+        onChoose={(id, c) => setSelections((s) => choose(s, id, c))}
+        onFilter={(raw) => go(async () => { const f = cleanReviewFilter(raw, env); setFilter(f); setSelections({}); await reload(f); })}
+        onRun={() => go(async () => { const r = await runChoices({ selections, envelope: env }); if (r.result) { setResult(r.result); setSelections({}); await reload(); } })}
+        onBulk={(choice) => go(async () => { const r = await runBulkChoice({ choice, filter, envelope: env }); if (r.error) throw new Error(r.error); if (r.result) { setResult(r.result); setSelections({}); await reload(); } })} />
+      <KnownDiscrepanciesView envelope={known} busy={work.busy}
+        onMoveBack={(id) => go(async () => { const note = window.prompt("Why is this moved back to the queue? (required)"); if (!note) return; await call(moveBackApi(id), { method: "POST", body: JSON.stringify({ note }) }); await reload(); })} />
+    </div>
+  );
+}
+
 async function call(url, opts) {
   const res = await fetch(url, opts ? { ...opts, headers: { "Content-Type": "application/json" } } : undefined);
   const data = await res.json().catch(() => ({}));
@@ -393,15 +574,14 @@ export function TrackedPanel({ initialTracked, initialList, filter }) {
 }
 
 export default function SecurityMasterAdmin({ initialStatus, initialJobs, initialReview, initialSummary = null,
-  initialList = null }) {
+  initialList = null, initialKnown = null }) {
   const [status, setStatus] = useState(initialStatus);
   const [jobs, setJobs] = useState(initialJobs);
-  const [review, setReview] = useState(initialReview);
   const [msg, setMsg] = useState(null);
   const base = "/api/admin/security-data/master";
   const reload = async () => {
-    const [s, j, r] = await Promise.all([call(`${base}/status`), call(`${base}/jobs`), call(`${base}/review`)]);
-    setStatus(s); setJobs(j); setReview(r);
+    const [s, j] = await Promise.all([call(`${base}/status`), call(`${base}/jobs`)]);
+    setStatus(s); setJobs(j);
   };
   const act = async (fn, ok) => {
     try { await fn(); setMsg(ok); await reload(); } catch (e) { setMsg(e.message); }
@@ -430,8 +610,8 @@ export default function SecurityMasterAdmin({ initialStatus, initialJobs, initia
         onClose={(id) => { const note = window.prompt("Why is this held run being closed?"); if (note) act(() => call(`${base}/runs/${id}/close`, { method: "POST", body: JSON.stringify({ note }) }), "Held run closed — the schedule resumes."); }}
         onSwitch={(k, on) => { if (window.confirm(on ? "Switch this job's schedule ON? It will run on its schedule from now on." : "Switch this job's schedule off?")) act(() => call(`${base}/jobs/${encodeURIComponent(k)}/schedule`, { method: "POST", body: JSON.stringify({ active: on }) }), on ? "Schedule switched on." : "Schedule switched off."); }}
       />
-      <ReviewQueueView envelope={review}
-        onDecide={(id, outcome) => { const note = window.prompt("Note for the record"); if (note) act(() => call(`${base}/review/${id}/decision`, { method: "POST", body: JSON.stringify({ outcome, note }) }), "Recorded."); }} />
+      {/* REVIEWQ1 — per-row choice + Run, bulk by filter, Known discrepancies (ReviewQueueView stays for the legacy route) */}
+      <ReviewPanel initialReview={initialReview} initialKnown={initialKnown} />
     </div>
   );
 }
