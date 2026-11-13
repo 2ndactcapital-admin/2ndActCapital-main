@@ -356,14 +356,25 @@ async def _mark_waiting(conn, ids: list, why: str | None, *, retarget: str | Non
         await conn.execute(
             """UPDATE portfolio.edgar_pipeline_runs
                   SET target = COALESCE($3, target),
-                      details = jsonb_set(details, '{auto_download,waiting}', to_jsonb($2::text))
+                      -- to_jsonb(NULL) is NULL and jsonb_set(…, NULL) nulls the WHOLE column: clear with JSON null
+                      details = jsonb_set(details, '{auto_download,waiting}',
+                                          COALESCE(to_jsonb($2::text), 'null'::jsonb))
                 WHERE id = ANY($1::uuid[]) AND status = 'queued'""",
             list(ids), why, retarget)
 
 
+async def _plain_pool():
+    from services.database import _create_asyncpg_pool
+
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError("DATABASE_URL is not set")
+    return await _create_asyncpg_pool(url)
+
+
 async def work_tick(pool, *, deadline_seconds: float | None = None, client_factory=None, host: str | None = None,
                     capability: tuple[bool, str | None] | None = None, restrict_to: list | None = None,
-                    runner_kwargs: dict | None = None, log=print) -> dict:
+                    runner_kwargs: dict | None = None, log=print, pool_factory=None) -> dict:
     """One bounded chunk of the oldest queued scheduled download, on Render.
     Returns {"action": "idle" | "waiting" | "busy" | "worked", ...}. Never raises
     for a run's own failure (recorded on the run by the Runner / Worker)."""
@@ -379,7 +390,13 @@ async def work_tick(pool, *, deadline_seconds: float | None = None, client_facto
             return {"action": "waiting", "runs": len(ids), "reason": why}
         await _mark_waiting(conn, ids, None, retarget="render")
     host = host or socket.gethostname()
-    worker = bq.Worker(pool, target="render", host=host, worker_id=f"schedule:{host}:{os.getpid()}:{uuid.uuid4().hex[:8]}",
+    # The Worker and the Runner get a PLAIN pool, exactly like run_bulk_fetch.py --worker. The tick's RLS pool
+    # (services.database.get_pool) holds ONE transaction per acquire(): the Runner's producer claims rows on one
+    # connection and its workers record each filing on others, so with that pool the claims stay uncommitted while
+    # the workers' "WHERE claimed_by = this run" updates run — measured in verify_edgarops1 [W]: filings peeked and
+    # then left 'selected', the update matching nothing. Every Runner write is already in its own platform_scope.
+    runner_pool = await (pool_factory or _plain_pool)()
+    worker = bq.Worker(runner_pool, target="render", host=host, worker_id=f"schedule:{host}:{os.getpid()}:{uuid.uuid4().hex[:8]}",
                        client_factory=client_factory, out=lambda m: log(f"[edgar-download] {m}"), restrict_to=ids,
                        runner_kwargs=runner_kwargs)
     async with pool.acquire() as conn:
@@ -395,6 +412,7 @@ async def work_tick(pool, *, deadline_seconds: float | None = None, client_facto
         status = await worker.execute(run)
     finally:
         timer.cancel()
+        await runner_pool.close()
     worked = time.monotonic() - t0
     deadline_hit = worker.stop.is_set()
     run_id = run["id"]

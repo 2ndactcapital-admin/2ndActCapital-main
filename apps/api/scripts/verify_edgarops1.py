@@ -32,8 +32,11 @@ accession 9999999999-95-xxxxxx; edgar_pipeline_runs whose details.auto_download.
 edgar_fetch_workers 'verify-edgarops1…'; securities 'EDGAROPS1 FX …' + their replica_source_documents; a test org
 99000000-0000-0000-0000-0000e0a10001 (is_test) and its replica_securities entry.
 
-REFUSES TO START (exit 2) while a real bulk worker heartbeats or a real queued-kind run is running: either could
-claim a fixture run, and the queue's one-run-at-a-time rule would make this script wait on a real one.
+REFUSES TO START (exit 2) while a real queued-kind run is running (the queue's one-run-at-a-time rule would make this
+script wait on it). A real LAPTOP worker that is heartbeating (even idle) would claim section l's laptop-target fixture
+runs and send real SEC requests for fixture accessions, so section l is NOT RUN while one is up — reported as a FAIL
+naming the worker, never silently skipped. Every other section queues only render-target runs, which a laptop worker
+never claims.
 """
 
 from __future__ import annotations
@@ -692,12 +695,13 @@ async def y_work(conn):
           "46 new filings queued as one run", f"{res['queue']}")
 
     async def slow(_runner):
-        await asyncio.sleep(0.5)     # 46 filings / 2 workers x 0.5 s ≈ 12 s: more than one chunk (the stop poll is 5 s)
+        await asyncio.sleep(0.2)     # with the round trips: several filings per chunk, never all 46 (stop poll 5 s)
 
     chunks, statuses = 0, []
-    for _ in range(12):
+    for _ in range(60):
         w = await AD.work_tick(pool, deadline_seconds=1, client_factory=sec_client, host="verify-edgarops1",
-                               capability=(True, None), restrict_to=[rid], log=lambda m: None,
+                               capability=(True, None), restrict_to=[rid],
+                               log=(print if os.environ.get("EDGAROPS1_DEBUG") else (lambda m: None)),
                                runner_kwargs={"after_filing": slow})
         if w["action"] != "worked":
             break
@@ -719,7 +723,12 @@ async def y_work(conn):
     st = await statuses_of(conn, final + plain + prelim + missing)
     check({st[a] for a in final} == {"ready_for_extraction"}, "finals with payoff terms → ready_for_extraction")
     check({st[a] for a in plain} == {"prefilter_skipped"}, "finals without payoff terms → prefilter_skipped")
-    check({st[a] for a in prelim} == {"not_pricing_supplement"}, "preliminaries (peek) → not_pricing_supplement")
+    left = [a for a in final + plain + prelim + missing if st[a] == "selected"]
+    diag = await platform(conn, "SELECT accession_number, claimed_by, claimed_until > now() AS held, filing_date "
+                                "FROM portfolio.edgar_index_filings WHERE accession_number = ANY($1::text[])", left) \
+        if left else []
+    check({st[a] for a in prelim} == {"not_pricing_supplement"}, "preliminaries (peek) → not_pricing_supplement",
+          f"left selected: {[dict(r) for r in diag]} run {rid}")
     check({st[a] for a in missing} == {"fetch_failed"}, "a filing the SEC answers 404 → fetch_failed")
     stored = await platform(conn, """SELECT count(*) FROM portfolio.edgar_index_filings f JOIN portfolio.reference_filings
                                      r ON r.id = f.reference_filing_id WHERE f.accession_number = ANY($1::text[])
@@ -796,10 +805,15 @@ async def y_laptop(conn):
           "the next day queues ITS OWN run: only that day's new filings, none already in the waiting run",
           f"{len(l2)} listed")
     # a stub laptop worker claims and completes day 1, then day 2
-    lw = BQ.Worker(pool, target="laptop", worker_id=f"{WORKER_PREFIX}-laptop-{uuid4().hex[:6]}", host="verify-laptop",
+    # the laptop worker's own pool shape (run_bulk_fetch.py: a plain asyncpg pool, statement_cache_size=0)
+    lpool = await asyncpg.create_pool(os.environ["DATABASE_URL"], statement_cache_size=0, min_size=1, max_size=6)
+    lw = BQ.Worker(lpool, target="laptop", worker_id=f"{WORKER_PREFIX}-laptop-{uuid4().hex[:6]}", host="verify-laptop",
                    client_factory=sec_client, out=lambda m: None, restrict_to=[rid1, row2["id"]], poll_seconds=0.1)
-    n = await lw.run(once=True)
-    n += await lw.run(once=True)
+    try:
+        n = await lw.run(once=True)
+        n += await lw.run(once=True)
+    finally:
+        await lpool.close()
     done1 = await platform(conn, "SELECT * FROM portfolio.edgar_pipeline_runs WHERE id = $1", rid1, fetch="fetchrow")
     done2 = await platform(conn, "SELECT * FROM portfolio.edgar_pipeline_runs WHERE id = $1", row2["id"],
                            fetch="fetchrow")
@@ -1200,12 +1214,13 @@ async def run(name, fn, *args):
     print(f"[INFO] {name}: {time.monotonic() - t0:.1f}s", flush=True)
 
 
-async def refuse_if_busy(conn) -> str | None:
-    w = await platform(conn, f"""SELECT worker_id FROM portfolio.edgar_fetch_workers WHERE stopped_at IS NULL
+async def real_worker(conn) -> str | None:
+    return await platform(conn, f"""SELECT worker_id FROM portfolio.edgar_fetch_workers WHERE stopped_at IS NULL
                                  AND heartbeat_at > now() - interval '{BQ.WORKER_LOST_SECONDS} seconds'
                                  AND NOT starts_with(worker_id, $1) LIMIT 1""", WORKER_PREFIX, fetch="fetchval")
-    if w:
-        return f"a real bulk worker is heartbeating ({w}) — stop it first"
+
+
+async def refuse_if_busy(conn) -> str | None:
     r = await platform(conn, f"""SELECT id FROM portfolio.edgar_pipeline_runs WHERE status = 'running'
                                  AND run_kind = ANY($1::text[]) AND NOT ({FIXTURE_RUNS_SQL})
                                  AND heartbeat_at >= now() - interval '{BQ.WORKER_LOST_SECONDS} seconds' LIMIT 1""",
@@ -1261,6 +1276,10 @@ async def main_async() -> int:
         seeded = True
         for k, fn in SECTIONS.items():
             if fn is not None and (only is None or only == k):
+                if k == "l" and (w := await real_worker(conn)):
+                    check(False, "section l NOT RUN: a real laptop worker is heartbeating and would claim the "
+                          "laptop-target fixture runs — stop it, then run --section l", f"{w}")
+                    continue
                 await run(k, fn, conn)
         if only in (None, "h"):
             await run("live", y_live, conn)
