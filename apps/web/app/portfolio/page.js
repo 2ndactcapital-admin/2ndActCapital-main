@@ -43,6 +43,15 @@ export default async function PortfolioPage({ searchParams }) {
   if (results[0].status === "fulfilled") investments = results[0].value || [];
   if (results[1].status === "fulfilled") investmentStages = results[1].value || [];
   if (results[2]?.status === "fulfilled") allocations = results[2].value || [];
+  // NAV2 — an entity_id the caller cannot see (404 from require_entity_access) and one that does not exist (404)
+  // render IDENTICALLY: as if no entity were set. Never an error, never a name.
+  else if (results[2] && entity_id) {
+    try {
+      allocations = (await getEntityAllocations(null)) || [];
+    } catch {
+      allocations = [];
+    }
+  }
   if (results[3]?.status === "fulfilled") taxonomy = results[3].value || null;
 
   // Stage grouping for investments tab

@@ -4,6 +4,8 @@ import Footer from "@/components/Footer";
 import AssistantPanel from "@/components/assistant/AssistantPanel";
 import TabbedSection from "@/components/TabbedSection";
 import AccessGate from "@/components/AccessGate";
+import EntityScreen from "@/components/nav/EntityScreen";
+import EntityContextSync from "@/components/nav/EntityContextSync";
 
 // Sidebar-first layout: Sidebar spans full height on the left; TopBar,
 // main content, AssistantPanel, and Footer fill the remaining column.
@@ -14,6 +16,7 @@ import AccessGate from "@/components/AccessGate";
 export default function AppShell({ user, children }) {
   return (
     <div className="flex h-screen bg-bg-app overflow-hidden">
+      <EntityContextSync />
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar user={user} />
@@ -21,7 +24,8 @@ export default function AppShell({ user, children }) {
           <main className="flex-1 overflow-y-auto p-8">
             <AccessGate>
               <TabbedSection />
-              {children}
+              {/* NAV2 — the selected entity: banner / notice on book screens, a visible entity handed down. */}
+              <EntityScreen>{children}</EntityScreen>
             </AccessGate>
           </main>
           <AssistantPanel user={user} />

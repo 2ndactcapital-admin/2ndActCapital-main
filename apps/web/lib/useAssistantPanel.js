@@ -26,3 +26,13 @@ export function useAssistantPanel() {
   }, [me]);
   return { open, toggle: store.toggle };
 }
+
+// NAV2 — "Ask about <entity>…" (Ctrl K): open the panel (remembered like the toggle) and hand the chat a draft.
+// The entity itself reaches the assistant as its context (AssistantPanel reads the one selected-entity context).
+export const ASK_EVENT = "nav2:assistant-draft";
+export function openAssistantWith(draft) {
+  if (!store.get()) store.toggle();
+  if (typeof window !== "undefined") {
+    setTimeout(() => window.dispatchEvent(new CustomEvent(ASK_EVENT, { detail: { draft: String(draft || "") } })), 0);
+  }
+}

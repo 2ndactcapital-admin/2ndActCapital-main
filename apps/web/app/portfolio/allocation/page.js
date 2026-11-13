@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import AppShell from "@/components/AppShell";
 import AllocationSunburst from "@/components/allocation/AllocationSunburst";
 import EntityPicker from "@/components/EntityPicker";
+import { useScreenEntity } from "@/components/nav/EntityScreen";
 
 const LABEL_INPUT =
   "mt-1 rounded-md border border-[var(--2a-border)] bg-white px-3 py-2 text-sm text-[var(--2a-text)] outline-none focus:ring-2 focus:ring-[var(--2a-navy)]";
@@ -94,11 +95,6 @@ function SummaryLine({ data }) {
 }
 
 export default function AllocationPage() {
-  const [scopeType, setScopeType] = useState("entity");
-  const [entity, setEntity] = useState(null);
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
 
   useEffect(() => {
@@ -107,6 +103,24 @@ export default function AllocationPage() {
       .then((d) => d && setUser(d))
       .catch(() => {});
   }, []);
+
+  // NAV2 — the body renders INSIDE AppShell so it reads the shell's selected entity (ScreenEntityContext).
+  return (
+    <AppShell user={user}>
+      <AllocationBody />
+    </AppShell>
+  );
+}
+
+function AllocationBody() {
+  // NAV2 — the chip's VISIBLE entity seeds (and holds) the lens's entity; the API still runs require_entity_access.
+  const screenEntity = useScreenEntity();
+  const [scopeType, setScopeType] = useState("entity");
+  const [entity, setEntityState] = useState(screenEntity);
+  const setEntity = (e) => { if (!screenEntity) setEntityState(e); };
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const load = useCallback(() => {
     if (!entity) { setData(null); return; }
@@ -122,7 +136,6 @@ export default function AllocationPage() {
   useEffect(() => { load(); }, [load]);
 
   return (
-    <AppShell user={user}>
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "32px 16px" }}>
         <div style={{ marginBottom: 24 }}>
           <p
@@ -201,6 +214,5 @@ export default function AllocationPage() {
           </>
         )}
       </div>
-    </AppShell>
   );
 }
