@@ -254,3 +254,36 @@ runners are safe (each batch re-reads the checkpoint under FOR UPDATE and skips 
 2,923,054 rows (all live, 0 restated), 2,437 securities, 0 org-uploaded, 2,923,054 with a bar; old table 2,000 MB of a
 2,935 MB database; estimated lean store **295 MB** (~106 B/row), estimated WAL ~739 MB; **58 batches** of ~50k, ~11.6
 min for copy + verify at 2 s; flags in use `['outlier']`, 0 rows with > 1 flag; disk reminder: free ≥ 5,035 MB.
+
+## 7. Verify (Task 6) — `apps/api/scripts/verify_prices3.py` (in regression_set.txt)
+
+One-off results as they were run (each section builds its own fixture schema `zzp3_*`, reads its own clock, drops it):
+
+* `--self-checks-only` **18/0** (first runs: 14/1 and 17/1 were TEST bugs — a regex group, then my own wrong
+  expected sum 145,010 for 140,010; the function was right).
+* `--section s` **6/0** — the real catalog read back 19/0; the real migration row not_started / legacy / 0.
+* `--section m` **54/0** (first run 33/6: a missing grant on the control schema (test bug) + R11–R14 "differences" —
+  see FIND below; second run 50/4). Fixture 54.6k rows / 44 securities: org-uploaded (2 orgs), 360 system-axis +
+  30 valid-axis restated rows, a double restatement, provider-less and NULL-as_of rows. Proven: dry-run numbers;
+  copy in 10k batches, a simulated kill INSIDE a batch (rolled back, checkpoint intact), `--resume` from the
+  checkpoint; legacy writes DURING the copy captured (verify RED naming the security, catch-up, GREEN); swap
+  (one transaction, dirty securities re-verified under the lock); 14 readers + 2 RLS variants IDENTICAL before vs
+  after; as-of identical at 5 instants (function and view vs the old table); restatement after the swap = the
+  legacy writer's exact shape (control schema) with the superseded close in history keeping its id; bar pending for
+  the archive; nightly writer → lean, equal close writes nothing, old table untouched; org upload (valid axis) under
+  app_service org A; RLS both ways (A/B/no-org visibility; 3 refused writes; 0-row cross-org UPDATE); old-shaped
+  INSERT … RETURNING id / DELETE through the view; rollback writes back deletions/closures/new rows and the
+  restored table = the view (count + md5 per security); `--drop-old` refuses without `--i-confirm` (CLI exit 3), with
+  a red verification, without the archive export; then exports and drops.
+* **Measured bytes/row (clean copy): heap 75.2 + indexes 33.1 = 108.3 B** (incl. FSM/VM 108.9; avg tuple 68.3) vs the
+  same fixture in the old shape **600.4 B** — 5.5× smaller; the estimate was 106. Today's 2,923,054 rows ⇒ ~302 MB
+  instead of 2,000 MB. The ~100 B target is missed by ~8 B: the PK (series_id, price_date) costs ~23 B and the date
+  btree ~7 B; nothing left to cut without dropping a column readers need (as_of / recorded_at are both provenance).
+* FIND — R13 `fix_sim_pl.last_platform_closes` and R14 `cpsim book.platform_price` order by price_date ONLY: when two
+  platform providers hold a close for the same day the row they return is arbitrary, on the OLD table as much as on
+  the view (the fixture's first run showed different picks before/after for exactly those pairs). Pre-existing, not
+  changed (no reader changes behaviour); today's real data has ONE provider, so it does not arise. R11/R12 tie-break on
+  system_from and are compared on every security (the fixture now stamps each provider's ingest at its own time, as
+  separate ingest transactions do).
+* FIND — the security detail's price `id` (R12) is NEW for live rows after the swap (deterministic, unique, stable
+  across reads); history rows keep their real ids; nothing references a price id.

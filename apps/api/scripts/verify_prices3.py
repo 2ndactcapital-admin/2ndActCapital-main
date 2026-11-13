@@ -391,13 +391,15 @@ async def build_fixture(conn, fx: str, *, n_sec: int, lean_schema: bool = True) 
     # a second provider for three securities (the last 200 days)
     await conn.execute(
         f"INSERT INTO {t} (global_security_id, price_date, price, currency_code, source, valid_from, system_from, "
-        f"provider_key, as_of, licence, bar) SELECT {gid}, days.d, {price} + 0.01, 'USD', $2, {sf}, {sf}, $2, {sf}, "
+        f"provider_key, as_of, licence, bar) SELECT {gid}, days.d, {price} + 0.01, 'USD', $2, {sf} + interval '1 hour', "
+        f"{sf} + interval '1 hour', $2, {sf}, "
         f"'{{\"attribution\": \"alt\"}}'::jsonb, '{{}}'::jsonb FROM {secs}, {days} WHERE s.i < 3 AND days.di > 1104",
         fx, ALT)
     # provider-less rows (read as platform_entry), NULL as_of, NULL adjustment
     await conn.execute(
         f"INSERT INTO {t} (global_security_id, price_date, price, currency_code, source, valid_from, system_from) "
-        f"SELECT {gid}, days.d, {price}, 'USD', 'manual', {sf}, {sf} FROM {secs}, {days} WHERE s.i IN (4, 5) "
+        f"SELECT {gid}, days.d, {price}, 'USD', 'manual', {sf} + interval '2 hours', {sf} + interval '2 hours' "
+        f"FROM {secs}, {days} WHERE s.i IN (4, 5) "
         f"AND days.di > 1264", fx)
     # org uploads: org A 3 securities, org B 2 (one of them shares a platform security)
     for org, upl, k in ((ORG_A, UPL_A, 3), (ORG_B, UPL_B, 2)):
@@ -504,8 +506,11 @@ async def readers(conn, fx: str) -> dict:
         out["_R12_ids"] = [[r["id"] for r in rows] for rows in det]
     async with conn.transaction():
         await as_role(conn, org=ORG_A)
-        out["R13"] = norm(await FS.last_platform_closes(rw, plat, date(2026, 6, 30)))
-        out["R14"] = norm([await CB.platform_price(rw, g, date(2026, 7, 3)) for g in plat[:8]])
+        # R13 / R14 order by date only: with two platform providers closing the same day their pick is arbitrary —
+        # on the old table too (a FIND below) — so they are compared on single-provider securities
+        single = plat[3:]
+        out["R13"] = norm(await FS.last_platform_closes(rw, single, date(2026, 6, 30)))
+        out["R14"] = norm([await CB.platform_price(rw, g, date(2026, 7, 3)) for g in single[:8]])
     return out
 
 
@@ -549,6 +554,19 @@ def shape(rows: list) -> list:
         joined = None if nxt is None else ((r["system_to"] or r["valid_to"]) == nxt["system_from"])
         out.append((str(r["price"]), axis, joined))
     return out
+
+
+def first_diff(a, b):
+    if isinstance(a, list) and isinstance(b, list):
+        for i, (x, y) in enumerate(zip(a, b)):
+            if x != y:
+                return (i, first_diff(x, y))
+        return ("len", len(a), len(b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b)):
+            if a.get(k) != b.get(k):
+                return (k, str(a.get(k))[:300], str(b.get(k))[:300])
+    return (str(a)[:300], str(b)[:300])
 
 
 def bars(day: date, close: str, *, open_: str = "1.0") -> list:
@@ -661,19 +679,6 @@ async def y_migrate(conn, dsn):
         mig_v = await PM.migration_row(conn, fx)
         check(mig_v["phase"] == "verified" and mig_v["verified_ok"] is True and mig_v["verify_detail"],
               "the verification is recorded on the migration row (phase verified)")
-        # bytes / row
-        mz = await measure(conn, fx)
-        old_t = await conn.fetchval(f"SELECT pg_total_relation_size('{fx}.{PS.OLD}')::float / count(*) FROM "
-                                    f"{fx}.{PS.OLD}")
-        per = (mz["heap"] + mz["idx"]) / mz["n"]
-        print(f"[INFO] bytes/row: lean heap {mz['heap'] / mz['n']:.1f} + indexes {mz['idx'] / mz['n']:.1f} = {per:.1f} "
-              f"(total incl. FSM/VM {mz['total'] / mz['n']:.1f}; avg tuple {float(mz['tuple']):.1f}); fixture old "
-              f"table {old_t:.1f}")
-        check(per <= 125 and per < old_t / 4, f"MEASURED lean bytes/row incl. indexes = {per:.1f} (fixture old table "
-              f"{old_t:.1f}); target ≤ ~100", f"{mz}")
-        SECTION_NOTES["bytes_per_row"] = {"lean_heap": round(mz["heap"] / mz["n"], 1),
-                                          "lean_indexes": round(mz["idx"] / mz["n"], 1), "lean": round(per, 1),
-                                          "old_fixture": round(old_t, 1), "avg_tuple": round(float(mz["tuple"]), 1)}
         # readers + as-of BEFORE
         before = await readers(conn, fx)
         ids_probe = [gs(fx, i) for i in range(6, 12)] + [org_gs(fx, "A", 0)]
@@ -703,9 +708,23 @@ async def y_migrate(conn, dsn):
             same = all(before[x] == after[x] for x in pairs)
             nonempty = all(bool(before[x]) and before[x] not in ({}, []) for x in pairs)
             check(same and nonempty, f"{name}: IDENTICAL before vs after (non-empty)",
-                  f"{[x for x in pairs if before[x] != after[x]]}")
+                  f"{[(x, first_diff(before[x], after[x])) for x in pairs if before[x] != after[x]]}")
         check(bool(before["R3"]) and bool(before["R3b"]) and before["R3b"] != before["R3"],
               "…the org reads differ between org A and org B (RLS is in the results)")
+        async with conn.transaction():
+            await as_role(conn, super_admin=True)
+            amb = await conn.fetchval(
+                f"SELECT count(*) FROM (SELECT global_security_id, price_date FROM {fx}.{PS.OLD} WHERE org_id IS NULL "
+                f"AND valid_to IS NULL AND system_to IS NULL AND price_type = 'close' GROUP BY 1, 2 HAVING "
+                f"count(DISTINCT COALESCE(provider_key, '')) > 1) x")
+        fs_src = _read("apps/api/services/fix_sim_pl.py") + _read("apps/api/cpsim/book.py")
+        find("R13 fix_sim_pl.last_platform_closes / R14 cpsim platform_price order by price_date ONLY (no provider / "
+             "system_from tie-break)",
+             f"when two platform providers hold a close for the same day ({amb:,} such (security, day) pairs in this "
+             "fixture) the row they return is arbitrary — on the OLD table as much as on the view; pre-existing, not "
+             "changed here (no reader changes behaviour). Compared on single-provider securities; R11/R12 tie-break "
+             "on system_from and are compared on all" if "ORDER BY global_security_id, price_date DESC\"" in fs_src
+             and "ORDER BY price_date DESC LIMIT 1\"" in fs_src else "source changed — re-check")
         ids_b, ids_a = before["_R12_ids"], after["_R12_ids"]
         flat_a = [i for rows in ids_a for i in rows]
         find("R12 the security detail's price `id`: live rows get a NEW id after the swap",
@@ -731,6 +750,8 @@ async def y_migrate(conn, dsn):
                            f"CONSTRAINTS INCLUDING INDEXES)")
         await conn.execute(f"INSERT INTO {ctl}.{PS.OLD} SELECT * FROM {fx}.{PS.PRE} WHERE global_security_id = $1",
                            sec)
+        await conn.execute(f"GRANT USAGE ON SCHEMA {ctl} TO app_service")
+        await conn.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {ctl}.{PS.OLD} TO app_service")
         PS.SCHEMA = ctl
         mode_ctl = None
         async with PM.ptx(conn):
@@ -864,6 +885,19 @@ async def y_migrate(conn, dsn):
         g2 = await PM.verify_all(conn, fx, batch=20_000, sleep=0)
         await PM.swap(conn, fx)
         check(g2["ok"] is True, "--reset-copy → copy → verify GREEN → swap again (for the drop proofs)", f"{g2}")
+        # bytes / row — measured on the CLEAN copy (the first copy carries the killed batch's dead tuples)
+        mz = await measure(conn, fx)
+        old_t = await conn.fetchval(f"SELECT pg_total_relation_size('{fx}.{PS.PRE}')::float / count(*) FROM "
+                                    f"{fx}.{PS.PRE}")
+        per = (mz["heap"] + mz["idx"]) / mz["n"]
+        print(f"[INFO] bytes/row: lean heap {mz['heap'] / mz['n']:.1f} + indexes {mz['idx'] / mz['n']:.1f} = {per:.1f} "
+              f"(total incl. FSM/VM {mz['total'] / mz['n']:.1f}; avg tuple {float(mz['tuple']):.1f}); fixture old "
+              f"table {old_t:.1f}")
+        check(per <= 125 and per < old_t / 4, f"MEASURED lean bytes/row incl. indexes = {per:.1f} (fixture old table "
+              f"{old_t:.1f}); target ≤ ~100", f"{mz}")
+        SECTION_NOTES["bytes_per_row"] = {"lean_heap": round(mz["heap"] / mz["n"], 1),
+                                          "lean_indexes": round(mz["idx"] / mz["n"], 1), "lean": round(per, 1),
+                                          "old_fixture": round(old_t, 1), "avg_tuple": round(float(mz["tuple"]), 1)}
         try:
             await PM.reset_copy(conn, fx)
             check(False, "--reset-copy is refused once swapped")
