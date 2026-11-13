@@ -317,3 +317,23 @@ name's catalog will report FAILs that are about the table's shape, not about beh
 
 Behavioural checks keep working: fixture INSERT / DELETE through the view (INSTEAD OF triggers), reads, grants
 (cpsim01's `cpsim_app` SELECT on the name — granted on the view).
+
+## 8. Operator steps (Task 7)
+
+1. **Disk first.** Supabase → Settings → Compute and Disk: confirm free disk ≥ 2× the price table + headroom — the
+   dry run's figure is **≥ 5,035 MB** (2× 2,000 MB + the ~300 MB new table + WAL). Grow it FIRST if not: on
+   2026-11-12 a disk grow during a bulk insert made the database read-only for ~55 s.
+2. **Dry run, then the real run.**
+   `doppler run -- apps/api/venv/bin/python apps/api/scripts/prices3_migrate.py --dry-run`
+   then the same command without `--dry-run`, **clear of 07:00 UTC, of the 21:15 New York prices job and its
+   5-minute continuation ticks (set `PRICES_DAY_TICK=0` or run after the day row reads Complete), and of any verify**.
+   It copies (paced: `--batch 50000 --sleep 2`), catches up, verifies, swaps (one short transaction) and, with R2
+   credentials in Doppler, exports the archive. A kill / timeout → re-run with `--resume`. `--status` shows the row.
+   If the export was skipped: `… prices3_migrate.py --export-archive`.
+   Then **check the app**: Security master → summary → Prices (covered / refreshed / oldest date), a household's
+   values, a security's detail prices, a backtest. Deploy the API + scheduler after `pip install -r requirements.txt`
+   (adds duckdb). The prices job's archive step then appends daily (`PRICES_ARCHIVE=0` turns it off).
+3. **Days later**: `doppler run -- apps/api/venv/bin/python apps/api/scripts/prices3_migrate.py --drop-old --i-confirm`
+   (refuses unless phase = swapped, the verification is green and the archive export is green). Before that,
+   `--rollback` restores the old table (post-swap changes written back) if anything is wrong.
+4. After the swap, re-point the older verifies' structural checks listed in section 7's FIND (a follow-up sprint).
