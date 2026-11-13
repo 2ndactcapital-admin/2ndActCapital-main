@@ -143,3 +143,10 @@ self-checks 39/0; `--section d,x` 49/0; `--section m,r` 28/0;
   (≈ 2,700 keeps ~2,600 current daily), or move to a licensed vendor with a multi-symbol endpoint (one adapter file —
   the refresh already batches by `max_symbols_per_call` and counts requests honestly). No code change for either.
 * `PRICES_DAY_TICK=0` on the cron stops the continuation (the 21:15 job then does one slice a day, as before).
+
+### 5a. FIX 1 — the 22:17:04–22:17:59 UTC read-only window (Supabase disk auto-grow)
+
+Branch commits (real UTC) run 22:18:23 (Task 1) → 23:43:22; the only step near the window is the migration
+(16a1bc6, committed 22:19:43). Re-checked 2026-11-13: `_apply_prices2.py --verify` → SCHEMA OK (both tables, RLS,
+four policies each, app_service privileges, unique indexes; 0 rows in each); every PRICES2 index (5 part-1, 5
+part-2 FK indexes) `indisvalid` AND `indisready` (10/10). Every one-off run was after 22:30. **None affected.**
