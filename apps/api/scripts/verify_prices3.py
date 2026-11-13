@@ -1043,8 +1043,10 @@ async def y_archive(conn, dsn):
         check(ap["action"] == "appended" and ap["rows"] == 3 and set(ap["files"]) == {"2026"} and pend == 0,
               "daily append after the switch: 3 rows (2 new closes + 1 restatement) → one append part for 2026; "
               "pending bars drained", f"{ap} pending={pend}")
-        pgd = await pg_frame(conn, fx, plat[:3], date(2026, 9, 1), date(2026, 12, 31))
-        ard = frame_dict(PA.history_frame(plat[:3], date(2026, 9, 1), date(2026, 12, 31), store=store))
+        # (in this window both sources hold equal point counts, so the default rule picks the lower key — name it)
+        pgd = await pg_frame(conn, fx, plat[:3], date(2026, 9, 1), date(2026, 12, 31), provider_key=SRC)
+        ard = frame_dict(PA.history_frame(plat[:3], date(2026, 9, 1), date(2026, 12, 31), store=store,
+                                          provider_key=SRC))
         check(set(pgd) == set(ard) and all(pgd[k] == ard[k] for k in pgd) and ard[(date(2026, 10, 1), plat[2])] ==
               D("33.33") and (date(2026, 11, 9), plat[0]) in ard,
               "parity after the append: the new closes are there and the RESTATED value wins over the exported one")
