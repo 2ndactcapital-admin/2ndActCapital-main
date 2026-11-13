@@ -155,3 +155,5 @@ part-2 FK indexes) `indisvalid` AND `indisready` (10/10). Every one-off run was 
 
 Sections already run one-off during the build leg (all six): d, x, m, r, w, j — none left to run. Re-run now:
 `verify_prices2 --cleanup-only` 1/0 (zero fixture rows, nothing removed); `--self-checks-only` 39/0.
+Fast-mode regressions (self-checks): `verify_prices1` 17/0, `verify_track1` 34/0, `verify_secmaster2` 18/0.
+The full `verify_prices2.py` run is left to the runner (WSL memory) — this leg ran one-offs only.
