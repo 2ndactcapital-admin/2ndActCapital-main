@@ -48,6 +48,7 @@ export const SCREENS = {
   "/documents/semantic": { mode: NOT_FILTERED, why: "GET /semantic-search has no entity param (visible_entity_ids internal) — nav3" },
   // ── Structured Notes ──
   "/portfolio/replication/notes": { mode: NOT_FILTERED, why: "the note catalog — not tied to an entity" },
+  "/portfolio/replication/notes/new-issues": { mode: NOT_FILTERED, why: "new note issues — not tied to an entity" },
 };
 
 /** The screen's mode for a path (+ query): FILTERS | NOT_FILTERED, or null when the path is not a book screen. */
