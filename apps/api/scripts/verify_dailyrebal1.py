@@ -882,12 +882,53 @@ async def y_simulated():
               f"{mirror}")
         if not C5.S.get("seeded"):
             return
-        acct = C5.ACC_SIM          # cpsim05's model-linked simulated demo account (LINK_A)
+        acct = C5.ACC_SIM          # cpsim05's simulated demo account (its LINK_A is a REJECTED FK-target row only)
+        # x's OWN fixture: a real approved model through rep3's own path (create → version → submit by the maker →
+        # approve by a second person) and an ACTIVE daily link on the simulated account, inside cpsim05's org A
+        # (the model approver is cpsim05's Super Admin U_SA — U_CK correctly lacks approve_models)
+        # (torn down with it: every row is org-keyed; models' guard GUC is set by the shared cleanup's guard map)
+        from services import models as M
+
+        positions = [
+            {"row_num": 1, "global_security_id": str(C5.SEC_EQ), "raw_ticker": C5.TICKER_EQ, "raw_cusip": None,
+             "raw_isin": None, "raw_sedol": None, "raw_name": "CPSIM05 VERIFY EQ", "target_weight": Decimal("0.50"),
+             "asset_class": None, "sleeve_label": None, "drift_min": None, "drift_max": None, "alternates": [],
+             "restrictions": None, "notes": None, "resolution_state": "resolved", "resolution_note": None},
+            {"row_num": 2, "global_security_id": None, "raw_ticker": None, "raw_cusip": None, "raw_isin": None,
+             "raw_sedol": None, "raw_name": "Cash", "target_weight": Decimal("0.50"), "asset_class": None,
+             "sleeve_label": None, "drift_min": None, "drift_max": None, "alternates": [], "restrictions": None,
+             "notes": None, "resolution_state": "cash", "resolution_note": None}]
+        async with C5.org_ctx(C5.ORG_A) as mpool:
+            async with mpool.acquire() as mc:
+                async with mc.transaction():
+                    model, ref = await M.create_model(mc, org_id=C5.ORG_A, actor_id=C5.U_MK,
+                                                      name="CPSIM05 VERIFY dailyrebal1 x model", source="upload")
+                    ver = await M._create_version(mc, org_id=C5.ORG_A, model=model, origin="manual",
+                                                  maker_ids=[C5.U_MK], created_by=C5.U_MK, positions=positions)
+            await M.publish(mpool, [ref])
+            await M.submit(mpool, org_id=C5.ORG_A, actor_id=C5.U_MK, model_id=model["id"], version_id=ver["id"])
+            await M.decide(mpool, org_id=C5.ORG_A, actor_id=C5.U_SA, model_id=model["id"], version_id=ver["id"],
+                           outcome="approve")
+            async with mpool.acquire() as mc:
+                live = await M.live_approved(mc, model["id"])
+        check(live is not None and str(live["id"]) == str(ver["id"]), "(x fixture) an approved model version through "
+              "the maker → second-person path", f"{live and live.get('status')}")
+        x_link = uuid.uuid4()
+        await C5.platform(conn, """INSERT INTO public.account_model_links (id, org_id, account_id, model_id,
+                link_group_id, version_no, change_kind, status, advice_only, cash_floor, drift_threshold,
+                rebalance_frequency, exclusions, exclusion_policy, avoid_short_term, short_term_wait_days,
+                harvesting_engine, proposed_fee, maker_id, checker_id, decided_at, joined_at, harvest_enabled, notes)
+            VALUES ($1, $2, $3, $4, $1, 1, 'join', 'active', false, 0, NULL, 'daily', '[]'::jsonb, 'pro_rata', false,
+                    30, 'hollisworks', '{}'::jsonb, $5, $6, now(), now() - interval '30 days', false,
+                    'dailyrebal1 verify x fixture')""", x_link, C5.ORG_A, acct, model["id"], C5.U_MK, C5.U_CK,
+                          fetch="execute")
         link = await C5.platform(conn, "SELECT * FROM account_model_links WHERE account_id = $1::uuid AND status = "
                                        "'active' AND valid_to IS NULL AND system_to IS NULL", acct, fetch="fetchrow")
-        check(link is not None, "the simulated demo account follows a model (cpsim05's fixture link)")
+        check(link is not None and link["id"] == x_link and link["rebalance_frequency"] == "daily",
+              "the simulated demo account follows the approved model, daily (x's own active link)")
         if link is None:
             return
+        await C5.behaviour(default_outcome="accept")
         await C5.platform(conn, "DELETE FROM portfolio.price_refresh_days WHERE scope = $1", PRICES_SCOPE,
                           fetch="execute")
         today_ny = datetime.now(NY).date()
@@ -903,9 +944,7 @@ async def y_simulated():
 
         tok = set_rls_context(str(C5.ORG_A), False)
         try:
-            ln = dict(link)
-            ln["rebalance_frequency"] = "daily"
-            res = await RS.evaluate_account(pool, org_id=str(C5.ORG_A), link=ln, today=run_day,
+            res = await RS.evaluate_account(pool, org_id=str(C5.ORG_A), link=dict(link), today=run_day,
                                             day_id=uuid.uuid4())
         finally:
             reset_rls_context(tok)
@@ -965,7 +1004,10 @@ async def RP_pool():
 
 # ═══ driver ═════════════════════════════════════════════════════════════════
 SECTIONS = {"c": y_clock, "r": y_readiness, "s": y_selection, "h": y_human, "f": y_failure, "u": y_unattended,
-            "p": y_setup, "a": y_routes, "w": y_front_end}
+            "p": y_setup, "a": y_routes, "w": y_front_end, "x": y_simulated}
+#: sections that seed and tear down their OWN fixture (cpsim05's) on their own connection — run after rep5's teardown,
+#: never inside the rep5-seeded loop
+OWN_FIXTURE = {"x"}
 
 
 def only_sections() -> list[str] | None:
@@ -973,9 +1015,9 @@ def only_sections() -> list[str] | None:
     if arg is None:
         return None
     want = [x.strip() for x in arg.split("=", 1)[1].split(",") if x.strip()]
-    bad = [x for x in want if x not in SECTIONS and x != "x"]
+    bad = [x for x in want if x not in SECTIONS]
     if bad:
-        raise SystemExit(f"--only: unknown section(s) {bad}; known: {', '.join(SECTIONS)}, x")
+        raise SystemExit(f"--only: unknown section(s) {bad}; known: {', '.join(SECTIONS)}")
     return want
 
 
@@ -1041,8 +1083,9 @@ def regression():
 
 async def main_async() -> int:
     only = only_sections()
-    if only == ["x"]:
-        await run("simulated", y_simulated)
+    if only is not None and set(only) <= OWN_FIXTURE:
+        for k in only:
+            await run(k, SECTIONS[k])
         print(total_line())
         return 0 if _n_fail == 0 else 1
     dsn, how = await admin_dsn()
@@ -1080,7 +1123,7 @@ async def main_async() -> int:
         S["m2"], S["m2v1"], S["m3"], S["m3v1"] = (R5.S.get("m2"), R5.S.get("m2v1"), R5.S.get("m3"), R5.S.get("m3v1"))
         check(bool(S["m2"] and S["m3"]) and R5._n_fail == 0, "rep5's fixture seeded through rep5's own seed (its checks "
               "green: users decided as meant, models approved)", f"rep5 seed fails={R5._n_fail}")
-        chosen = [k for k in SECTIONS if only is None or k in only]
+        chosen = [k for k in SECTIONS if (only is None or k in only) and k not in OWN_FIXTURE]
         if S["m2"]:
             for k in chosen:
                 await run(k, SECTIONS[k], conn)
@@ -1110,6 +1153,8 @@ async def main_async() -> int:
         await conn.close()
     if only is not None:
         print("[SKIP] regression — --only one-off run")
+        for k in [k for k in only if k in OWN_FIXTURE]:
+            await run(k, SECTIONS[k])
     elif os.environ.get("VERIFY_NESTED") == "1":
         print("[SKIP] nested run")
     else:
@@ -1117,7 +1162,8 @@ async def main_async() -> int:
             regression()
         except Exception as exc:  # noqa: BLE001
             check(False, "regression raised", f"{type(exc).__name__}: {exc}")
-        await run("simulated (own fixture)", y_simulated)
+        for k in sorted(OWN_FIXTURE):
+            await run(f"{k} (own fixture)", SECTIONS[k])
     print(total_line())
     return 0 if _n_fail == 0 else 1
 
