@@ -287,3 +287,33 @@ One-off results as they were run (each section builds its own fixture schema `zz
   separate ingest transactions do).
 * FIND — the security detail's price `id` (R12) is NEW for live rows after the swap (deterministic, unique, stable
   across reads); history rows keep their real ids; nothing references a price id.
+* `--section a` **21/0** (first run 20/1 — a TEST bug: in the Sept–Dec window both fixture sources hold equal point
+  counts, so the documented tie rule picks the lower key and my spot-check looked at the other provider; pinned
+  `provider_key`). Export 16,345 rows → 6 yearly files, read back by count + exact sum; parity archive vs Postgres
+  IDENTICAL on 4 windows (15,660 / 1,044 / 44 / 603 cells), adjustment_factor 13,050 cells (NULLs included), 1,110 bars
+  identical to the old table's; org rows never archived; the nightly step: skipped before the swap, waiting before
+  the export, append of 3 rows (restated value wins, new bar present, pending drained), nothing_new on re-run,
+  compaction → 6 files and an identical 15,662-cell frame; no-R2 → skipped. Engine: **pyarrow** (FIND, duckdb absent).
+* `--cleanup-only` **1/0** (zero fixture schemas).
+* Fast regressions (one-off, `VERIFY_NESTED=1 … --self-checks-only`): verify_prices1 **17/0**, verify_prices2 **39/0**,
+  verify_track1 **34/0**, verify_secmaster2 **18/0**, verify_dailyops1 **28/0**, verify_rep10 (the backtest) **5/0**,
+  verify_marketdata1 (the layer's readers) **5/0**, verify_rep4 (fund build price reads) **4/0**. The market
+  indicator verifies (mkt01–04) are not price-table readers (market_data is its own store) — not run.
+* The full verify (all sections + nested regressions in one process) was NOT run as one command — left to the runner
+  (90-minute leg limit; each section above was run one-off and committed).
+
+### FIND — what the operator swap changes for OLDER verifies (structural checks of the old table)
+
+After `prices3_migrate.py` swaps, `portfolio.securities_global_prices` is a VIEW. Older verifies that introspect that
+name's catalog will report FAILs that are about the table's shape, not about behaviour (none of them is edited here —
+"never weaken an assertion"; they need re-pointing at the lean objects in the sprint after the cutover):
+
+| verify | check | after the swap | after `--drop-old` |
+|---|---|---|---|
+| verify_cpsim02 / 03 / 04 / 05 | CHECK `sec_global_price_type_chk` literal by `conrelid` of the name | FAIL (the CHECK lives on `portfolio.price_series` now, same name, same predicate) | FAIL |
+| same | unique index name `uq_sec_global_price_point` | pass (the renamed table keeps it) | FAIL (the lean PK is `security_prices_pkey`) |
+| verify_marketdata1 | `sec_global_price_type_chk` literal; `_apply_marketdata1.py --verify` (the table's constraints/columns); a policy for every operation on the name | FAIL (a view has no policies / constraints; its RLS is on price_series / security_prices) | FAIL |
+| verify_prices2 / `_apply_prices2.py --verify` | FK index `securities_global_prices_gsid_fk_ix` | pass (renamed table) | FAIL (covered by `price_series_key_uq`) |
+
+Behavioural checks keep working: fixture INSERT / DELETE through the view (INSTEAD OF triggers), reads, grants
+(cpsim01's `cpsim_app` SELECT on the name — granted on the view).
