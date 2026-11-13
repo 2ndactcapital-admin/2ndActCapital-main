@@ -636,11 +636,14 @@ async def y_live(conn):
     n_a = int(await platform(conn, "SELECT count(*) FROM portfolio.securities_global_identifiers WHERE is_alternate",
                              fetch="fetchval"))
     check(n_a == 0, "no real identifier is an alternate", f"{n_a}")
-    c, env = await api(U_SUPER, "GET", f"{P_}/review?status=open&limit=1")
-    check(c == 200 and env.get("total") == total and env["vocabularies"]["facets"]["home_vs_us"] >= 0,
-          "GET /review: total = the real open count; facets carry the home-vs-US count", f"{c} {env.get('total')}")
-    find(f"home-market vs US ISIN today: {env.get('vocabularies', {}).get('facets', {}).get('home_vs_us')} of "
-         f"{o.get('identifier_conflict/isin/finance_database')} ISIN items")
+    async with conn.transaction():          # the read path GET /review uses (no fixture user exists yet)
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        env = await RQ.list_items(conn, status="open", limit=1, can_write=True)
+        fac = await RQ.facets(conn)
+    check(env["total"] == total and fac["home_vs_us"] >= 0,
+          "the queue read: total = the real open count; facets carry the home-vs-US count", f"{env['total']} vs {total}")
+    find(f"home-market vs US ISIN today: {fac['home_vs_us']} of {o.get('identifier_conflict/isin/finance_database')} "
+         "ISIN items (the operator's first bulk filter)")
 
 
 async def y_gates(conn):
