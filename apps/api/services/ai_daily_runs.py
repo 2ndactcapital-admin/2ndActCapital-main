@@ -282,6 +282,7 @@ async def _replica_queue(pool, *, exclude=(), limit: int = BATCH, include_test_o
     async with ai_budget._platform_tx(pool) as conn:
         rows = await conn.fetch(
             f"""SELECT s.global_security_id::text AS id, min(s.ticker) AS ticker, min(s.sec_series_id) AS series_id,
+                       min(s.sec_cik) AS cik,
                        min(s.instrument_class) AS instrument_class, min(s.created_at) AS first_at
                   FROM portfolio.replica_securities s
                  WHERE s.status IN ('active', 'draft') AND s.valid_to IS NULL AND s.system_to IS NULL
@@ -312,7 +313,7 @@ async def _replica_read(pool, run: dict, cfg: dict, items: list[dict], stop_when
             if stop_when():
                 break
             r = await T.run_extraction(pool, fund_id=it["id"], ticker=it["ticker"], series_id=it.get("series_id"),
-                                       http=http, instrument_class=it.get("instrument_class"))
+                                       http=http, instrument_class=it.get("instrument_class"), cik=it.get("cik"))
             if r.budget_reached is not None:
                 res.budget = r.budget_reached
                 break

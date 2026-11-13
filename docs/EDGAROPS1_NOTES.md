@@ -146,3 +146,44 @@ documents** (36 calls per model; ~12.1k input tokens each) before gpt-5-nano's
 documents are ~220 days of reading, and every day adds hundreds (the 06:00
 nightly alone added 2,123). The download side is no longer the bottleneck;
 Joe's priority rule (e.g. newest first) matters more than the download cap.
+
+## Task 3b — unit investment trust ETFs (SPY / DIA / MDY / QQQ)
+
+* Live (read-only): SPY's two registry entries (draft + active) carry `sec_cik`
+  NULL and `sec_series_id` NULL; the security master holds only ticker / CUSIP /
+  ISIN / FIGI for all four (no CIK identifier type exists). The add step's
+  lookup (`replica_holdings.resolve_fund` → `sec_fund_ids`) reads only
+  `company_tickers_mf.json`, where a UIT is absent — so the add step had nothing
+  to store.
+* [FIND] The platform's own EDGAR index cannot answer "which prospectus forms
+  does SPY file": it indexes 424B2 / FWP only (`edgar_index.FORMS`, plus the
+  sources' forms) — zero rows for SPY's CIK. The form choice below is therefore
+  from how a UIT registers, not measured on SPY (no network in this sprint).
+* CIK: `replica_holdings.sec_trust_cik` reads `company_tickers_exchange.json`
+  (the file the security master's `sec_tickers` provider already reads; a UIT is
+  its own registrant and is listed there), cached a day. Asked ONLY when the
+  mutual-fund file has no row for the ticker, so an ordinary fund's series path
+  never changes. `resolve_fund` now returns `{"cik", "series_id": None,
+  "class_id": None, "uit": True}` for a UIT, so a NEW entry stores its CIK; an
+  EXISTING entry (SPY's) resolves it at extraction time.
+* Prospectus by CIK (`replica_terms.locate_uit_prospectus`), newest of, in order:
+  **497K** (summary prospectus) → **485BPOS** (the full prospectus in the
+  trust's annual post-effective amendment) → **497** (a definitive prospectus).
+  Not S-6: it is the trust's initial registration (1990s for these four; every
+  later prospectus is a 485BPOS amendment of it) and
+  `replica_source_documents_form_chk` accepts only 497K / 485BPOS / 497. Located
+  through the same EDGAR atom feed (`CIK=` takes a CIK or a series id). Same
+  storage, same readers, same fields. None of the three → `ExtractionBlocked:
+  SPY is a unit investment trust (CIK …) with no 497K, 485BPOS, 497 prospectus
+  on EDGAR`; no CIK → `… no SEC series id and no trust CIK in the SEC ticker
+  files …`.
+* Holdings: an issuer file still wins (SPY / DIA / MDY: `ssga_spdr`). With no
+  issuer file (QQQ), `choose_source` now offers N-PORT for a UIT with a trust CIK
+  and `fetch_holdings` reads the trust's newest NPORT-P by CIK (ETFs organised
+  as UITs file N-PORT); none → `NoHoldingsSource: no holdings source for QQQ: no
+  issuer file lists it and its trust (CIK …) has no NPORT-P filing on EDGAR`.
+* Retry: the nightly fund-terms queue (`ai_daily_runs._replica_queue`) takes
+  every live fund with no model reading under the current prompt + models; a
+  blocked run writes no reading, so SPY was already re-offered every night (and
+  blocked each time). After the fix the next nightly run reads it; the queue
+  item now carries the entry's `sec_cik` too.
