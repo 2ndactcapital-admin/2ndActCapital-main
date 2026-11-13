@@ -199,3 +199,8 @@ Earlier legs: t 34/0, u 25/0, s 14/0, f 16/0, w 21/0. This leg, one section at a
   claim the laptop-target fixture runs. Not stopped from an unattended leg (it is doing real work). Operator: stop
   the worker (`tmux attach -t bulkworker`, Ctrl-C), run `timeout 600 python3 apps/api/scripts/verify_edgarops1.py
   --section l`, restart the worker. The full verify will hit the same guard while the worker runs.
+* h (READ-ONLY live checks): **11 PASS, 0 FAIL**, 2 FIND — the prompt's 2026-11-12 status counts have moved (nightly
+  pipeline + laptop runs: selected 528,934 → 524,442, ready_for_extraction 5,885 → 8,012, …); live selected filing
+  dates 2019-01-02 … 2026-10-30.
+* j (fast regressions): not run here — it runs eight full verifies nested; WSL memory rule for this leg. The runner's
+  full verify covers it.
