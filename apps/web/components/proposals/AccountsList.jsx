@@ -13,6 +13,7 @@
 import { useState } from "react";
 import { labelOf, pctText, vocab } from "@/lib/proposals.mjs";
 import BulkPendingLink from "@/components/approvals/BulkPendingLink";
+import ScheduledRebalancingPanel from "@/components/proposals/ScheduledRebalancingPanel";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -92,6 +93,8 @@ export default function AccountsList({ initialEnvelope }) {
     <div className="space-y-5">
       {/* BULKAPPROVE1 — "N pending — review in bulk" when more than one item waits for this viewer */}
       <BulkPendingLink />
+      {/* DAILYREBAL1 — today's scheduled-rebalancing run (the server's schedule block; read-only) */}
+      <ScheduledRebalancingPanel schedule={env?.schedule} />
       <div className="flex flex-wrap items-end gap-3 text-sm">
         <label className="flex flex-col gap-1">Show
           <select className={input} value={filters.filter || ""} onChange={set("filter")}>
