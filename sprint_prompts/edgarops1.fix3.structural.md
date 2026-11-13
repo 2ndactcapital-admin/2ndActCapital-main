@@ -1,0 +1,17 @@
+EDGAROPS1 FIX 3 — two FAILs in the full verify (101 PASS / 2 FAIL, edgarops1fix2_run.out). 3 tasks, keep it SHORT. Branch edgarops1-work. Never weaken an assertion; never loosen a gate.
+
+LESSONS: STATUS line first; commit after every step; record each one-off result in docs/EDGAROPS1_NOTES.md; the 90-minute cap.
+
+CONFIRMED REAL FACTS, DO NOT RE-DERIVE (edgarops1fix2_run.out):
+- FAIL Q (line 73), section [Q] "The cap": "the day's 2,000 are downloaded (peeked: preliminaries → not_pricing_supplement) and the run closes — fenced {'not_pricing_supplement': 2000}". Every one of the 2,000 reached the right status; what failed is "the run closes": the run ended FENCED, not succeeded. The same section passed as a one-off in fix 2 (q 31/0); in the full run it was slower. Decide with evidence: a lease / fence timing that a 2,000-filing chunk outlives (CODE — a long-but-healthy run must renew its lease or close cleanly, never end fenced after finishing its list), or the check reading the status before the closing write (VERIFY). Fix accordingly; the check still requires the run to close succeeded with all 2,000 accounted for.
+- FAIL L (line 93): "section l NOT RUN: a real laptop worker is heartbeating and would claim the laptop-target fixture runs — stop it, then run --section l — laptop:Lenovo-Laptop-jpl:31084:…". Joe's REAL laptop bulk worker (run_bulk_fetch.py --worker --target laptop) was online. That a real worker WOULD claim fixture runs is a real defect (it would fetch from the SEC for test rows), not a nuisance: with edgarops1 the laptop worker is now the designed fallback for waiting runs, so it will often be online. CODE: the claim (FOR UPDATE SKIP LOCKED, oldest queued for the target) never hands a run belonging to a test org / fixture to a worker not started for fixtures (e.g. a --fixtures flag or worker id prefix the verify's stub worker uses), and a fixture worker never claims a real run. Then section l runs with or without a real worker online — remove the "NOT RUN" escape, and add a check that a real-mode worker leaves fixture runs alone (and the reverse).
+- Everything else passed, including t, u, s, f, w, h and the live read-only checks. Do not touch them.
+- WSL memory is limited: do NOT run the full verify_edgarops1.py or npm run build — the runner runs it after this leg. --self-checks-only, --cleanup-only and --section one-offs (`timeout 600`) only. Joe's real laptop worker may be running during this sprint — that is now part of the test; never stop or signal it.
+
+THERE IS NO HUMAN AVAILABLE. Report findings, then continue immediately in the same response. If uncertain, continue.
+
+STANDING RULES: no interactive prompts. There is NO background-process notification mechanism in this tool — never wait for one; run every command synchronously in the foreground. No network (SEC / R2 stubbed). No model call. Never print a secret. Fixtures only; never write a real index row, run row or R2 object. Final commit on edgarops1-work with message "edgarops1 fix 3: <Q verdict one line>; workers never cross real / fixture runs (CODE)".
+
+=== TASK 1: STATUS + DISCOVER === add "fix 3" to the EDGAROPS1 line; Q's evidence (lease length, renewal, when the fence fires, timing of the 2,000-filing chunk); the claim query and worker identity. Notes table. COMMIT.
+=== TASK 2: FIX === Q, then L. COMMIT after each.
+=== TASK 3: PROVE === --section q and --section l one-offs (with Joe's worker possibly online) → 0 FAIL; --self-checks-only → 0 FAIL; --cleanup-only → zero. Record; final commit.
