@@ -50,7 +50,8 @@ export function ChipButton({ state, open, onClick }) {
 }
 
 /** The picker body — pure over its props (results / recent fed in) so node tests render it. */
-export function EntityPickerView({ query, onQuery, results, recent, searching, activeIndex, onChoose, onClear, hasSelection, inputRef }) {
+export function EntityPickerView({ query, onQuery, results, recent, searching, activeIndex, onChoose, onClear, hasSelection, inputRef,
+  statusOptions, status, onStatus }) {
   const list = query.trim() ? results : recent;
   const heading = query.trim() ? "Results" : "Recent";
   return (
@@ -71,6 +72,7 @@ export function EntityPickerView({ query, onQuery, results, recent, searching, a
         autoComplete="off"
         className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-gold"
       />
+      <StatusFilterSelect id="nav3-entity-status" options={statusOptions} value={status} onChange={onStatus} />
       <p className="mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted" id="nav2-entity-heading">
         {heading}
       </p>
@@ -106,12 +108,49 @@ export function EntityPickerView({ query, onQuery, results, recent, searching, a
 }
 
 /** Entity search through the existing route (debounced). Returns items reduced to id / name / type. */
-export async function searchEntities(q, { signal } = {}) {
+export async function searchEntities(q, { signal, status } = {}) {
   const params = new URLSearchParams({ q, page_size: "10", include_operational: "true" });
+  if (status) params.set("status", status);   // NAV3 — relationship-status filter (server-side, narrowing)
   const res = await fetch(`/api/entities/search?${params}`, { cache: "no-store", signal });
   if (!res.ok) return [];
   const data = await res.json().catch(() => ({}));
-  return (data.items || []).map((r) => ({ id: String(r.id), display_name: r.display_name, entity_type: r.entity_type }));
+  return (data.items || []).map((r) => ({ id: String(r.id), display_name: r.display_name, entity_type: r.entity_type,
+    status: r.status ?? null }));
+}
+
+/** NAV3 — the relationship-status filter (labels from the CRM vocabulary envelope; hidden when there is none). */
+export function StatusFilterSelect({ id, options, value, onChange }) {
+  if (!Array.isArray(options) || options.length < 2) return null;
+  return (
+    <span className="mt-2 flex items-center gap-2 text-xs text-text-muted">
+      <label htmlFor={id}>Relationship</label>
+      <select id={id} value={value || ""} onChange={(e) => onChange && onChange(e.target.value)}
+        className="rounded-md border border-border bg-white px-2 py-1 text-xs text-text-primary">
+        {options.map((o) => <option key={o.value || "all"} value={o.value}>{o.label}</option>)}
+      </select>
+    </span>
+  );
+}
+
+/** NAV3 — the status filter options, read once the picker / palette opens (GET /api/crm/vocabularies, internal).
+ * A refused or failed read → null → no filter shown (never a client-side default list). */
+let _statusCache = null;
+export function useStatusOptions(open) {
+  const [opts, setOpts] = useState(_statusCache);
+  useEffect(() => {
+    if (!open || _statusCache) return undefined;
+    let live = true;
+    fetch("/api/crm/vocabularies", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const list = d && d.vocabularies && Array.isArray(d.vocabularies.status_filters) ? d.vocabularies.status_filters : null;
+        _statusCache = list;
+        if (live) setOpts(list);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [open]);
+  return opts;
 }
 
 /** Keyboard model shared by the picker and Ctrl K: arrows move, Enter chooses, Esc closes. */
@@ -133,6 +172,8 @@ function EntityChipInner() {
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [active, setActive] = useState(-1);
+  const [status, setStatus] = useState("");
+  const statusOpts = useStatusOptions(open);
   const wrapRef = useRef(null);
   const buttonRef = useRef(null);
   const inputRef = useRef(null);
@@ -153,13 +194,13 @@ function EntityChipInner() {
     const ctrl = new AbortController();
     setSearching(true);
     const t = setTimeout(() => {
-      searchEntities(q, { signal: ctrl.signal })
+      searchEntities(q, { signal: ctrl.signal, status })
         .then((r) => { setResults(r); setActive(r.length ? 0 : -1); })
         .catch(() => {})
         .finally(() => setSearching(false));
     }, 250);
     return () => { clearTimeout(t); ctrl.abort(); };
-  }, [query]);
+  }, [query, status]);
 
   const list = query.trim() ? results : ctx.recent;
 
@@ -231,6 +272,9 @@ function EntityChipInner() {
             onClear={clear}
             hasSelection={ctx.state.kind !== "none"}
             inputRef={inputRef}
+            statusOptions={statusOpts}
+            status={status}
+            onStatus={setStatus}
           />
         </div>
       )}

@@ -136,14 +136,18 @@ export function statusOptions(vocab) {
   return (vocab && Array.isArray(vocab.status_filters)) ? vocab.status_filters : [{ value: "", label: "All" }];
 }
 
-/** Cross Book default: staff see clients only unless they chose "All relationships"; a member is unaffected. */
+/** Cross Book default: staff see clients only unless they chose "All relationships"; a member is unaffected (they
+ * see only their own family). A chosen owner (the chip's entity / the grid's Owner filter) is more specific than the
+ * default and wins — a selected prospect's positions are never hidden by "Clients only". `me` still loading (undefined)
+ * → `undefined` = wait, so a grid never fetches the wrong population first. */
 export const CROSS_BOOK_CLIENT_STATUS = "client";
-export function crossBookStatus(me, mode) {
-  if (isMemberOnly(me)) return null;
+export function crossBookStatus(me, mode, ownerSelected = false) {
+  if (me === undefined) return undefined;
+  if (isMemberOnly(me) || ownerSelected) return null;
   return mode === "all" ? null : CROSS_BOOK_CLIENT_STATUS;
 }
-export function crossBookSwitchShown(me) {
-  return !isMemberOnly(me);
+export function crossBookSwitchShown(me, ownerSelected = false) {
+  return !isMemberOnly(me) && !ownerSelected;
 }
 
 // ── Holdings split ─────────────────────────────────────────────────────────────────────────────────────────────

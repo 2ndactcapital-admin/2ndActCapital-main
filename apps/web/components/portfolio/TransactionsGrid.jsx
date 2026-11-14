@@ -62,6 +62,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import DataGrid from "@/components/ui/DataGrid";
 import EntityPicker from "@/components/EntityPicker";
 import { useScreenEntity } from "@/components/nav/EntityScreen";
+import CrossBookSwitch from "@/components/nav/CrossBookSwitch";
+import { usePermissions } from "@/lib/usePermissions";
+import { crossBookStatus } from "@/lib/recordTabs.mjs";
 import TransactionDetailPane from "@/components/portfolio/TransactionDetailPane";
 
 const CARD = { borderColor: "#ece8dd", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
@@ -260,11 +263,16 @@ export default function TransactionsGrid() {
 
   const [filters, setFilters] = useState(baseFilters);
   const [owner, setOwner] = useState(screenEntity); // EntityPicker value
+  // NAV3 — Cross Book default: clients only for staff (a member is unaffected); a chosen owner wins.
+  const { me: who, loading: whoLoading } = usePermissions();
+  const [relMode, setRelMode] = useState("clients");
+  const ownerStatus = crossBookStatus(whoLoading ? undefined : who, relMode, Boolean(filters.owner_entity_id));
   const [selectedId, setSelectedId] = useState(null);
   const [pendingId, setPendingId] = useState(null);
   const [inlineError, setInlineError] = useState(null);
 
   const load = useCallback(async () => {
+    if (ownerStatus === undefined) return;   // NAV3 — wait for /users/me: never fetch the wrong population first
     setLoading(true);
     setError(null);
     try {
@@ -276,6 +284,7 @@ export default function TransactionsGrid() {
         // filter and silently widen the query back to everything.
         if (value !== "") params.set(key, value);
       }
+      if (ownerStatus) params.set("owner_status", ownerStatus);
       const res = await fetch(`/api/portfolio/transactions?${params}`, {
         cache: "no-store",
       });
@@ -289,7 +298,7 @@ export default function TransactionsGrid() {
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, ownerStatus]);
 
   useEffect(() => {
     load();
@@ -520,6 +529,7 @@ export default function TransactionsGrid() {
           {meta.scope.description}
         </p>
       )}
+      <CrossBookSwitch me={who} mode={relMode} onMode={setRelMode} ownerSelected={Boolean(filters.owner_entity_id)} />
       {/* ── Server-side filter bar ─────────────────────────────────────── */}
       <div className="rounded-lg border bg-white px-4 py-3" style={CARD}>
         <div className="flex flex-wrap items-end gap-3">

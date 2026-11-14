@@ -7,7 +7,7 @@ import { useEntityContext, rememberEntity } from "@/lib/useEntityContext";
 import { openAssistantWith } from "@/lib/useAssistantPanel";
 import { isOpenShortcut, paletteOptions } from "@/lib/commandPalette.mjs";
 import { entityDestination } from "@/lib/entityScreens.mjs";
-import { searchEntities, moveIndex } from "@/components/nav/EntityChip";
+import { searchEntities, moveIndex, StatusFilterSelect, useStatusOptions } from "@/components/nav/EntityChip";
 
 // NAV2 — Ctrl K (Cmd K on a Mac) and the top-bar search button open ONE dialog: Records (entities + securities,
 // labelled), Screens (the person's visible menu — lib/commandPalette.screensFor) and "Ask about <entity>…".
@@ -23,7 +23,7 @@ async function searchSecurities(q, { signal } = {}) {
 }
 
 /** Pure presentation over the option list — exported for node tests. */
-export function PaletteView({ query, onQuery, options, activeIndex, onChoose, inputRef, searching }) {
+export function PaletteView({ query, onQuery, options, activeIndex, onChoose, inputRef, searching, statusOptions, status, onStatus }) {
   let lastSection = null;
   return (
     <div className="p-3">
@@ -42,6 +42,7 @@ export function PaletteView({ query, onQuery, options, activeIndex, onChoose, in
         autoComplete="off"
         className="w-full rounded-md border border-border bg-white px-3 py-2 text-base text-text-primary focus:outline-none focus:ring-1 focus:ring-gold"
       />
+      <StatusFilterSelect id="nav3-cmdk-status" options={statusOptions} value={status} onChange={onStatus} />
       <ul id="nav2-cmdk-list" role="listbox" aria-label="Results" className="mt-2 max-h-96 overflow-y-auto">
         {options.map((o, i) => {
           const header = o.section !== lastSection ? o.section : null;
@@ -87,6 +88,8 @@ function PaletteInner() {
   const [securities, setSecurities] = useState([]);
   const [searching, setSearching] = useState(false);
   const [active, setActive] = useState(0);
+  const [status, setStatus] = useState("");   // NAV3 — relationship-status filter on Records (entities)
+  const statusOpts = useStatusOptions(open);
   const inputRef = useRef(null);
   const dialogRef = useRef(null);
   const returnFocus = useRef(null);
@@ -127,13 +130,13 @@ function PaletteInner() {
     setSearching(true);
     const t = setTimeout(() => {
       Promise.all([
-        searchEntities(q, { signal: ctrl.signal }).catch(() => []),
+        searchEntities(q, { signal: ctrl.signal, status }).catch(() => []),
         searchSecurities(q, { signal: ctrl.signal }).catch(() => []),
       ]).then(([e, s]) => { setEntities(e.slice(0, 8)); setSecurities(s); setActive(0); })
         .finally(() => setSearching(false));
     }, 250);
     return () => { clearTimeout(t); ctrl.abort(); };
-  }, [query, open]);
+  }, [query, open, status]);
 
   const options = open
     ? paletteOptions({ me, query, entities, securities, selected: ctx.state, carryId: ctx.carryId })
@@ -208,6 +211,9 @@ function PaletteInner() {
               onChoose={choose}
               inputRef={inputRef}
               searching={searching}
+              statusOptions={statusOpts}
+              status={status}
+              onStatus={(v) => { setStatus(v); setActive(0); }}
             />
           </div>
         </div>
