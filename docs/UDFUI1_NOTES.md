@@ -127,3 +127,26 @@ by DataGrid, so the layout editor uses them too, with up / down buttons as the k
 * [FIND] `GET /udf/layouts/{tab}` resolves FLS for the caller, so an admin whose own grant hides a field does not
   see it in the layout editor; the admin definitions list still shows it.
 * [FIND] Tab lifecycle has no audit table (documented in portfolio_udf_tabs) — only definitions are audited.
+* [FIND] A DEACTIVATED field's layout item is still returned by `GET /udf/layouts/{tab}` (`get_resolved_layout` filters
+  `deleted_at` only, not `is_active`); value writes to it are refused (422). Engine behaviour, unchanged.
+* [FIND] A malformed id in a UDF path (e.g. the literal `None`) is a 500, not a 404 / 422 (asyncpg DataError) —
+  pre-existing route behaviour, seen while a verify defect passed a missing tab id.
+* [FIND] Pre-existing web test failure: `tests/bugfix3` reads `components/crm/EntityDetailTabs.jsx`, which NAV3 removed
+  (full web suite 909 pass / 1 fail / 1 skip). Not touched here.
+* [FIND] `verify_udf00.py` does not exist; `verify_udf01a…02b` have no `--self-checks-only`, so fast mode cannot nest
+  them (as NAV3 recorded). This sprint's verify proves the engine paths it uses through the real app instead.
+
+## 4. Proof
+* `verify_udfui1.py`: run 1 170 / 13 (both verify defects: a 4th tab hit the engine's cap of 3; creation is audited
+  too) → run 2 185 / 0 (VERIFY_NESTED=1) → full run **186 / 0** (incl. nested verify_nav3). `--self-checks-only`
+  16 / 0; `--cleanup-only` 1 / 0.
+* Node: `tests/udfui1` 19 / 0; with nav3 / nav2 / nav1 / nav 109 / 0.
+* One-offs: `verify_nav3.py --self-checks-only` 25 / 0, `verify_nav1.py --self-checks-only` 28 / 0;
+  `authz1_routes.py --check` and `visibility1_routes.py --check` CURRENT (both regenerated for the 6 routes).
+* Not run (by instruction): `npm run build`, other sprints' full verifies.
+
+## 5. Operator step
+    doppler run -- apps/api/venv/bin/python apps/api/scripts/relationship_status_cleanup.py --dry-run
+    doppler run -- apps/api/venv/bin/python apps/api/scripts/relationship_status_cleanup.py
+Expect 3 entities (live rows with status 'active' on 2026-11-13). The script ends with how many still carry
+'active'; once that is 0, a later sprint may drop 'active' from validation (`RETIRED_STATUSES`).
