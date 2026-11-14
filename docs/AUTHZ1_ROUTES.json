@@ -1,5 +1,5 @@
 {
- "app_route_count": 1090,
+ "app_route_count": 1096,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -10449,6 +10449,131 @@
    "write": false
   },
   {
+   "after": "authz manage_portfolio; internal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "all_of": [
+     "manage_portfolio"
+    ],
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm",
+    "staff_bypass": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.udf",
+   "name": "admin_list_definitions",
+   "note": "",
+   "path": "/api/v1/udf/admin/definitions",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_portfolio; internal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "all_of": [
+     "manage_portfolio"
+    ],
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm",
+    "staff_bypass": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.udf",
+   "name": "definition_audit",
+   "note": "",
+   "path": "/api/v1/udf/definitions/{definition_id}/audit",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_portfolio; internal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "all_of": [
+     "manage_portfolio"
+    ],
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm",
+    "staff_bypass": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.udf",
+   "name": "admin_list_tabs",
+   "note": "",
+   "path": "/api/v1/udf/admin/tabs",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_portfolio; internal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "all_of": [
+     "manage_portfolio"
+    ],
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm",
+    "staff_bypass": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.udf",
+   "name": "list_tab_permissions",
+   "note": "",
+   "path": "/api/v1/udf/tabs/{tab_id}/permissions",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_portfolio; internal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "all_of": [
+     "manage_portfolio"
+    ],
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm",
+    "staff_bypass": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.udf",
+   "name": "preview_route",
+   "note": "",
+   "path": "/api/v1/udf/preview",
+   "public": false,
+   "write": false
+  },
+  {
    "after": "authz view_portfolio",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
@@ -10976,6 +11101,28 @@
    "name": "create_section",
    "note": "same permission, now enforced from the DB Principal",
    "path": "/api/v1/udf/layouts/{tab_id}/sections",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_portfolio",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_portfolio"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.udf",
+   "name": "reorder_sections_route",
+   "note": "",
+   "path": "/api/v1/udf/layouts/{tab_id}/sections/order",
    "public": false,
    "write": true
   },
