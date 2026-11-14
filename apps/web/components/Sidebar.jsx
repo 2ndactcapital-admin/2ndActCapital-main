@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { IconAddressBook } from "@tabler/icons-react";
 import BrandNavIcon from "./BrandNavIcon";
 import { useBrand } from "@/components/ThemeProvider";
 import { usePermissions } from "@/lib/usePermissions";
 import { entryIsActive, visibleSections } from "@/lib/menuVisibility";
+import { withEntity } from "@/lib/entityContext.mjs";
+import { useEntityContext } from "@/lib/useEntityContext";
 
 // navregroup — this component keeps NO item list and NO gate of its own. Every
 // entry, label, order, section and gate comes from lib/menuVisibility.mjs
@@ -19,12 +21,14 @@ const TABLER_ICONS = { crm: IconAddressBook };
  * The rendered entries for a /users/me payload — exported so node tests can
  * check what the sidebar would show for each persona without a browser.
  */
-export function sidebarModel(me, pathname) {
+export function sidebarModel(me, pathname, entityId = null) {
   return visibleSections(me).map((section) => ({
     id: section.id,
     header: section.header,
     entries: section.entries.map((entry) => ({
       ...entry,
+      // NAV2 — the selected entity follows every link (dropped when cleared); the active state keys on the bare path.
+      href: entityId ? withEntity(entry.href, entityId) : entry.href,
       TablerIcon: TABLER_ICONS[entry.icon] || null,
       active: entryIsActive(entry, pathname),
     })),
@@ -102,10 +106,10 @@ function NavLink({ item, expanded, active, badge = 0 }) {
 }
 
 /** The nav list itself — pure presentation over sidebarModel(), exported for tests. */
-export function SidebarNav({ me, pathname, expanded, unread = 0 }) {
+export function SidebarNav({ me, pathname, expanded, unread = 0, entityId = null }) {
   return (
     <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
-      {sidebarModel(me, pathname).map((section) => (
+      {sidebarModel(me, pathname, entityId).map((section) => (
         <div key={section.id} data-section={section.id} className="space-y-0.5">
           {section.header && expanded && (
             <div
@@ -123,13 +127,19 @@ export function SidebarNav({ me, pathname, expanded, unread = 0 }) {
               item={entry}
               expanded={expanded}
               active={entry.active}
-              badge={entry.href === "/notifications" ? unread : 0}
+              badge={entry.key === "/notifications" ? unread : 0}
             />
           ))}
         </div>
       ))}
     </nav>
   );
+}
+
+/** NAV2 — SidebarNav with the selected entity carried on every link (reads the one context). */
+function SidebarNavCarried(props) {
+  const { carryId } = useEntityContext();
+  return <SidebarNav {...props} entityId={carryId} />;
 }
 
 function PinIcon({ pinned }) {
@@ -311,7 +321,9 @@ export default function Sidebar() {
         </div>
 
         {/* Nav items — sections and master pages from the one menu definition */}
-        <SidebarNav me={me} pathname={pathname} expanded={expanded} unread={unread} />
+        <Suspense fallback={<SidebarNav me={me} pathname={pathname} expanded={expanded} unread={unread} />}>
+          <SidebarNavCarried me={me} pathname={pathname} expanded={expanded} unread={unread} />
+        </Suspense>
       </div>
     </aside>
   );

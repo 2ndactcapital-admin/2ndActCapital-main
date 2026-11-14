@@ -61,6 +61,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import DataGrid from "@/components/ui/DataGrid";
 import EntityPicker from "@/components/EntityPicker";
+import { useScreenEntity } from "@/components/nav/EntityScreen";
 import TransactionDetailPane from "@/components/portfolio/TransactionDetailPane";
 
 const CARD = { borderColor: "#ece8dd", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
@@ -248,13 +249,17 @@ const EMPTY_FILTERS = {
 };
 
 export default function TransactionsGrid() {
+  // NAV2 — the entity chip's VISIBLE entity (null outside the shell's book screens or with no selection) seeds and
+  // locks the existing owner filter; the server still ANDs it with the caller's scope.
+  const screenEntity = useScreenEntity();
+  const baseFilters = screenEntity ? { ...EMPTY_FILTERS, owner_entity_id: screenEntity.id } : EMPTY_FILTERS;
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
-  const [owner, setOwner] = useState(null); // EntityPicker value
+  const [filters, setFilters] = useState(baseFilters);
+  const [owner, setOwner] = useState(screenEntity); // EntityPicker value
   const [selectedId, setSelectedId] = useState(null);
   const [pendingId, setPendingId] = useState(null);
   const [inlineError, setInlineError] = useState(null);
@@ -524,6 +529,7 @@ export default function TransactionsGrid() {
               <EntityPicker
                 value={owner}
                 onChange={(entity) => {
+                  if (screenEntity) return; // NAV2 — set by the entity chip; clear the chip to change it
                   setOwner(entity);
                   setFilter("owner_entity_id", entity?.id || "");
                 }}
@@ -644,8 +650,8 @@ export default function TransactionsGrid() {
           <button
             type="button"
             onClick={() => {
-              setFilters(EMPTY_FILTERS);
-              setOwner(null);
+              setFilters(baseFilters);
+              setOwner(screenEntity);
             }}
             className="rounded border border-[var(--2a-border)] px-3 py-1.5 text-xs text-[var(--2a-text-secondary)] hover:bg-[var(--2a-bg)]"
           >

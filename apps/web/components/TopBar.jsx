@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { Suspense, useState, useRef, useEffect } from "react";
 import {
   IconChevronDown,
   IconSettings,
@@ -9,6 +9,26 @@ import {
 } from "@tabler/icons-react";
 import NotificationBell from "@/components/NotificationBell";
 import AssistantToggle from "@/components/assistant/AssistantToggle";
+import EntityChip from "@/components/nav/EntityChip";
+import CommandPalette from "@/components/nav/CommandPalette";
+import { withEntity } from "@/lib/entityContext.mjs";
+import { useEntityContext } from "@/lib/useEntityContext";
+
+// NAV2 — the account menu's links carry the selected entity like every other shell link.
+function CarriedHref({ href, children }) {
+  return children(href);
+}
+function CarriedHrefInner({ href, children }) {
+  const { carryId } = useEntityContext();
+  return children(carryId ? withEntity(href, carryId) : href);
+}
+function Carried({ href, children }) {
+  return (
+    <Suspense fallback={<CarriedHref href={href}>{children}</CarriedHref>}>
+      <CarriedHrefInner href={href}>{children}</CarriedHrefInner>
+    </Suspense>
+  );
+}
 
 function initialsFrom(user) {
   const source = user?.name || user?.email || "";
@@ -33,7 +53,11 @@ export default function TopBar({ user }) {
   }, []);
 
   return (
-    <header className="flex h-14 items-center justify-end bg-navy px-6">
+    <header className="flex h-14 items-center justify-between bg-navy px-6">
+      <div className="flex items-center gap-2">
+        <EntityChip />
+        <CommandPalette />
+      </div>
       <div className="flex items-center gap-2">
         <AssistantToggle />
         <NotificationBell />
@@ -72,22 +96,26 @@ export default function TopBar({ user }) {
                 )}
               </div>
               <div className="p-1">
-                <a
-                  href="/settings"
-                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-border"
-                  onClick={() => setOpen(false)}
-                >
-                  <IconSettings size={16} stroke={1.75} />
-                  Settings
-                </a>
-                <a
-                  href="/investment-profile"
-                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-border"
-                  onClick={() => setOpen(false)}
-                >
-                  <IconUser size={16} stroke={1.75} />
-                  Investment Profile
-                </a>
+                <Carried href="/settings">{(h) => (
+                  <a
+                    href={h}
+                    className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-border"
+                    onClick={() => setOpen(false)}
+                  >
+                    <IconSettings size={16} stroke={1.75} />
+                    Settings
+                  </a>
+                )}</Carried>
+                <Carried href="/investment-profile">{(h) => (
+                  <a
+                    href={h}
+                    className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-border"
+                    onClick={() => setOpen(false)}
+                  >
+                    <IconUser size={16} stroke={1.75} />
+                    Investment Profile
+                  </a>
+                )}</Carried>
                 <div className="my-1 border-t border-border" />
                 <a
                   href="/auth/logout"

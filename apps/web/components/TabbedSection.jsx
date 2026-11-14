@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { Suspense } from "react";
 import { usePathname } from "next/navigation";
+import { withEntity } from "@/lib/entityContext.mjs";
+import { useEntityContext } from "@/lib/useEntityContext";
 import { usePermissions } from "@/lib/usePermissions";
 import { displayLabel, tabForPath, visibleTabs } from "@/lib/menuVisibility";
 
@@ -13,7 +16,7 @@ import { displayLabel, tabForPath, visibleTabs } from "@/lib/menuVisibility";
  *
  * Exported pure model so node tests can render it from a /users/me payload.
  */
-export function tabBarModel(me, pathname) {
+export function tabBarModel(me, pathname, entityId = null) {
   const hit = tabForPath(pathname);
   if (!hit) return null;
   const tabs = visibleTabs(me, hit.group.id);
@@ -21,7 +24,7 @@ export function tabBarModel(me, pathname) {
   return {
     groupId: hit.group.id,
     groupLabel: displayLabel(me, hit.group),
-    tabs: tabs.map((t) => ({ href: t.href, label: t.label, active: t.href === hit.item.href })),
+    tabs: tabs.map((t) => ({ href: entityId ? withEntity(t.href, entityId) : t.href, label: t.label, active: t.href === hit.item.href })),
   };
 }
 
@@ -50,8 +53,18 @@ export function TabBar({ model }) {
   );
 }
 
+function CarriedTabBar({ me, pathname }) {
+  const { carryId } = useEntityContext();
+  return <TabBar model={tabBarModel(me, pathname, carryId)} />;
+}
+
 export default function TabbedSection() {
   const pathname = usePathname();
   const { me } = usePermissions();
-  return <TabBar model={tabBarModel(me, pathname)} />;
+  // NAV2 — tab links carry the selected entity (dropped when cleared).
+  return (
+    <Suspense fallback={<TabBar model={tabBarModel(me, pathname)} />}>
+      <CarriedTabBar me={me} pathname={pathname} />
+    </Suspense>
+  );
 }

@@ -1,6 +1,9 @@
 "use client";
 
+import { Suspense } from "react";
 import { useTheme } from "@/components/ThemeProvider";
+import { withEntity } from "@/lib/entityContext.mjs";
+import { useEntityContext } from "@/lib/useEntityContext";
 
 // Sprint 24: footer destinations come from the tenant's org_settings
 // (footer.privacy_url / footer.terms_url / footer.support_email) rather than a
@@ -11,8 +14,22 @@ const STATIC_LINKS = [
   { label: "About Us", href: "/about" },
 ];
 
+// NAV2 — in-app footer links carry the selected entity like every shell link (external / mailto untouched).
+function CarriedFooter(props) {
+  const { carryId } = useEntityContext();
+  return <FooterView {...props} entityId={carryId} />;
+}
+
 export default function Footer() {
   const { footer } = useTheme();
+  return (
+    <Suspense fallback={<FooterView footer={footer} />}>
+      <CarriedFooter footer={footer} />
+    </Suspense>
+  );
+}
+
+export function FooterView({ footer, entityId = null }) {
 
   const links = [
     ...STATIC_LINKS,
@@ -29,7 +46,7 @@ export default function Footer() {
       <nav className="flex flex-wrap items-center justify-center gap-2 text-xs text-text-muted">
         {links.map((link, index) => (
           <span key={link.href} className="flex items-center gap-2">
-            <a href={link.href} className="transition-colors hover:text-text-primary">
+            <a href={entityId ? withEntity(link.href, entityId) : link.href} className="transition-colors hover:text-text-primary">
               {link.label}
             </a>
             {index < links.length - 1 && <span aria-hidden="true">·</span>}

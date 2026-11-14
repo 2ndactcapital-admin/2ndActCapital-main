@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ActivityView from "./ActivityView";
 import BoundedChoice from "./BoundedChoice";
 import RenderDirective from "./RenderDirective";
 import { usePermissions } from "@/lib/usePermissions";
-import { useAssistantPanel } from "@/lib/useAssistantPanel";
+import { useAssistantPanel, ASK_EVENT } from "@/lib/useAssistantPanel";
+import { useEntityContext } from "@/lib/useEntityContext";
+import { assistantContextFor } from "@/lib/commandPalette.mjs";
+import { typeLabel } from "@/lib/entityContext.mjs";
 
 // permission: null means available to all authenticated users.
 const VIEW_CONFIG = [
@@ -53,6 +56,17 @@ function ChatView({ contextRef }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // NAV2 — "Ask about <entity>…" from Ctrl K hands the chat a draft to finish.
+  const inputRef = useRef(null);
+  useEffect(() => {
+    function onDraft(e) {
+      setInput(e.detail?.draft || "");
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+    window.addEventListener(ASK_EVENT, onDraft);
+    return () => window.removeEventListener(ASK_EVENT, onDraft);
+  }, []);
 
   async function send() {
     const text = input.trim();
@@ -167,6 +181,8 @@ function ChatView({ contextRef }) {
       {/* Composer */}
       <div className="border-t border-[var(--2a-border)] px-3 py-2">
         <textarea
+          ref={inputRef}
+          aria-label="Message the assistant"
           className="w-full resize-none rounded border border-[var(--2a-border)] bg-[var(--2a-bg)] px-2 py-1.5 text-sm text-[var(--2a-text)] placeholder-[var(--2a-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
           rows={2}
           placeholder="Message…"
@@ -252,7 +268,7 @@ function TodosView() {
  * The panel itself — rendered only while open (closed = nothing at all; the top-bar button is the one control).
  * Exported so node tests render it from a fed `open` without a browser.
  */
-export function AssistantPanelView({ open, contextRef }) {
+export function AssistantPanelView({ open, contextRef, contextLabel = null }) {
   const [activeView, setActiveView] = useState("Chat");
   const { can } = usePermissions();
 
@@ -278,6 +294,13 @@ export function AssistantPanelView({ open, contextRef }) {
           Assistant
         </span>
       </div>
+
+      {/* NAV2 — the selected entity is the assistant's context (shown so the person knows what "this" means) */}
+      {contextLabel && (
+        <div className="border-b border-[var(--2a-border)] px-3 py-1.5 text-xs text-[var(--2a-text-muted)]" data-testid="assistant-context">
+          About: <span className="text-[var(--2a-navy)]">{contextLabel}</span>
+        </div>
+      )}
 
       {/* View selector — single dropdown, role-gated */}
       <div className="border-b border-[var(--2a-border)] px-2 py-1.5">
@@ -309,7 +332,27 @@ export function AssistantPanelView({ open, contextRef }) {
   );
 }
 
+/**
+ * NAV2 — with no explicit contextRef the panel takes the ONE selected entity (only a VISIBLE one) as its context, in
+ * the EXISTING request shape: context_ref { type: "entity", id } (+ entity_type). The server re-checks visibility.
+ */
+export function entityContextRef(explicit, state) {
+  if (explicit) return { ref: explicit, label: null };
+  const ref = assistantContextFor(state);
+  return { ref, label: ref ? `${typeLabel(state.type) ? `${typeLabel(state.type)} · ` : ""}${state.name}` : null };
+}
+
+function PanelWithEntity({ open, contextRef }) {
+  const { state } = useEntityContext();
+  const { ref, label } = entityContextRef(contextRef, state);
+  return <AssistantPanelView open={open} contextRef={ref} contextLabel={label} />;
+}
+
 export default function AssistantPanel({ contextRef }) {
   const { open } = useAssistantPanel();
-  return <AssistantPanelView open={open} contextRef={contextRef} />;
+  return (
+    <Suspense fallback={<AssistantPanelView open={open} contextRef={contextRef} />}>
+      <PanelWithEntity open={open} contextRef={contextRef} />
+    </Suspense>
+  );
 }

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from routers.entities import get_org_id
 from services.action_registry import REGISTRY, AssistantAction
 from services.audit import write_audit_log
+from services.assistant_context import entity_context_note
 from services.assistant_transcript import FALLBACK_REPLY, is_internal, user_visible_text
 from services.database import get_pool
 from services.extraction import call_claude_with_tools
@@ -73,6 +74,7 @@ async def _run_loop(
     user_id: str,
     org_id: str,
     caller_is_staff: bool,
+    context_note: str | None = None,
 ) -> dict:
     """Run the assistant LLM loop.
 
@@ -94,6 +96,9 @@ async def _run_loop(
 
     # Resolved once, not per iteration — the brand cannot change mid-loop.
     system = system_prompt(await get_brand_name(pool, org_id))
+    # NAV2 — the selected entity (already visibility-checked by entity_context_note) tells the model what "this" means.
+    if context_note:
+        system = f"{system}\n\n{context_note}"
 
     for _iteration in range(10):
         response = await call_claude_with_tools(
@@ -426,9 +431,13 @@ async def post_message(request: Request, body: MessageBody):
     # Build Anthropic-format messages from storage
     api_messages = _to_api_messages(stored_messages)
 
+    # NAV2 — the selected entity as context, only when this person may see it.
+    context_note = await entity_context_note(request, pool, org_id, body.context_ref)
+
     # Run the loop
     result = await _run_loop(
-        api_messages, tool_specs, action_map, pool, user_id, org_id, caller_is_staff
+        api_messages, tool_specs, action_map, pool, user_id, org_id, caller_is_staff,
+        context_note=context_note,
     )
 
     # Persist updated messages
