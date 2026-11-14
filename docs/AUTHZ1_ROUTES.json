@@ -1,5 +1,5 @@
 {
- "app_route_count": 1089,
+ "app_route_count": 1090,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -5496,6 +5496,24 @@
    "name": "entity_net_worth",
    "note": "",
    "path": "/api/v1/entities/{entity_id}/net-worth",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "entity access",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "scoped"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.crm_detail",
+   "name": "entity_holdings_split",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/holdings-split",
    "public": false,
    "write": false
   },

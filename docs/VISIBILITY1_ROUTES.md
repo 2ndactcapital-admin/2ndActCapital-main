@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 1082 · guarded 258 · sql-scope 54 · body-check 16 · legacy-rule 3
+Routes: 1083 · guarded 259 · sql-scope 54 · body-check 16 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -528,6 +528,7 @@ Routes: 1082 · guarded 258 · sql-scope 54 · body-check 16 · legacy-rule 3
 | POST | `/api/v1/entities/{entity_id}/employment` | entities | guard:entity_id, scrub |
 | PUT | `/api/v1/entities/{entity_id}/employment/{emp_id}` | entities | guard:entity_id, scrub |
 | GET | `/api/v1/entities/{entity_id}/full` | entities | guard:entity_id, scrub |
+| GET | `/api/v1/entities/{entity_id}/holdings-split` | crm_detail | guard:entity_id, scrub |
 | GET | `/api/v1/entities/{entity_id}/liabilities` | crm_detail | guard:entity_id, scrub |
 | POST | `/api/v1/entities/{entity_id}/liabilities` | crm_detail | guard:entity_id, scrub |
 | GET | `/api/v1/entities/{entity_id}/lookthrough` | entity_graph | guard:entity_id, scrub |
