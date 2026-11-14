@@ -91,7 +91,71 @@ render time a refused read hides the tab (never an empty tab pretending to be da
 The exact type sets live in ONE table, `apps/web/lib/recordTabs.mjs` (tested in node).
 
 ## 3. What was built
-(filled as tasks land)
 
-## 4. Screens still not entity-filtered
-(filled in Task 7)
+1. **Record page** at `/crm/[id]` (`app/crm/[id]/page.js` → `components/record/RecordPage.jsx`; pure views in
+   `components/record/RecordViews.jsx`; the ONE tab table `lib/recordTabs.mjs`). Navy header: name, type, the
+   relationship-status badge (label from the CRM vocabulary envelope), one line of context (primary household ·
+   owners), and the as-of date control (`?as_of=`, default today, never after today; "Back to today"). Accessible
+   tabs: `role=tablist / tab / tabpanel`, `aria-selected`, `aria-controls` / `aria-labelledby`, roving tabindex,
+   ArrowLeft / ArrowRight (wrap), Home / End. Each tab is mounted the first time it is opened. Old `?tab=` keys
+   (relationships, addresses, tax_ids, notes, liabilities …) open the new tab containing them. The old flat
+   `components/crm/EntityDetailTabs.jsx` was REMOVED — its views moved in, nothing rebuilt. Sub-routes
+   (`/hierarchy`, `/ownership-graph`, `/targets`) unchanged.
+2. **Holdings** — `GET /entities/{id}/holdings-split?as_of` (`routers/crm_detail.py`, the SAME gate as GET
+   `/net-worth`: `_member_scoped_entity`; VISIBILITY1 path guard covers it) → `services/networth.entity_split`: one
+   `load`, `figures` over two disjoint weight maps. "Held directly" / "Through ownership" switch; the through view lists
+   each owned entity with its percentage. Below it, the existing direct-asset / private-investment entry
+   (`HoldingsTab`) and liabilities (`LiabilitiesTab`) — those show today.
+3. **One as-of date** — passed to the split (`as_of`), Transactions (`trade_to`), Allocation lens (`as_of`) and
+   Ownership (its own as-of control, seeded with the page date). Every other tab shows "Shows today — this tab has no
+   as-of date" when the date is not today, and the header lists them ("Shows today: …").
+4. **Details** — the typed CRM fields (record form, typed detail fields, attributes, addresses, employment, tax IDs,
+   social, compliance — the same components) + every visible UDF custom tab for `entity`: `GET /udf/tabs` →
+   `GET /udf/layouts/{tab}` (hidden fields dropped, read → `is_read_only`) + `GET /udf/values/entity/{id}`. An input is
+   rendered only for an item that is not read-only AND when the layout envelope says `can_write` (no fallback); Save
+   = `PUT /udf/values/entity/{id}` (its existing gate + field access; each edit is a history row). New Next routes
+   forward only `{definition_id, value}`.
+5. **Relationship status** — `docs/nav3_part1.sql` (APPLIED 2026-11-13): config rows `crm_status_partner` "Partner"
+   and `crm_status_former_client` "Former client" (selectable) for both orgs that have the category; new orgs copy
+   them from the default org. No entity row touched. Filters: entity chip picker + Ctrl K Records (`status` on
+   `GET /entities/search`, ANDed with the existing scope; options from `/crm/vocabularies`, hidden when the person
+   gets none); the Entities list already filtered by status (PORTENTRY1 pills from config — the two new statuses
+   appear there automatically). **Cross Book**: Positions and Transactions default to **Clients only** for staff
+   (`owner_status=client`, a new narrowing parameter on both APIs, `services.portfolio_positions.OWNER_STATUS_SQL`)
+   with a visible "Clients only / All relationships" switch; a member is unaffected (no switch, no parameter); a
+   chosen owner (chip / Owner filter) wins over the default; the grid waits for `/users/me` so it never fetches the
+   wrong population first.
+6. **nav2 screens wired for the record page** — Accounts (`GET /proposals/accounts?owner_entity_id`, a narrowing
+   `a.primary_entity_id` predicate) for Models & rebalancing; Treasury and X-ray through the entity's primary
+   household (`GET /admin/entities/{id}/primary-household`, existing). Positions / Transactions / Allocation lens
+   already filtered (nav2).
+
+[FIND]s
+* Members never had (and still do not have) a record page: `GET /entities/{id}/full` is internal (BUGFIX2).
+* The household lookup needs manage_members, so support staff / advisors without it get no household line and no
+  Cash & Treasury tab, although the treasury API would serve them. More restrictive; the lookup's gate unchanged.
+* The household strict networth (`/admin/households/{id}/networth`) reads the stored snapshot; the live household
+  total is `GET /admin/households/{id}` (BUGFIX4 `household_total`) — the reconciliation uses the live one.
+* `udf/values` resolves field access with `tab_id=None` while `udf/layouts` resolves per tab; the page renders from
+  the layout and the PUT's own 403 stays authoritative.
+
+## 4. Screens still not entity-filtered (after NAV3)
+
+From NAV2_NOTES §3, still "isn't filtered by entity": `/portfolio/securities`, `/portfolio/commitments`,
+`/portfolio/households` (list), `/portfolio/ownership-tree` (member tree; staff use the record's Ownership tab),
+`/portfolio/approvals` (households.id), `/portfolio/replication/tilts` (account-scoped), `/portfolio/replication/
+backtest`, `/portfolio/tax`, `/portfolio/replication/section351`, `/portfolio/instructions`, `/treasury` (the page;
+the record tab reads it by household), `/documents`, `/documents/semantic`, and the Investments tab of `/portfolio`.
+`/portfolio/accounts` gained the server parameter (the record tab uses it) but the screen itself is not yet in the
+FILTER set (its list component has no owner control) — a small follow-up. By design: models, catalog, replicas,
+blocks, notes, new issues.
+
+## 5. For Joe
+
+* **Status mapping**: 'active' (3 current rows) and 'contact' (10) are kept as they are. Keep both, or map 'active' →
+  client / partner and 'contact' → prospect / partner? Nothing was rewritten; the mapping is your call (a one-line
+  UPDATE per decision through the bi-temporal path).
+* **Next sprint: udfui1** — the admin builder for custom tabs / sections / fields (this sprint only SHOWS them).
+
+## 6. Proof
+(filled after the run)
