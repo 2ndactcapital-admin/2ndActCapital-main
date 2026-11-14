@@ -823,8 +823,8 @@ def regression():
     section("[Y] Regressions (VERIFY_REGRESSIONS fast: nested --self-checks-only)")
     for name in UDF_VERIFIES:
         has = VT.has_self_checks_only(HERE / name)
-        find(f"{name}: not nested", "no --self-checks-only; its full run stops in its own users-fixture INSERT (RLS) — "
-             "pre-existing, recorded in NAV3_NOTES" if not has else "has --self-checks-only now: add it to REGRESSIONS")
+        find(f"{name}: not nested", ("no --self-checks-only; its full run stops in its own users-fixture INSERT (RLS) — confirmed "
+             "2026-11-13 for udf02b + udf01c, not run for the others; pre-existing, recorded in NAV3_NOTES") if not has else "has --self-checks-only now: add it to REGRESSIONS")
     for name in REGRESSIONS:
         t = time.monotonic()
         nt, out, err, code = VT.run_nested(HERE / name, cwd=REPO, timeout=2700)

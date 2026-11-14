@@ -163,3 +163,20 @@ blocks, notes, new issues.
   definition omitted `type_params.length`, which the service requires for `data_type='text'` (422 — the existing
   validation working); (2) the NAV3_NOTES self-check ran against HEAD before the notes commit. Teardown: zero fixture
   rows; every counted table at its pre-test count.
+* Run 2 (VERIFY_NESTED=1): **119 PASS / 0 FAIL**. Run 3 (full, VERIFY_REGRESSIONS=fast): **123 PASS / 0 FAIL** —
+  fixtures in two orgs, staff visibility enforced in org A; teardown zero fixture rows, 18 counted tables at their
+  pre-test counts. Sections: tab APIs per persona (6 personas = the matrix), holdings split = net-worth card and the
+  household total (direct sums; the naive card sum double-counts exactly the through part), as-of honoured / future
+  refused, UDF hidden / read / edit + audit + 403s, status vocabulary + real rows unchanged, Cross Book = SQL, accounts
+  owner filter = SQL, static, matrices CURRENT, node tests.
+* `--self-checks-only` 25/0. Node: tests/nav3 21/0; with nav2 + nav1 + nav 90/0.
+* Fast regressions (nested --self-checks-only): verify_nav1 28/0, verify_nav2 17/0, verify_rollup2 49/0,
+  verify_visibility1 56/0 (it was 55/1 mid-sprint: its Task 4 needle wants the Team panel in `app/crm/[id]/page.js` —
+  fixed by rendering it there again and handing it to the record page, assertion untouched).
+* [FIND] verify_udf01a/01b/01c/02a/02b have no `--self-checks-only`, so fast mode cannot nest them. Full one-off runs
+  of **udf02b and udf01c** stop in their own fixture setup (`INSERT INTO users` → "new row violates row-level security
+  policy for table users") — pre-existing (scripts unchanged since 2026-10-21; NAV3 touches no UDF code); 01a / 01b /
+  02a not run. verify_nav3's Details section proves the resolution NAV3 relies on through the real app instead.
+* Route matrices regenerated once (the new route) and CURRENT.
+* Not run (WSL memory / instructions): `npm run build`, the full web suite, other sprints' full verifies.
+
