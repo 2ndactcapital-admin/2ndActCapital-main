@@ -373,7 +373,7 @@ async def create_entity(request: Request, body: EntityCreate):
 # ---------------------------------------------------------------------------
 # Sprint 17 — Entity search (debounced picker)
 # ---------------------------------------------------------------------------
-SEARCH_COLS = "id, display_name, legal_name, entity_type, is_incomplete, is_active"
+SEARCH_COLS = "id, display_name, legal_name, entity_type, is_incomplete, is_active, status"  # NAV3: + status
 
 
 def search_tokens(q: str | None) -> list[str]:
@@ -395,6 +395,7 @@ async def search_entities(
     include_inactive: bool = False,
     include_incomplete: bool = True,
     include_operational: bool = False,
+    status: list[str] = Query(default=[]),
 ):
     org_id = get_org_id(request)
     pool = await get_pool()
@@ -438,6 +439,10 @@ async def search_entities(
     if exclude_ids:
         params.append(exclude_ids)
         conditions.append(f"id != ALL(${len(params)}::uuid[])")
+    if status:
+        # NAV3 — relationship-status filter (entities.status keys); narrowing only, ANDed with the scope above
+        params.append([x for x in status if x][:20])
+        conditions.append(f"status = ANY(${len(params)}::text[])")
 
     where = " AND ".join(conditions)
 

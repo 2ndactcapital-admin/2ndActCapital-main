@@ -23,6 +23,8 @@ const ALLOWED = [
   "value_as_of",
   "limit",
   "offset",
+  // NAV3 — Cross Book "Clients only": the owner's relationship status (a narrowing filter)
+  "owner_status",
 ];
 
 export async function GET(request) {

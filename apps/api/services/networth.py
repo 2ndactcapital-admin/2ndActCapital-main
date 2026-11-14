@@ -312,6 +312,34 @@ async def entity(conn, org_id, entity_id, *, as_of: date | None = None) -> dict:
     return {"entity_id": str(entity_id), **render(figures(ctx, {str(entity_id)}), ctx.as_of)}
 
 
+async def entity_split(conn, org_id, entity_id, *, as_of: date | None = None) -> dict:
+    """NAV3 — the entity card split in two, from ONE :func:`load` (no second calculation):
+
+    * ``direct``  — the entity's own positions (owner = the entity), weight 1;
+    * ``through`` — everything it reaches through the ownership graph, each owned entity at its share.
+
+    The two weight maps are disjoint and together are exactly the card's weights (:func:`shares`), so
+    ``direct + through`` equals :func:`entity` to the cent and no line is counted twice."""
+    e = str(entity_id)
+    ctx = await load(conn, org_id, [e], as_of=as_of)
+    all_w = shares({e}, ctx.edges)
+    direct_w = {e: all_w.get(e, ONE)}
+    through_w = {k: v for k, v in all_w.items() if k != e}
+    total, direct, through = figures(ctx, weights=all_w), figures(ctx, weights=direct_w), figures(ctx, weights=through_w)
+    owned = []
+    for k, w in sorted(through_w.items(), key=lambda kv: (-kv[1], (ctx.names.get(kv[0]) or {}).get("display_name") or "")):
+        one = figures(ctx, weights={k: w})
+        nm = ctx.names.get(k) or {}
+        owned.append({"entity_id": k, "display_name": nm.get("display_name"), "entity_type": nm.get("entity_type"),
+                      "share": format(w, "f"), "share_pct": format(q(w * 100), "f"),
+                      "gross": money(one["gross"]), "positions_counted": one["counted"]})
+    return {"entity_id": e, "as_of": ctx.as_of.isoformat(),
+            "direct": render(direct, ctx.as_of), "through": render(through, ctx.as_of),
+            "total": render(total, ctx.as_of), "owned": owned,
+            "reconciles": q(direct["gross"]) + q(through["gross"]) == q(total["gross"])
+                          or abs((direct["gross"] + through["gross"]) - total["gross"]) < CENTS}
+
+
 def vocabularies() -> dict:
     return {"basis_labels": [{"key": k, "label": v} for k, v in BASIS_LABELS.items()],
             "unclassified": {"key": UNCLASSIFIED_KEY, "label": UNCLASSIFIED_LABEL},

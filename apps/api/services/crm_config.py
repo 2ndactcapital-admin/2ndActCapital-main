@@ -3,7 +3,8 @@
 Three categories, seeded by docs/portentry1_part1.sql for every real org and copied to any other org on first read
 (``crm_seed_org_config`` — the deal room's pattern):
 
-  crm_entity_statuses   crm_status_<key>                   prospect, client, contact, active, inactive, archived
+  crm_entity_statuses   crm_status_<key>                   prospect, client, contact, active, inactive, archived,
+                                                           partner, former_client (NAV3, docs/nav3_part1.sql)
                                                            (selectable) + deceased (system: set by a date of death)
   crm_marital_statuses  crm_marital_<key>                  single, married, divorced, widowed, separated,
                                                            domestic_partnership

@@ -229,14 +229,16 @@ def _account_out(a: dict) -> dict:
 @router.get("/proposals/accounts")
 async def accounts_overview(request: Request, model_id: UUID | None = None,
                             filter: str | None = Query(default=None, max_length=40),  # noqa: A002
-                            q: str | None = Query(default=None, max_length=100)):
+                            q: str | None = Query(default=None, max_length=100),
+                            owner_entity_id: UUID | None = None):
     principal = require_permission(request, VIEW)
     org_id = get_org_id(request)
     perms = _permissions(principal)
     pool = await get_pool()
     try:
         async with pool.acquire() as conn:
-            rows = await RP.accounts_overview(conn, org_id, model_id=model_id, status=filter, q=q)
+            rows = await RP.accounts_overview(conn, org_id, model_id=model_id, status=filter, q=q,
+                                              owner_entity_id=owner_entity_id)
             models = await AM.registry_offer(conn, org_id)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)

@@ -289,6 +289,7 @@ _LIST_FROM = f"""
 def _build_filters(
     *,
     org_id: str,
+    owner_status: str | None = None,
     position_id: str | None,
     asset_id: str | None,
     owner_entity_id: str | None,
@@ -331,6 +332,11 @@ def _build_filters(
         add("p.asset_id = ${n}::uuid", str(asset_id))
     if owner_entity_id:
         add("p.owner_entity_id = ${n}::uuid", str(owner_entity_id))
+    if owner_status:
+        # NAV3 — Cross Book "Clients only" (the same predicate as the positions grid)
+        from services.portfolio_positions import OWNER_STATUS_SQL
+
+        add(OWNER_STATUS_SQL.format(alias="p", n="{n}"), owner_status)
     if transaction_type_code:
         add("t.transaction_type_code = ${n}", transaction_type_code)
     if transaction_type_category:
@@ -380,6 +386,7 @@ async def list_transactions(
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
     entity_scope: list[str] | None = None,
+    owner_status: str | None = None,
 ) -> dict[str, Any]:
     """One grid page. Returns ``{total, limit, offset, returned, transactions}``.
 
@@ -396,6 +403,7 @@ async def list_transactions(
 
     where, args = _build_filters(
         org_id=org_id,
+        owner_status=owner_status,
         position_id=position_id,
         asset_id=asset_id,
         owner_entity_id=owner_entity_id,

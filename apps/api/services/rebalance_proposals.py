@@ -2022,9 +2022,10 @@ def lot_method_overridable(p: dict) -> bool:
     return (p.get("proposal_kind") or "model") == "model" and p["trigger"] not in NO_SUPERSEDE_TRIGGERS
 
 
-async def accounts_overview(conn, org_id, *, model_id=None, status=None, q=None) -> list[dict]:
+async def accounts_overview(conn, org_id, *, model_id=None, status=None, q=None, owner_entity_id=None) -> list[dict]:
     """Portfolio → Accounts: each open account with its model, last drift, last
-    proposal and open instructions."""
+    proposal and open instructions. NAV3: ``owner_entity_id`` narrows to the accounts whose primary entity it is
+    (the record page's Models & rebalancing tab) — a narrowing predicate only, ANDed with everything else."""
     from services import execution as X
 
     args: list = [str(org_id)]
@@ -2060,6 +2061,9 @@ async def accounts_overview(conn, org_id, *, model_id=None, status=None, q=None)
     if q:
         args.append(f"%{q.strip()}%")
         sql += f" AND a.account_number_masked ILIKE ${len(args)}"
+    if owner_entity_id:
+        args.append(_uuid(owner_entity_id, "owner entity"))
+        sql += f" AND a.primary_entity_id = ${len(args)}::uuid"
     sql += " ORDER BY a.custodian_code, a.account_number_masked LIMIT 1000"
     out = []
     for r in await conn.fetch(sql, *args):

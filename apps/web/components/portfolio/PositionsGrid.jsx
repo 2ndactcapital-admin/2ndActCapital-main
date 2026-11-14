@@ -60,6 +60,9 @@ import EmptyHoldingsHint from "@/components/portfolio/EmptyHoldingsHint";
 import DataGrid from "@/components/ui/DataGrid";
 import EntityPicker from "@/components/EntityPicker";
 import { useScreenEntity } from "@/components/nav/EntityScreen";
+import CrossBookSwitch from "@/components/nav/CrossBookSwitch";
+import { usePermissions } from "@/lib/usePermissions";
+import { crossBookStatus } from "@/lib/recordTabs.mjs";
 import PositionDetailPane from "@/components/portfolio/PositionDetailPane";
 
 const CARD = { borderColor: "#ece8dd", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
@@ -231,11 +234,16 @@ export default function PositionsGrid() {
 
   const [filters, setFilters] = useState(baseFilters);
   const [owner, setOwner] = useState(screenEntity); // EntityPicker value
+  // NAV3 — Cross Book default: clients only for staff (a member is unaffected); a chosen owner wins.
+  const { me: who, loading: whoLoading } = usePermissions();
+  const [relMode, setRelMode] = useState("clients");
+  const ownerStatus = crossBookStatus(whoLoading ? undefined : who, relMode, Boolean(filters.owner_entity_id));
   const [selectedId, setSelectedId] = useState(null);
   const [pendingId, setPendingId] = useState(null);
   const [inlineError, setInlineError] = useState(null);
 
   const load = useCallback(async () => {
+    if (ownerStatus === undefined) return;   // NAV3 — wait for /users/me: never fetch the wrong population first
     setLoading(true);
     setError(null);
     try {
@@ -243,6 +251,7 @@ export default function PositionsGrid() {
       for (const [key, value] of Object.entries(filters)) {
         if (value) params.set(key, value);
       }
+      if (ownerStatus) params.set("owner_status", ownerStatus);
       const res = await fetch(`/api/portfolio/positions?${params}`, {
         cache: "no-store",
       });
@@ -257,7 +266,7 @@ export default function PositionsGrid() {
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, ownerStatus]);
 
   useEffect(() => {
     load();
@@ -480,6 +489,7 @@ export default function PositionsGrid() {
           {meta.scope.description}
         </p>
       )}
+      <CrossBookSwitch me={who} mode={relMode} onMode={setRelMode} ownerSelected={Boolean(filters.owner_entity_id)} />
       {/* ── Server-side filter bar ─────────────────────────────────────── */}
       <div
         className="rounded-lg border bg-white px-4 py-3"

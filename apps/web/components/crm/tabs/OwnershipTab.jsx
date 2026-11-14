@@ -353,13 +353,14 @@ function HistorySection({ entityId }) {
   );
 }
 
-export default function OwnershipTab({ entityId, graph: initialGraph = null }) {
+// NAV3 — `asOf` (optional) seeds the tab's own as-of with the record page's date (today → none: current rows).
+export default function OwnershipTab({ entityId, graph: initialGraph = null, asOf: pageAsOf = "" }) {
   const [data, setData] = useState(null);
   const [graph, setGraph] = useState(initialGraph);
   const [lookThrough, setLookThrough] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [asOf, setAsOf] = useState("");
+  const [asOf, setAsOf] = useState(pageAsOf || "");
   const [addingOwns, setAddingOwns] = useState(false);
   const [addingOwnedBy, setAddingOwnedBy] = useState(false);
   const [editItem, setEditItem] = useState(null);

@@ -239,6 +239,13 @@ _LIST_FROM = f"""
 """
 
 
+#: NAV3 — the owner's relationship status predicate (shared with portfolio_transactions). ``{alias}`` is the
+#: positions alias; ``{n}`` the bound parameter's number.
+OWNER_STATUS_SQL = ("EXISTS (SELECT 1 FROM public.entities oe WHERE oe.id = {alias}.owner_entity_id "
+                    "AND oe.org_id = {alias}.org_id AND oe.valid_to IS NULL AND oe.system_to IS NULL "
+                    "AND oe.status = ${n})")
+
+
 def _build_filters(
     *,
     org_id: str,
@@ -255,6 +262,7 @@ def _build_filters(
     include_history: bool,
     search: str | None,
     entity_scope: list[str] | None = None,
+    owner_status: str | None = None,
 ) -> tuple[str, list[Any]]:
     """Assemble the WHERE clause and its positional arguments.
 
@@ -284,6 +292,9 @@ def _build_filters(
 
     if owner_entity_id:
         add("p.owner_entity_id = ${n}::uuid", str(owner_entity_id))
+    if owner_status:
+        # NAV3 — Cross Book "Clients only": the owner's relationship status (entities.status, a key). Narrowing only.
+        add(OWNER_STATUS_SQL.format(alias="p", n="{n}"), owner_status)
     if asset_id:
         add("p.asset_id = ${n}::uuid", str(asset_id))
     if taxonomy_key:
@@ -336,6 +347,7 @@ async def list_positions(
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
     entity_scope: list[str] | None = None,
+    owner_status: str | None = None,
 ) -> dict[str, Any]:
     """One grid page. Returns ``{total, limit, offset, positions, taxonomy}``.
 
@@ -363,6 +375,7 @@ async def list_positions(
 
     where, args = _build_filters(
         org_id=org_id,
+        owner_status=owner_status,
         owner_entity_id=owner_entity_id,
         asset_id=asset_id,
         taxonomy_key=taxonomy_key,

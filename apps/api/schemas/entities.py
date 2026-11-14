@@ -293,6 +293,7 @@ class EntitySearchItem(BaseModel):
     entity_type: EntityType
     is_incomplete: bool = False
     is_active: bool = True
+    status: str | None = None   # NAV3 — the relationship status key (label from the CRM vocabulary)
 
 
 class EntitySearchResponse(BaseModel):
