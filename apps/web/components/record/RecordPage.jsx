@@ -31,11 +31,10 @@ import AllocationSunburst from "@/components/allocation/AllocationSunburst";
 import XrayView from "@/components/xray/XrayView";
 import TreasuryPanel from "@/components/treasury/TreasuryPanel";
 import AccountsList from "@/components/proposals/AccountsList";
-import TeamPanel from "@/components/visibility/TeamPanel";
 
 const enc = encodeURIComponent;
 
-export default function RecordPage({ full, graph, me, household, vocab, asOf, today, team, people, teams }) {
+export default function RecordPage({ full, graph, me, household, vocab, asOf, today, teamPanel = null }) {
   const entity = full.entity;
   const router = useRouter();
   const pathname = usePathname();
@@ -84,7 +83,7 @@ export default function RecordPage({ full, graph, me, household, vocab, asOf, to
     <div>
       <RecordHeader entity={entity} vocab={vocab} household={household} owners={full.owners} asOf={asOf} today={today}
         onAsOf={onAsOf} todayTabs={todayTabs} />
-      {team ? <div className="mt-4"><TeamPanel kind="entity" id={entity.id} initialEnvelope={team} people={people || []} teams={teams || []} /></div> : null}
+      {teamPanel ? <div className="mt-4">{teamPanel}</div> : null}
       <div className="mt-6">
         <RecordTabList tabs={visible} active={current} onSelect={select} />
         {visible.map((t) => (
