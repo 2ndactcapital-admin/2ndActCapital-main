@@ -29,6 +29,11 @@ const byHref = (items) => Object.fromEntries(items.map((i) => [i.href, i]));
 const OLD = byHref(BASE.items);
 const NEW = byHref(NOW.items);
 const TREASURY = "/treasury";
+// Menu items added by sprints AFTER NAV1, each written out by hand with its sprint, group and gate. The NAV1 proofs
+// below stay exact for everything else: an href not in this list (and not Treasury) is still a failure.
+const LATER = {
+  "/admin/custom-fields": { sprint: "udfui1", group: "settings", gate: { perm: "manage_portfolio", strict: true } },
+};
 
 // ── The new structure, by hand ────────────────────────────────────────────────
 const WANT_GROUPS = {
@@ -50,7 +55,8 @@ const WANT_TABS = {
   notes: ["/portfolio/replication/notes", "/portfolio/replication/notes/new-issues"],
   marketplace: ["/marketplace", "/marketplace/my-access", "/marketplace/access"], // unchanged
   documents: ["/documents", "/documents/semantic"], // unchanged
-  settings:["/admin/settings", "/admin/disclosures", "/admin/hypothetical-policy", "/admin/modeling/ta"],
+  settings:["/admin/settings", "/admin/disclosures", "/admin/hypothetical-policy", "/admin/modeling/ta",
+    "/admin/custom-fields"], // + UDFUI1 (LATER)
   people: ["/admin/users", "/admin/staff-visibility", "/admin/profiles", "/admin/permission-sets", "/admin/sod"],
   model_admin: ["/admin/allocation-policy", "/admin/executing-accounts"],
   data_pricing: ["/admin/security-data/sources", "/admin/security-data/quality"],
@@ -106,7 +112,12 @@ test("nothing lost: every pre-NAV1 href is still in the menu, exactly once; the 
   for (const i of menu.MENU_ITEMS) counts[i.href] = (counts[i.href] || 0) + 1;
   assert.deepEqual(Object.entries(counts).filter(([, n]) => n !== 1), [], "every href appears exactly once");
   assert.deepEqual(Object.keys(OLD).filter((h) => !NEW[h]), [], "no pre-NAV1 href lost");
-  assert.deepEqual(Object.keys(NEW).filter((h) => !OLD[h]), [TREASURY], "only Treasury is new");
+  assert.deepEqual(Object.keys(NEW).filter((h) => !OLD[h] && !LATER[h]), [TREASURY], "only Treasury is new (in NAV1)");
+  for (const [href, want] of Object.entries(LATER)) {
+    assert.ok(NEW[href] && !OLD[href], `${href} (${want.sprint}) is a new item`);
+    assert.equal(menu.MENU_ITEMS.find((i) => i.href === href)?.group, want.group, `${href} group`);
+    assert.deepEqual(NEW[href].gate, want.gate, `${href} gate`);
+  }
   assert.deepEqual(menu.MENU_ITEMS.filter((i) => i.href === "/portfolio/approvals").map((i) => i.group), ["portfolio"],
     "Approvals: ONE shared inbox, listed once");
 });
@@ -142,7 +153,9 @@ for (const [name, me] of Object.entries(PERSONAS)) {
     const before = BASE.personas[name].hrefs;
     const after = NOW.personas[name].hrefs;
     const treasury = menu.canAccess(me, menu.GATE_TREASURY);
-    assert.deepEqual(after.filter((h) => h !== TREASURY), before, "same set of hrefs");
+    const later = Object.keys(LATER).filter((h) => menu.canAccess(me, LATER[h].gate));
+    assert.deepEqual(after.filter((h) => h !== TREASURY && !LATER[h]), before, "same set of hrefs");
+    assert.deepEqual(after.filter((h) => LATER[h]).sort(), later.sort(), "a later item iff its own gate admits them");
     assert.equal(after.includes(TREASURY), treasury);
     assert.deepEqual(NOW.personas[name].admin_area, BASE.personas[name].admin_area, "/admin area decision unchanged");
     assert.deepEqual(NOW.personas[name].areas, BASE.personas[name].areas, "every area gate unchanged");

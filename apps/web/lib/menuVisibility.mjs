@@ -117,6 +117,9 @@ export const GATE_SPV_MANAGER = { internal: true, perm: "view_spv", strict: true
 export const GATE_REPLICATION_STAFF = { internal: true, perm: "view_replication", strict: true };
 // Billing Groups / Custody Import: an internal role holding view_portfolio (a member grant alone).
 export const GATE_FIRM_PORTFOLIO = { internal: true, perm: "view_portfolio", strict: true };
+// UDFUI1 — the custom-fields builder: every builder route needs manage_portfolio (no staff bypass on the API, so none here);
+// the admin reads also require_internal, which the page enforces server-side.
+export const GATE_UDF_BUILDER = { perm: "manage_portfolio", strict: true };
 // PORTENTRY2 — Households: an internal role holding manage_members (staff / Super Admin as for every internal gate).
 export const GATE_HOUSEHOLDS = { internal: true, perm: "manage_members", strict: true };
 // PERMS1 — workflow screens, on the keys their API checks (STRICT, fail closed).
@@ -392,6 +395,8 @@ export const MENU_ITEMS = [
   // REP10 — the firm's hypothetical-performance policy (who may see a backtest; its disclosure)
   tab("org_admin", "settings", 3, "/admin/hypothetical-policy", "Hypothetical-performance policy", GATE_VIEW_REPLICATION, true),
   tab("org_admin", "settings", 4, "/admin/modeling/ta", "TA model defaults", GATE_MANAGE_ORG_SETTINGS, true),
+  // UDFUI1 — custom fields, tabs, layouts and their access (the /udf/* engine)
+  tab("org_admin", "settings", 5, "/admin/custom-fields", "Custom fields & tabs", GATE_UDF_BUILDER, true),
   // People & Access (group "people")
   tab("org_admin", "people", 1, "/admin/users", "Users", GATE_MANAGE_MEMBERS, true),
   tab("org_admin", "people", 2, "/admin/staff-visibility", "Teams & coverage", GATE_MANAGE_MEMBERS, true),

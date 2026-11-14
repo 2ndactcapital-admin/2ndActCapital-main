@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 1083 · guarded 259 · sql-scope 54 · body-check 16 · legacy-rule 3
+Routes: 1089 · guarded 259 · sql-scope 54 · body-check 16 · legacy-rule 3
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -1056,10 +1056,13 @@ Routes: 1083 · guarded 259 · sql-scope 54 · body-check 16 · legacy-rule 3
 | GET | `/api/v1/theme` | org_settings | scrub |
 | GET | `/api/v1/theme/public` | org_settings | scrub |
 | GET | `/api/v1/transaction-types` | spv | scrub |
+| GET | `/api/v1/udf/admin/definitions` | udf | scrub |
+| GET | `/api/v1/udf/admin/tabs` | udf | scrub |
 | GET | `/api/v1/udf/definitions` | udf | scrub |
 | POST | `/api/v1/udf/definitions` | udf | scrub |
 | DELETE | `/api/v1/udf/definitions/{definition_id}` | udf | scrub |
 | PATCH | `/api/v1/udf/definitions/{definition_id}` | udf | scrub |
+| GET | `/api/v1/udf/definitions/{definition_id}/audit` | udf | scrub |
 | POST | `/api/v1/udf/definitions/{definition_id}/deactivate` | udf | scrub |
 | POST | `/api/v1/udf/definitions/{definition_id}/reactivate` | udf | scrub |
 | POST | `/api/v1/udf/definitions/{definition_id}/undelete` | udf | scrub |
@@ -1069,8 +1072,10 @@ Routes: 1083 · guarded 259 · sql-scope 54 · body-check 16 · legacy-rule 3
 | DELETE | `/api/v1/udf/layouts/{tab_id}/items/{item_id}` | udf | scrub |
 | PATCH | `/api/v1/udf/layouts/{tab_id}/items/{item_id}` | udf | scrub |
 | POST | `/api/v1/udf/layouts/{tab_id}/sections` | udf | scrub |
+| PUT | `/api/v1/udf/layouts/{tab_id}/sections/order` | udf | scrub |
 | DELETE | `/api/v1/udf/layouts/{tab_id}/sections/{section_id}` | udf | scrub |
 | POST | `/api/v1/udf/layouts/{tab_id}/sections/{section_id}/items` | udf | scrub |
+| GET | `/api/v1/udf/preview` | udf | scrub |
 | GET | `/api/v1/udf/records/{target_type}` | udf | scrub |
 | GET | `/api/v1/udf/records/{target_type}/export` | udf | scrub |
 | POST | `/api/v1/udf/records/{target_type}/import` | udf | scrub |
@@ -1079,6 +1084,7 @@ Routes: 1083 · guarded 259 · sql-scope 54 · body-check 16 · legacy-rule 3
 | DELETE | `/api/v1/udf/tabs/{tab_id}` | udf | scrub |
 | PATCH | `/api/v1/udf/tabs/{tab_id}` | udf | scrub |
 | POST | `/api/v1/udf/tabs/{tab_id}/deactivate` | udf | scrub |
+| GET | `/api/v1/udf/tabs/{tab_id}/permissions` | udf | scrub |
 | PUT | `/api/v1/udf/tabs/{tab_id}/permissions` | udf | scrub |
 | POST | `/api/v1/udf/tabs/{tab_id}/reactivate` | udf | scrub |
 | POST | `/api/v1/udf/tabs/{tab_id}/undelete` | udf | scrub |

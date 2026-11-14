@@ -38,6 +38,10 @@ SUBTYPE_PREFIX = "crm_subtype."
 SELECTABLE = "selectable"
 #: The ONE status code assigns (services.entity_writes people rule) — its label still comes from config.
 STATUS_DECEASED = "deceased"
+#: UDFUI1 (Joe, 2026-11-13: fold 'active' into 'client') — RETIRED statuses: never offered on a form (selectable
+#: False, retired True in the envelope) but still ACCEPTED by validation until a later sprint removes them, so nothing
+#: breaks before the operator runs scripts/relationship_status_cleanup.py. The label still comes from config.
+RETIRED_STATUSES = ("active",)
 #: Entity types whose sub_type is free text when the org has no vocabulary rows for them.
 FREE_TEXT_SUBTYPE_TYPES = ("corp_other_intl",)
 
@@ -74,7 +78,10 @@ def build_vocab(rows) -> dict:
     for r in rows:
         key, label, vt, cat = r["config_key"], r["config_value"], r["value_type"], r["category"]
         if cat == CAT_STATUS and key.startswith(STATUS_PREFIX):
-            statuses.append({"value": key[len(STATUS_PREFIX):], "label": label, "selectable": vt == SELECTABLE})
+            value = key[len(STATUS_PREFIX):]
+            retired = value in RETIRED_STATUSES
+            statuses.append({"value": value, "label": label, "selectable": vt == SELECTABLE and not retired,
+                             "retired": retired})
         elif cat == CAT_MARITAL and key.startswith(MARITAL_PREFIX):
             marital.append({"value": key[len(MARITAL_PREFIX):], "label": label, "selectable": vt == SELECTABLE})
         elif cat == CAT_SUBTYPE and key.startswith(SUBTYPE_PREFIX):
@@ -99,7 +106,7 @@ def check_entity_values(vocab: dict, *, entity_type: str | None, status=None, ma
     cur = current or {}
     errors = []
     if status is not None and status != cur.get("status"):
-        allowed = {s["value"] for s in vocab["entity_statuses"] if s["selectable"]}
+        allowed = {s["value"] for s in vocab["entity_statuses"] if s["selectable"] or s.get("retired")}
         if status not in allowed:
             errors.append(f"status '{status}' is not one of {', '.join(sorted(allowed))}")
     if marital_status not in (None, "") and marital_status != cur.get("marital_status"):
