@@ -158,4 +158,8 @@ blocks, notes, new issues.
 * **Next sprint: udfui1** — the admin builder for custom tabs / sections / fields (this sprint only SHOWS them).
 
 ## 6. Proof
-(filled after the run)
+
+* Run 1 (2026-11-13, VERIFY_NESTED=1): 96 PASS / 2 FAIL — both VERIFY defects, no code changed: (1) the UDF fixture
+  definition omitted `type_params.length`, which the service requires for `data_type='text'` (422 — the existing
+  validation working); (2) the NAV3_NOTES self-check ran against HEAD before the notes commit. Teardown: zero fixture
+  rows; every counted table at its pre-test count.

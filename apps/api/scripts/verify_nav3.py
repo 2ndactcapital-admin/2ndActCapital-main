@@ -659,7 +659,8 @@ async def y_udf(conn):
     for key, label in (("n3v_edit", "Risk score"), ("n3v_read", "Advisor code"), ("n3v_hidden", "Private note")):
         c, b = await api(U_OA, "POST", "/api/v1/udf/definitions", {"owner_scope": "org", "applies_to": "entity",
                                                                    "field_key": key, "label": NAME + label,
-                                                                   "data_type": "text"})
+                                                                   "data_type": "text",
+                                                                   "type_params": {"length": 255}})
         if not check(c in (200, 201), f"definition {key} created (org admin)", f"{c} {dumps(b)}"):
             return
         defs[key] = str(b.get("id") or (b.get("definition") or {}).get("id"))
