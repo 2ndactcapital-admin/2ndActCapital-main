@@ -102,6 +102,20 @@ by DataGrid, so the layout editor uses them too, with up / down buttons as the k
   entity to 'client' through `update_entity_row` + `write_audit_log` in one transaction per entity, under that
   entity's org RLS context; 'contact' untouched; reports what still carries 'active'.
 
+* **The screen** `app/admin/custom-fields/page.js` (menu: Firm settings → "Custom fields & tabs", gate
+  `{perm: manage_portfolio, strict}` — no staff bypass, because the API has none). The page reads the two admin
+  envelopes server-side; a 403 or an envelope without `can_write === true` renders no builder.
+  Six sections (`components/admin/udf/`): Fields, Tabs & layouts (layout editor inside), Permissions & preview, Tags,
+  Change history, Records. Every control is an action in `lib/udfBuilder.mjs UDF_ROUTES` (one FastAPI route each);
+  the browser reaches them only through `app/api/udf/builder/[...path]` which forwards ONLY listed (method, path)
+  pairs and strips any `org_id`. Labels (record types, field types, statuses, access levels, change kinds) are
+  published by the server in `vocabularies.labels` (Rule 1).
+* **Not built** (no route exists and the sprint said stick with existing constructs): removing a grant row, creating
+  a value set, CSV import UI (the import route exists; the builder's scope is records view + export).
+* **nav1's menu test** pinned "the only new href since NAV1 is /treasury". It now carries an explicit `LATER` list
+  (`/admin/custom-fields`, sprint udfui1, group settings, its exact gate); every other NAV1 assertion is unchanged
+  and an unlisted new href still fails.
+
 ## 3. Findings
 * [FIND] The live `org_admin` role carries no `manage_portfolio` (only `admin`, `advisor`, `super_admin` roles do in
   the default org) — an org admin without it gets no builder. Gate not widened; grant it if intended.

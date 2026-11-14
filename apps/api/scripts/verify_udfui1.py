@@ -612,8 +612,8 @@ async def y_round_trip(conn):
     c, a = await api(U_OA, "GET", f"{V1}/definitions/{rt}/audit")
     kinds = [r["change_kind"] for r in reversed((a or {}).get("rows") or [])]
     who = {r.get("changed_by") for r in (a or {}).get("rows") or []}
-    check(bool(c == 200 and kinds[:3] == ["update", "deactivate", "reactivate"] and who == {str(U_OA)}),
-          "audit (GET …/audit): update, deactivate, reactivate — each by the org admin", f"{kinds} {who}")
+    check(bool(c == 200 and kinds == ["create", "update", "deactivate", "reactivate"] and who == {str(U_OA)}),
+          "audit (GET …/audit): create, update, deactivate, reactivate — each by the org admin", f"{kinds} {who}")
     sql = [r["change_kind"] for r in await platform(conn, "SELECT change_kind FROM portfolio.udf_definition_audit WHERE "
                                                           "definition_id = $1 ORDER BY changed_at, id", UUID(rt))]
     check(kinds == sql, "the audit route returns exactly the stored rows (= SQL)", f"{kinds} vs {sql}")
@@ -725,8 +725,15 @@ def section_order(lay):
 
 async def y_layout(conn):
     section("[Y] Layout — sections / items reorder round-trip; refusals; tab order + lifecycle")
-    c, tb = await api(U_OA, "POST", f"{V1}/tabs", {"applies_to": "entity", "label": NAME + "Layout", "api_name": "uu1_layout"})
-    tab = str((tb.get("tab") or {}).get("id"))
+    body = {"applies_to": "entity", "label": NAME + "Layout", "api_name": "uu1_layout"}
+    c, tb = await api(U_OA, "POST", f"{V1}/tabs", body)
+    check(bool(c == 422 and "max_custom_tabs" in json.dumps(tb)), "a 4th active tab is refused by the engine's cap "
+          "(crm.udf.max_custom_tabs = 3) — the reason the builder shows", f"{c} {dumps(tb)}")
+    c, _ = await api(U_OA, "POST", f"{V1}/tabs/{S['seed_tab']}/deactivate")
+    c, tb = await api(U_OA, "POST", f"{V1}/tabs", body)
+    tab = str((tb.get("tab") or {}).get("id") or "")
+    if not check(bool(c == 201 and tab), "a deactivated tab frees its slot: the Layout tab is created", f"{c} {dumps(tb)}"):
+        return
     secs = []
     for title in ("One", "Two", "Three"):
         c, s = await api(U_OA, "POST", f"{V1}/layouts/{tab}/sections", {"title": title, "display_order": len(secs)})
