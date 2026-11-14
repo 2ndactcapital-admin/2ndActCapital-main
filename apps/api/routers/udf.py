@@ -118,6 +118,7 @@ from services.portfolio_udf_records import (
     list_records_with_udf,
 )
 from services.portfolio_udf_admin import (
+    LABELS as ADMIN_LABELS,
     list_admin_definitions,
     list_admin_tabs,
     list_definition_audit,
@@ -420,6 +421,7 @@ async def admin_list_definitions(request: Request, target_type: str | None = Que
     vocab["type_params"] = type_param_rules()
     vocab["statuses"] = ["active", "deactivated", "deleted"]
     vocab["access_levels"] = ["hidden", "read", "edit"]
+    vocab["labels"] = ADMIN_LABELS
     return {"rows": rows, "value_sets": value_sets, "permissions": perms, "vocabularies": vocab}
 
 
@@ -443,6 +445,7 @@ async def admin_list_tabs(request: Request, applies_to: str | None = Query(defau
     vocab = _tab_vocabularies(perms)
     if perms["can_write"]:
         vocab["editable"] = ["label", "display_order"]
+    vocab["labels"] = ADMIN_LABELS
     return {"rows": rows, "permissions": perms, "vocabularies": vocab}
 
 

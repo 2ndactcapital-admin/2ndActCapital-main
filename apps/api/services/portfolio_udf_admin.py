@@ -43,6 +43,26 @@ from services.portfolio_udf_tabs import (
 STATUS_ACTIVE, STATUS_DEACTIVATED, STATUS_DELETED = "active", "deactivated", "deleted"
 
 
+#: Display labels the builder shows — published in the envelope (Rule 1), never kept in the page.
+LABELS = {
+    "applies_to": {"entity": "Entities", "asset": "Securities", "position": "Positions", "valuation": "Valuations",
+                   "transaction": "Transactions", "commitment": "Commitments"},
+    "data_type": {"text": "Text", "long_text": "Long text", "rich_text": "Rich text", "integer": "Whole number",
+                  "numeric": "Number", "currency": "Currency", "percent": "Percent", "date": "Date",
+                  "datetime": "Date & time", "boolean": "Yes / no", "select": "Picklist",
+                  "multiselect": "Multi-select picklist", "tags": "Tags", "email": "Email", "url": "Web address",
+                  "phone": "Phone"},
+    "status": {"active": "Active", "deactivated": "Deactivated", "deleted": "Deleted (can be undeleted)"},
+    "access": {"hidden": "Hidden", "read": "Read-only", "edit": "Editable"},
+    "owner_scope": {"platform": "Platform", "org": "Firm", "team": "Team", "user": "Personal"},
+    "type_param": {"length": "Maximum length", "precision": "Total digits", "scale": "Decimal places",
+                   "currency_code": "Currency code", "value_set_id": "Picklist values", "min": "Minimum",
+                   "max": "Maximum"},
+    "change_kind": {"create": "Created", "update": "Edited", "deactivate": "Deactivated",
+                    "reactivate": "Reactivated / undeleted", "soft_delete": "Deleted"},
+}
+
+
 def lifecycle_status(row: dict) -> str:
     if row.get("deleted_at") is not None:
         return STATUS_DELETED
