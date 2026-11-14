@@ -1,73 +1,53 @@
 import { redirect, notFound } from "next/navigation";
 import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
-import EntityTypeBadge from "@/components/EntityTypeBadge";
-import EntityDetailTabs from "@/components/crm/EntityDetailTabs";
+import RecordPage from "@/components/record/RecordPage";
 import { fetchAPI } from "@/lib/api";
-import TeamPanel from "@/components/visibility/TeamPanel";
+import { normalizeAsOf, todayIso } from "@/lib/recordTabs.mjs";
 
-export default async function EntityDetailPage({ params }) {
+// NAV3 — the ONE Entities record page, at the existing CRM record URL (every old /crm/<id> and ?tab= link keeps
+// working: an old tab key opens the new tab that contains it). The full record stays STAFF-ONLY (GET /full =
+// internal); everything else is read by each tab, lazily, from its existing API.
+export default async function EntityDetailPage({ params, searchParams }) {
   const { id } = await params;
+  const sp = (await searchParams) || {};
 
   const session = await getHostSession();
   if (!session) {
     redirect(`/auth/login?returnTo=/crm/${id}`);
   }
 
-  const [fullResult, graphResult, teamResult, peopleResult, teamsResult] = await Promise.allSettled([
-    fetchAPI(`/api/v1/entities/${id}/full`),
-    fetchAPI(`/api/v1/entities/${id}/ownership-graph`),
-    // VISIBILITY1 — the record's Team panel; refused → no panel
-    fetchAPI(`/api/v1/staff-visibility/entities/${id}/team`),
-    fetchAPI("/api/v1/admin/staff/people"),
-    fetchAPI("/api/v1/admin/staff/teams"),
-  ]);
-  const team = teamResult.status === "fulfilled" ? teamResult.value : null;
-  const people = peopleResult.status === "fulfilled" ? peopleResult.value : [];
-  const teams = teamsResult.status === "fulfilled" ? teamsResult.value : [];
+  const today = todayIso();
+  const asOf = normalizeAsOf(typeof sp.as_of === "string" ? sp.as_of : undefined, today);
+
+  const [fullResult, graphResult, teamResult, peopleResult, teamsResult, meResult, hhResult, vocabResult] =
+    await Promise.allSettled([
+      fetchAPI(`/api/v1/entities/${id}/full`),
+      fetchAPI(`/api/v1/entities/${id}/ownership-graph`),
+      // VISIBILITY1 — the record's Team panel; refused → no panel
+      fetchAPI(`/api/v1/staff-visibility/entities/${id}/team`),
+      fetchAPI("/api/v1/admin/staff/people"),
+      fetchAPI("/api/v1/admin/staff/teams"),
+      fetchAPI("/api/v1/users/me"),
+      // the record's primary household (manage_members); refused → no household context, no household tabs
+      fetchAPI(`/api/v1/admin/entities/${id}/primary-household`),
+      fetchAPI("/api/v1/crm/vocabularies"),
+    ]);
+  const ok = (r, dflt) => (r.status === "fulfilled" ? r.value : dflt);
 
   if (fullResult.status === "rejected") {
     if (fullResult.reason?.status === 404) notFound();
     throw fullResult.reason;
   }
   const full = fullResult.value;
-  const graph =
-    graphResult.status === "fulfilled"
-      ? graphResult.value
-      : { root_id: id, nodes: [], edges: [] };
-
-  const entity = full.entity;
+  const graph = ok(graphResult, { root_id: id, nodes: [], edges: [] });
+  const household = ok(hhResult, null)?.primary_household || null;
 
   return (
     <AppShell user={session.user}>
-      {/* Breadcrumb */}
-      <nav className="text-sm text-text-muted">
-        <a href="/crm" className="hover:text-navy">
-          CRM
-        </a>
-        <span className="mx-2">›</span>
-        <span className="text-text-secondary">{entity.display_name}</span>
-      </nav>
-
-      {/* Header */}
-      <div className="mt-3 flex items-center gap-3">
-        <h1 className="text-3xl font-semibold text-navy">{entity.display_name}</h1>
-        <EntityTypeBadge type={entity.entity_type} />
-      </div>
-      <a
-        href={`/crm/${entity.id}/hierarchy`}
-        className="text-sm text-gold hover:underline mt-1"
-      >
-        View ownership structure →
-      </a>
-
-      {team ? (
-        <div className="mt-4"><TeamPanel kind="entity" id={entity.id} initialEnvelope={team} people={people || []} teams={teams || []} /></div>
-      ) : null}
-
-      <div className="mt-8">
-        <EntityDetailTabs full={full} graph={graph} />
-      </div>
+      <RecordPage full={full} graph={graph} me={ok(meResult, null)} household={household}
+        vocab={ok(vocabResult, null)?.vocabularies || null} asOf={asOf} today={today}
+        team={ok(teamResult, null)} people={ok(peopleResult, []) || []} teams={ok(teamsResult, []) || []} />
     </AppShell>
   );
 }
