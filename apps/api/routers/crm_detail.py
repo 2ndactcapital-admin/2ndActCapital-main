@@ -31,7 +31,7 @@ from datetime import date
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from routers.entities import get_org_id
@@ -326,6 +326,30 @@ async def entity_net_worth(request: Request, entity_id: UUID):
         nw["last_rollup"] = await PR.last_run(conn, org_id, entity_id)
     return {"rows": nw, "permissions": _permissions(request, "internal or own family"),
             "vocabularies": _vocab(request, {"net_worth_lines": V.liability_vocab()["net_worth_lines"],
+                                             **_nw_vocab()}, [])}
+
+
+# ── NAV3 — the record page's Holdings tab: held directly / through ownership (services.networth, one core) ────────
+@router.get("/entities/{entity_id}/holdings-split")
+async def entity_holdings_split(request: Request, entity_id: UUID, as_of: date | None = Query(default=None)):
+    """The entity's net-worth card split into its own positions and its look-through share of what it owns — ONE
+    networth.load, two disjoint weight maps (direct + through = the card). The same gate as GET /net-worth."""
+    pool = await get_pool()
+    await _member_scoped_entity(request, pool, entity_id)
+    org_id = get_org_id(request)
+    if as_of is not None and as_of > date.today():
+        raise HTTPException(status_code=422, detail="as_of cannot be in the future")
+    async with pool.acquire() as conn:
+        exists = await conn.fetchval("SELECT 1 FROM entities WHERE id = $1 AND org_id = $2::uuid AND valid_to IS NULL "
+                                     "AND system_to IS NULL", entity_id, UUID(str(org_id)))
+        if not exists:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        from services import networth as NW
+
+        split = await NW.entity_split(conn, org_id, entity_id, as_of=as_of)
+    return {"rows": split, "permissions": _permissions(request, "internal or own family"),
+            "vocabularies": _vocab(request, {"split_parts": [{"key": "direct", "label": "Held directly"},
+                                                              {"key": "through", "label": "Through ownership"}],
                                              **_nw_vocab()}, [])}
 
 

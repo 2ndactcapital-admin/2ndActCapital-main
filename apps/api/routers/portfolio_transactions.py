@@ -365,6 +365,8 @@ async def get_transactions(
     search: str | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
+    owner_status: str | None = Query(default=None, max_length=40,
+                                     description="NAV3 — only transactions whose position owner has this status"),
 ):
     """The Transactions grid's data. Org-scoped from JWT claims, always.
 
@@ -396,6 +398,7 @@ async def get_transactions(
                 limit=limit,
                 offset=offset,
                 entity_scope=scope,
+                owner_status=owner_status or None,
             )
             # Shipped with the page so the type column renders a LABEL and the
             # type filter offers real codes without a second round-trip.

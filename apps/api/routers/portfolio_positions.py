@@ -357,6 +357,8 @@ async def get_positions(
     value_as_of: date | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
+    owner_status: str | None = Query(default=None, max_length=40,
+                                     description="NAV3 — only positions whose owner has this relationship status"),
 ):
     """The Positions grid's data. Org-scoped from JWT claims, always.
 
@@ -392,6 +394,7 @@ async def get_positions(
                 limit=limit,
                 offset=offset,
                 entity_scope=scope,
+                owner_status=owner_status or None,
             )
             # Shipped with the page so the taxonomy cell can render a label AND
             # an inline reassignment picker without a second round-trip. Rule 1:
