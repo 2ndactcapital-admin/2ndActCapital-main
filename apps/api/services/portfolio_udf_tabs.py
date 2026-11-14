@@ -202,14 +202,24 @@ async def update_tab(
             f"attempted={changes['api_name']!r}). label is free to change; "
             f"api_name is not."
         )
-    if "label" not in changes:
+    # UDFUI1 — display_order (the builder's tab order) is the second mutable column; both sparse.
+    sets, params = [], [str(tab_id)]
+    if "label" in changes:
+        params.append(_check_label(changes["label"]))
+        sets.append(f"label = ${len(params)}")
+    if changes.get("display_order") is not None:
+        order = changes["display_order"]
+        if isinstance(order, bool) or not isinstance(order, int):
+            raise TabError(f"display_order must be an integer — got {order!r}")
+        params.append(order)
+        sets.append(f"display_order = ${len(params)}")
+    if not sets:
         return current
 
-    label = _check_label(changes["label"])
     async with _OrgWrite(conn, org_id) as c:
         await c.execute(
-            f"UPDATE {TABLE_UDF_TABS} SET label = $2 WHERE id = $1::uuid",
-            str(tab_id), label,
+            f"UPDATE {TABLE_UDF_TABS} SET {', '.join(sets)} WHERE id = $1::uuid",
+            *params,
         )
         return await get_tab(c, tab_id=tab_id)
 

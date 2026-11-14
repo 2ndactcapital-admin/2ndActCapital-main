@@ -81,6 +81,7 @@ from services.portfolio_udf_layouts import (
     LayoutSectionReferencedError,
     add_item,
     add_section,
+    get_layout_by_tab,
     get_or_create_layout,
     get_resolved_layout,
     move_item,
@@ -115,6 +116,15 @@ from services.portfolio_udf_records import (
     export_records_csv,
     import_records_csv,
     list_records_with_udf,
+)
+from services.portfolio_udf_admin import (
+    list_admin_definitions,
+    list_admin_tabs,
+    list_definition_audit,
+    list_tab_grants,
+    list_value_sets,
+    preview_access,
+    type_param_rules,
 )
 from services.portfolio_udf_tags import (
     TAG_CREATE_PERMISSION,
@@ -324,6 +334,7 @@ class TabUpdateIn(BaseModel):
 
     label: str | None = None
     api_name: str | None = None
+    display_order: int | None = None  # UDFUI1 — tab order (sparse)
 
 
 class TabPermissionIn(BaseModel):
@@ -361,6 +372,14 @@ class ItemCreateIn(BaseModel):
     is_read_only: bool = False
 
 
+class SectionOrderIn(BaseModel):
+    """UDFUI1 — the layout's sections in their new order (exactly the layout's own section ids)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    section_ids: list[str]
+
+
 class ItemUpdateIn(BaseModel):
     """Sparse PATCH for ``move_item`` — section/column/order only.
     ``definition_id`` is not settable here; remove and re-add the item to
@@ -372,6 +391,83 @@ class ItemUpdateIn(BaseModel):
     column_index: int | None = None
     col_span: int | None = None
     display_order: int | None = None
+
+
+# ── UDFUI1 — the builder's admin reads (internal + manage_portfolio: the builder's own write gate) ─────────────
+#
+# The visible-only reads above hide exactly what an admin must manage (deactivated / deleted rows, other people's
+# grants). Each read below is gated on the WRITE permission every builder action already needs, plus
+# require_internal — no read is opened wider than the writes it supports.
+
+
+async def _admin_gate(request: Request) -> tuple[str, str, Any]:
+    require_internal(request)
+    return await _tenant_gate(request, WRITE_PERMISSION)
+
+
+@router.get("/udf/admin/definitions")
+async def admin_list_definitions(request: Request, target_type: str | None = Query(default=None)):
+    """Every definition of the org + platform (any status) with used-by counts and placements."""
+    org_id, user_id, pool = await _admin_gate(request)
+    async with pool.acquire() as conn:
+        try:
+            rows = await list_admin_definitions(conn, org_id=org_id, target_type=target_type)
+            value_sets = await list_value_sets(conn, org_id=org_id)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    perms = await _permission_envelope(pool, user_id, org_id)
+    vocab = _vocabularies(perms)
+    vocab["type_params"] = type_param_rules()
+    vocab["statuses"] = ["active", "deactivated", "deleted"]
+    vocab["access_levels"] = ["hidden", "read", "edit"]
+    return {"rows": rows, "value_sets": value_sets, "permissions": perms, "vocabularies": vocab}
+
+
+@router.get("/udf/definitions/{definition_id}/audit")
+async def definition_audit(request: Request, definition_id: str):
+    org_id, user_id, pool = await _admin_gate(request)
+    async with pool.acquire() as conn:
+        rows = await list_definition_audit(conn, org_id=org_id, definition_id=definition_id)
+    return {"rows": rows}
+
+
+@router.get("/udf/admin/tabs")
+async def admin_list_tabs(request: Request, applies_to: str | None = Query(default=None)):
+    org_id, user_id, pool = await _admin_gate(request)
+    async with pool.acquire() as conn:
+        try:
+            rows = await list_admin_tabs(conn, org_id=org_id, applies_to=applies_to)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    perms = await _permission_envelope(pool, user_id, org_id)
+    vocab = _tab_vocabularies(perms)
+    if perms["can_write"]:
+        vocab["editable"] = ["label", "display_order"]
+    return {"rows": rows, "permissions": perms, "vocabularies": vocab}
+
+
+@router.get("/udf/tabs/{tab_id}/permissions")
+async def list_tab_permissions(request: Request, tab_id: str):
+    org_id, user_id, pool = await _admin_gate(request)
+    async with pool.acquire() as conn:
+        tab = await get_tab(conn, tab_id=tab_id, include_deleted=True)
+        if tab is None or tab["org_id"] != org_id:
+            raise HTTPException(status_code=404, detail=f"tab {tab_id} not found")
+        rows = await list_tab_grants(conn, tab_id=tab_id)
+    return {"rows": rows}
+
+
+@router.get("/udf/preview")
+async def preview_route(request: Request, user_id: str = Query(...), target_type: str = Query(...)):
+    """'Preview as' — the EXISTING resolution (resolve_tab_visibility / resolve_field_access_bulk) for a chosen
+    person of the caller's org."""
+    org_id, caller_id, pool = await _admin_gate(request)
+    async with pool.acquire() as conn:
+        try:
+            out = await preview_access(conn, org_id=org_id, user_id=user_id, target_type=target_type)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return out
 
 
 # ── Definitions ──────────────────────────────────────────────────────────────
@@ -862,6 +958,23 @@ async def create_section(request: Request, tab_id: str, body: SectionCreateIn):
         except _VALIDATION_ERRORS as exc:
             raise _http_error(exc) from exc
     return {"section": section}
+
+
+@router.put("/udf/layouts/{tab_id}/sections/order")
+async def reorder_sections_route(request: Request, tab_id: str, body: SectionOrderIn):
+    """UDFUI1 — the existing ``reorder_sections`` (no route called it): the body lists exactly the layout's sections."""
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            layout = await get_layout_by_tab(conn, tab_id=tab_id)
+            if layout is None:
+                raise LayoutError(f"tab {tab_id} has no layout yet")
+            rows = await reorder_sections(
+                conn, layout_id=layout["id"], org_id=org_id, ordered_section_ids=body.section_ids,
+            )
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"sections": rows}
 
 
 @router.delete("/udf/layouts/{tab_id}/sections/{section_id}")
